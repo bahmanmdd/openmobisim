@@ -103,7 +103,8 @@ use openmobisim_core_graph::layers::{BikeCost, StaticLayer, StaticNetwork};
 use openmobisim_core_graph::network::RoadNetwork;
 use openmobisim_core_graph::turns::TurnTable;
 use openmobisim_core_loading::{
-    FidelityLevel, LinkBins, LinkTimes, Vehicle, load_timed_binned, run_ltm_binned,
+    FidelityLevel, LinkBins, LinkTimes, LinkTimesReading, Vehicle, load_timed_binned,
+    run_ltm_binned,
 };
 use openmobisim_core_routes::{Route, RouteKey, RouteSets};
 use openmobisim_core_sim::{NO_ROUTE, RouteChoices};
@@ -157,7 +158,7 @@ const FINGERPRINT_COVERS: [&str; 16] = [
     "the choice model and its path-size weight",
     "the loop's parameters: minimum and maximum iterations, the switch and found tolerances, the \
      indifference band, the averaging offset, the allocation, the cost source, the snapping \
-     distance to motorways",
+     distance to motorways, the reading of the link times",
     "the flow level",
     "the loading step",
     "the width of the bins the link travel times are read in",
@@ -481,6 +482,11 @@ fn fingerprint(
     // the draws keeps the fingerprint it had before the option existed.
     if params.allocation != Allocation::Draws {
         h.write_str(params.allocation.name());
+    }
+    // Likewise the reading of the link times, only when it is not the bins.
+    if params.link_times != LinkTimesReading::Bins {
+        h.write_str("link_times");
+        h.write_str(params.link_times.name());
     }
     // Likewise the fixed times, only when either is not 0 (the parking time's cost matters
     // only then), and the run continued from, only when there is one.
@@ -1451,7 +1457,8 @@ fn read_chains(
 ///
 /// `ValueError` for inputs that cannot be read or do not fit together (a stated or offered mode
 /// other than the car, the bike or walking, a flow level other than 0 or 2, a bike cost other than
-/// `"utility"`, `"time"` or `"dedicated"`, a coefficient that cannot price a route, a fixed time
+/// `"utility"`, `"time"` or `"dedicated"`, a reading of the link times (`link_times`) other than
+/// `"bins"` or `"fifo"`, a coefficient that cannot price a route, a fixed time
 /// that is not a finite number of at least 0, a run to continue from whose chains table is not
 /// of this demand and network), and if a file cannot be written.
 #[pyfunction]
@@ -1464,7 +1471,7 @@ fn read_chains(
     found_tolerance=None, indifference_band=None, allocation=None, motorway_snap_m=None,
     car_access_s=None, car_egress_s=None, threads=None, start_chains_path=None,
     start_iterations=None, bike_cost=None, bike_access_s=None, bike_egress_s=None, modes=None,
-    class_modes=None, walk_max_s=None, bike_max_s=None, class_limits=None
+    class_modes=None, walk_max_s=None, bike_max_s=None, class_limits=None, link_times=None
 ))]
 #[allow(clippy::too_many_arguments, reason = "the scenario's parts, by name, as Python gives them")]
 #[allow(clippy::too_many_lines, reason = "the steps of one run, in order")]
@@ -1510,6 +1517,7 @@ pub fn run_one_loop(
     walk_max_s: Option<f64>,
     bike_max_s: Option<f64>,
     class_limits: Option<HashMap<String, HashMap<String, f64>>>,
+    link_times: Option<&str>,
 ) -> PyResult<Py<PyDict>> {
     let started = Instant::now();
     if flow_level != 0 && flow_level != 2 {
@@ -1669,6 +1677,15 @@ pub fn run_one_loop(
             ))
         })?;
     }
+    if let Some(name) = link_times {
+        params.link_times = LinkTimesReading::from_name(name).ok_or_else(|| {
+            let names: Vec<&str> = LinkTimesReading::ALL.iter().map(|r| r.name()).collect();
+            PyValueError::new_err(format!(
+                "link_times must be one of {}, got {name:?}",
+                names.join(", ")
+            ))
+        })?;
+    }
     if let Some(v) = motorway_snap_m {
         params.motorway_snap_metres = v;
     }
@@ -1733,6 +1750,7 @@ pub fn run_one_loop(
         end_seconds: end_s,
         step_seconds: step_s,
         bin_seconds: cost_bin_s,
+        entrants: params.link_times == LinkTimesReading::Fifo,
     };
     let free_flow = FreeFlow { end_seconds: end_s };
     let loader: &dyn Loader = if flow_level == 2 { &point_queue } else { &free_flow };
@@ -1888,6 +1906,7 @@ pub fn run_one_loop(
     p.set_item("indifference_band", params.indifference_band)?;
     p.set_item("step_offset", params.step_offset)?;
     p.set_item("allocation", params.allocation.name())?;
+    p.set_item("link_times", params.link_times.name())?;
     p.set_item("cost_source", format!("{:?}", params.cost_source).to_lowercase())?;
     p.set_item("motorway_snap_m", params.motorway_snap_metres)?;
     p.set_item("car_access_s", params.car_fixed_times.access_seconds)?;

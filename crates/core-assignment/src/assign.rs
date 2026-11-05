@@ -86,7 +86,7 @@ use openmobisim_core_choice::ChoiceModel;
 use openmobisim_core_demand::{Travellers, Trips};
 use openmobisim_core_graph::network::RoadNetwork;
 use openmobisim_core_graph::turns::TurnTable;
-use openmobisim_core_loading::Vehicle;
+use openmobisim_core_loading::{LinkTimesReading, Vehicle};
 use openmobisim_core_types::ids::{EntityId, LinkId, TripId, VehicleId};
 use openmobisim_core_types::rng::{RngKey, Stream, StreamRng};
 use openmobisim_core_types::time::Second;
@@ -182,6 +182,10 @@ pub struct Params {
     /// How a bike leg's route is chosen on the bike layer (default [`BikeCost::Utility`]: the
     /// class's own cost of the ride; see [`crate::layer_planner`]).
     pub bike_cost: BikeCost,
+    /// How the measured link travel times are read by the searches and the pricing (default
+    /// [`LinkTimesReading::Bins`]: each bin's time; [`LinkTimesReading::Fifo`] keeps
+    /// first-in-first-out between bins, see [`openmobisim_core_loading::link_times`]).
+    pub link_times: LinkTimesReading,
 }
 
 impl Default for Params {
@@ -199,6 +203,7 @@ impl Default for Params {
             car_fixed_times: FixedTimes::NONE,
             bike_fixed_times: FixedTimes::NONE,
             bike_cost: BikeCost::Utility,
+            link_times: LinkTimesReading::Bins,
         }
     }
 }
@@ -426,8 +431,9 @@ fn measure_stage(
     network: &RoadNetwork,
     state: &mut State,
     loaded: &Loaded,
+    reading: LinkTimesReading,
 ) {
-    state.set_link_times(loaded.link_times(network));
+    state.set_link_times(loaded.link_times_read(network, reading));
     // The sets are moved out while they are priced, so the planners read the rest of the state
     // (its link times) while every set is changed in place, trip by trip, in parallel.
     let mut trips: Vec<TripState> = std::mem::take(state.trips_mut());
@@ -805,7 +811,7 @@ pub fn restore(
     *state.trips_mut() = trips;
     state.set_iterations(iterations);
     let (loaded, _) = load_stage(inputs, &state, iterations, &mut crate::hooks::NoHooks)?;
-    measure_stage(&search, inputs.network, &mut state, &loaded);
+    measure_stage(&search, inputs.network, &mut state, &loaded, params.link_times);
     Ok(state)
 }
 
@@ -1000,7 +1006,7 @@ pub fn assign(
         let t_load = clock.elapsed().as_secs_f64();
 
         let clock = Instant::now();
-        measure_stage(&search, inputs.network, &mut state, &loaded);
+        measure_stage(&search, inputs.network, &mut state, &loaded, params.link_times);
         hooks.after_measure(iteration, &state);
         let t_measure = clock.elapsed().as_secs_f64();
 

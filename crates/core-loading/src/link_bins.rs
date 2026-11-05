@@ -36,6 +36,45 @@ pub struct LinkBins {
     crossings: Vec<u32>,
     pcu: Vec<f64>,
     pcu_seconds: Vec<f64>,
+    /// Per row, when asked for ([`LinkBinRecorder::with_entrants`]): its first and last
+    /// entrant; empty otherwise.
+    entrants: Vec<Entrants>,
+}
+
+/// The first and the last vehicle to enter a link in one bin of entry time: their entry and
+/// exit seconds (a vehicle still on the link when the window ended exits at the window's end, a
+/// lower bound). One vehicle is both. What a reading of the exit second between bins needs
+/// ([`crate::LinkTimesReading::Fifo`]).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Entrants {
+    /// The first entrant's entry second.
+    pub first_enter: f64,
+    /// The first entrant's exit second.
+    pub first_exit: f64,
+    /// The last entrant's entry second.
+    pub last_enter: f64,
+    /// The last entrant's exit second.
+    pub last_exit: f64,
+}
+
+impl Entrants {
+    /// One vehicle that entered at `enter` and left at `exit`.
+    fn of(enter: f64, exit: f64) -> Self {
+        Self { first_enter: enter, first_exit: exit, last_enter: enter, last_exit: exit }
+    }
+
+    /// These, with a vehicle that entered at `enter` and left at `exit`: the first is the one
+    /// that entered first (of two at the same second, the one that left first), the last the
+    /// one that entered last (of two, the one that left last).
+    fn with(mut self, enter: f64, exit: f64) -> Self {
+        if (enter, exit) < (self.first_enter, self.first_exit) {
+            (self.first_enter, self.first_exit) = (enter, exit);
+        }
+        if (enter, exit) > (self.last_enter, self.last_exit) {
+            (self.last_enter, self.last_exit) = (enter, exit);
+        }
+        self
+    }
 }
 
 impl LinkBins {
@@ -87,6 +126,13 @@ impl LinkBins {
     #[must_use]
     pub fn pcu_seconds(&self) -> &[f64] {
         &self.pcu_seconds
+    }
+
+    /// Each row's first and last entrant, if the table was recorded with them
+    /// ([`LinkBinRecorder::with_entrants`]); empty otherwise.
+    #[must_use]
+    pub fn entrants(&self) -> &[Entrants] {
+        &self.entrants
     }
 
     /// The mean traversal time of row `row`, in seconds.
@@ -181,6 +227,8 @@ impl Hasher for CellHasher {
 #[derive(Debug)]
 struct EntryCells {
     cells: Vec<EntryCell>,
+    /// Per cell, its first and last entrant, when they are kept ([`LinkBinRecorder::with_entrants`]).
+    entrants: Option<Vec<Entrants>>,
     /// Each cell's place in `cells`, by key.
     index: HashMap<u64, u32, BuildHasherDefault<CellHasher>>,
     /// Per link, the bin and place of its last cell found ([`NO_CELL`]: none yet).
@@ -192,11 +240,39 @@ const NO_CELL: u32 = u32::MAX;
 
 impl EntryCells {
     fn new(link_count: usize) -> Self {
-        Self { cells: Vec::new(), index: HashMap::default(), last: vec![(0, NO_CELL); link_count] }
+        Self {
+            cells: Vec::new(),
+            entrants: None,
+            index: HashMap::default(),
+            last: vec![(0, NO_CELL); link_count],
+        }
+    }
+
+    /// Add a traversal of `pcu` PCU that entered `link` in `bin` at `enter`, took `seconds` and
+    /// left at `exit` (its first and last entrant, if they are kept).
+    fn add(&mut self, bin: u32, link: u32, pcu: f64, seconds: f64, enter: f64, exit: f64) {
+        let at = self.slot(bin, link);
+        let cell = &mut self.cells[at];
+        cell.crossings += 1;
+        cell.pcu += pcu;
+        cell.pcu_seconds += pcu * seconds;
+        if let Some(entrants) = self.entrants.as_mut() {
+            if at == entrants.len() {
+                entrants.push(Entrants::of(enter, exit));
+            } else {
+                entrants[at] = entrants[at].with(enter, exit);
+            }
+        }
     }
 
     /// The cell of `bin` and `link`, made empty if it is new.
     fn cell(&mut self, bin: u32, link: u32) -> &mut EntryCell {
+        let at = self.slot(bin, link);
+        &mut self.cells[at]
+    }
+
+    /// The place of the cell of `bin` and `link`, made empty if it is new.
+    fn slot(&mut self, bin: u32, link: u32) -> usize {
         let l = link as usize;
         let (last_bin, last_at) = self.last[l];
         let at = if last_at != NO_CELL && last_bin == bin {
@@ -210,7 +286,7 @@ impl EntryCells {
             self.last[l] = (bin, at);
             at
         };
-        &mut self.cells[at as usize]
+        at as usize
     }
 
     /// The cells as a table of `bin_seconds` bins, sorted by bin then link.
@@ -227,6 +303,9 @@ impl EntryCells {
             table.crossings.push(c.crossings);
             table.pcu.push(c.pcu);
             table.pcu_seconds.push(c.pcu_seconds);
+            if let Some(entrants) = &self.entrants {
+                table.entrants.push(entrants[at as usize]);
+            }
         }
         table
     }
@@ -306,6 +385,18 @@ impl LinkBinRecorder {
         self
     }
 
+    /// The same recorder, also keeping per (link, entry bin) the entry and exit seconds of the
+    /// first and the last vehicle to enter ([`LinkBins::entrants`] of the entry-time table): 32
+    /// bytes more per cell, and two comparisons per traversal. Needs [`Self::with_entry_bins`]
+    /// (or [`Self::with_entry_bins_of`]) first; the waits at origins keep none.
+    #[must_use]
+    pub fn with_entrants(mut self) -> Self {
+        if let Some(entry) = self.entry.as_mut() {
+            entry.entrants = Some(Vec::new());
+        }
+        self
+    }
+
     /// [`Self::with_entry_bins`], with entry-time bins of their own length: the
     /// times a traveller chooses on are read at `entry_bin_seconds` whatever bins the
     /// flow map is recorded in.
@@ -356,10 +447,7 @@ impl LinkBinRecorder {
                 reason = "a non-negative time in seconds over a bin length; within the u32 clock"
             )]
             let entry_bin = (enter.max(0.0) / self.entry_bin_seconds) as u32;
-            let cell = entry.cell(entry_bin, link.raw());
-            cell.crossings += 1;
-            cell.pcu += pcu;
-            cell.pcu_seconds += pcu * (end - enter).max(0.0);
+            entry.add(entry_bin, link.raw(), pcu, (end - enter).max(0.0), enter, end.max(enter));
         }
     }
 
@@ -394,10 +482,7 @@ impl LinkBinRecorder {
                 reason = "a non-negative time in seconds over a bin length; within the u32 clock"
             )]
             let entry_bin = (enter.max(0.0) / self.entry_bin_seconds) as u32;
-            let cell = entry.cell(entry_bin, link.raw());
-            cell.crossings += 1;
-            cell.pcu += pcu;
-            cell.pcu_seconds += pcu * (exit - enter);
+            entry.add(entry_bin, link.raw(), pcu, exit - enter, enter, exit);
         }
     }
 
