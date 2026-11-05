@@ -17,6 +17,7 @@ travel, fixed-order reductions and random streams. It depends on `rand_chacha` a
   identifiers and external ids.
 - `mode`: `Mode` (car, bike, walk, transit), with stable `u8` discriminants 0 to 3 and the names
   `car`, `bike`, `walk`, `transit`. The four modes are peers; nothing in the type ranks them.
+  `ModeSet`, a set of modes as four bits: the modes allowed on a link, or open to a traveller.
 - `time`: `Second`, a point on the clock; `StepIndex` and `StepGrid`, half-open steps over the
   window; `EventKey`, the total order of events (second, then entity kind, then identifier).
 - `units`: `Metres`, `Speed`, `Duration`, `Flow`, `Cost`, and the operators between them
@@ -48,7 +49,7 @@ vehicles. A bike's speed is a free-flow speed: 100 m at 5 m/s (18 km/h) takes 20
 ## Tests
 Run `cargo test -p openmobisim-types`. Each expected value comes from outside the crate:
 hand conversions (36 km/h is 10 m/s, 1 800 vehicles per hour is 0.5 per second); hand counts of
-a step grid (7 200 s in 600 s steps is 12 steps); the standard library's sort for the id table;
+a step grid (7 200 s in 600 s steps is 12 steps); hand membership of a mode set; the standard library's sort for the id table;
 the chunked sequential definition of the sum, identical at 1 and 8 threads; the `rand_chacha`
 ChaCha8 keystream for the documented key; the chi-square distribution for uniform and
 independent draws; the Gumbel mean (Euler's constant) and variance (π²/6).

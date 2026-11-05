@@ -57,3 +57,70 @@ impl fmt::Display for Mode {
         })
     }
 }
+
+/// A set of modes, as four bits (one per discriminant).
+///
+/// The modes allowed on a link (cars, bikes, walkers; transit runs on its timetable, not on
+/// links), or the modes open to a traveller. Iteration is in discriminant order.
+///
+/// # Examples
+///
+/// ```
+/// use openmobisim_types::mode::{Mode, ModeSet};
+///
+/// let cycle_street = ModeSet::of(&[Mode::Bike, Mode::Walk]);
+/// assert!(cycle_street.contains(Mode::Bike));
+/// assert!(!cycle_street.contains(Mode::Car));
+/// assert_eq!(cycle_street.iter().collect::<Vec<_>>(), [Mode::Bike, Mode::Walk]);
+/// ```
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ModeSet(u8);
+
+impl ModeSet {
+    /// The empty set.
+    pub const EMPTY: ModeSet = ModeSet(0);
+
+    /// The set of the modes listed (a mode listed twice is in it once).
+    #[must_use]
+    pub const fn of(modes: &[Mode]) -> ModeSet {
+        let mut set = ModeSet::EMPTY;
+        let mut i = 0;
+        while i < modes.len() {
+            set = set.with(modes[i]);
+            i += 1;
+        }
+        set
+    }
+
+    /// This set with `mode` added.
+    #[inline]
+    #[must_use]
+    pub const fn with(self, mode: Mode) -> ModeSet {
+        ModeSet(self.0 | (1 << mode.as_u8()))
+    }
+
+    /// Whether `mode` is in the set.
+    #[inline]
+    #[must_use]
+    pub const fn contains(self, mode: Mode) -> bool {
+        self.0 & (1 << mode.as_u8()) != 0
+    }
+
+    /// Whether the set is empty.
+    #[inline]
+    #[must_use]
+    pub const fn is_empty(self) -> bool {
+        self.0 == 0
+    }
+
+    /// The modes in the set, in discriminant order.
+    pub fn iter(self) -> impl Iterator<Item = Mode> {
+        Mode::ALL.into_iter().filter(move |&m| self.contains(m))
+    }
+}
+
+impl fmt::Debug for ModeSet {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_set().entries(self.iter()).finish()
+    }
+}

@@ -5,7 +5,7 @@
 //! | Module | What it holds |
 //! |---|---|
 //! | [`ids`] | dense `u32` identifiers, one kind per entity, with a null sentinel; the table from external ids |
-//! | [`mode`] | the four modes of travel (car, bike, walk, transit), peers that nothing ranks |
+//! | [`mode`] | the four modes of travel (car, bike, walk, transit), peers that nothing ranks; sets of them |
 //! | [`time`] | the `u32` clock in seconds, half-open time steps over a run's window, the total order of events |
 //! | [`units`] | metres, metres per second, seconds, vehicles per second and cost, as zero-cost newtypes |
 //! | [`reduce`] | sums and reductions in a fixed order, identical at any number of threads |

@@ -48,6 +48,9 @@ version = "0.2.0-dev"
 [[package]]
 name = "openmobisim-graph"
 version = "0.2.0-dev"
+dependencies = [
+ "openmobisim-types",
+]
 
 [[package]]
 name = "openmobisim-io-gtfs"
