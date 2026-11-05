@@ -16,8 +16,9 @@
 //! - `chain_high` and `chain_low`: the upper and lower 32 bits of the chain's identity
 //!   ([`Chain::identity`]), each exact in a double, so a model can tell which trips face the
 //!   same chains;
-//! - `nest` (only for a model that reads it): the chain's mode, as a number (the car 0, the bike 1, walking 2: `core-demand`'s
-//!   mode numbers), so a nested logit puts each mode in a nest of its own.
+//! - `nest` (only for a model that reads it): the chain's mode, as a number (the car 0, the bike
+//!   1, walking 2, transit 3: `core-demand`'s mode numbers), so a nested logit puts each mode in
+//!   a nest of its own.
 //!
 //! The logit weighs only `utility` and `ln_path_size`; the nested logit the same, in nests by
 //! `nest`; the band and the identities are for the deterministic choice.
@@ -350,12 +351,13 @@ impl Demand<'_> {
     }
 }
 
-/// The slot of `mode` in sums by mode (car, bike, walking); `None` for another mode.
+/// The slot of `mode` in sums by mode (car, bike, walking, transit); `None` for another mode.
 pub(crate) fn mode_slot(mode: Mode) -> Option<usize> {
     match mode {
         Mode::Car => Some(0),
         Mode::Bike => Some(1),
         Mode::Walk => Some(2),
+        Mode::Transit => Some(3),
         _ => None,
     }
 }
@@ -458,18 +460,22 @@ impl<'a> LinkLengths<'a> {
     }
 }
 
-/// The logarithm of each chain's path-size factor over `set`, by the length of its links; a
-/// transit chain's over the set's transit chains, by its shared rides
-/// ([`crate::transit::ride_path_sizes`]).
+/// The logarithm of each chain's path-size factor over `set`: a car, bike or walking chain's
+/// over the set's other such chains, by the length of its links; a transit chain's over the
+/// set's transit chains, by its shared rides ([`crate::transit::ride_path_sizes`]). Chains of
+/// different modes share nothing, so the two are worked out apart.
 fn ln_path_sizes(lengths: &LinkLengths<'_>, set: &[Chain]) -> Vec<f64> {
-    if set.iter().any(|c| c.mode() == Mode::Transit) {
-        // So far a set with a transit chain holds transit chains alone (a stated transit trip).
-        let transit: Vec<&Chain> = set.iter().collect();
-        return crate::transit::ride_path_sizes(&transit);
-    }
-    let links: Vec<Vec<u32>> = set.iter().map(|c| lengths.chain(c)).collect();
+    let is_transit = |c: &Chain| c.mode() == Mode::Transit;
+    let transit: Vec<&Chain> = set.iter().filter(|c| is_transit(c)).collect();
+    let links: Vec<Vec<u32>> =
+        set.iter().filter(|c| !is_transit(c)).map(|c| lengths.chain(c)).collect();
     let routes: Vec<&[u32]> = links.iter().map(Vec::as_slice).collect();
-    path_sizes(&routes, |k| lengths.length(k)).into_iter().map(f64::ln).collect()
+    let mut by_links = path_sizes(&routes, |k| lengths.length(k)).into_iter().map(f64::ln);
+    let mut by_rides = crate::transit::ride_path_sizes(&transit).into_iter();
+    set.iter()
+        .map(|c| if is_transit(c) { by_rides.next() } else { by_links.next() })
+        .map(|ln| ln.expect("one factor per chain"))
+        .collect()
 }
 
 /// The batch of `situations` at `iteration`: each set's chains with their utility at the
@@ -637,10 +643,10 @@ pub(crate) fn choose(
     let mut expected = 0.0;
     // By the mode held before the choice: the trips and those that switched. And per mode, the
     // expected change of its share: Σ w (P_m − 1[the chain held is of mode m]).
-    let (mut held, mut moved, mut change) = ([0.0; 3], [0.0; 3], [0.0; 3]);
+    let (mut held, mut moved, mut change) = ([0.0; 4], [0.0; 4], [0.0; 4]);
     // The trips choosing their mode: with a chain before, and of those with another mode after;
     // with a chain after, by its mode.
-    let (mut had, mut changed, mut after_total, mut after_mode) = (0.0, 0.0, 0.0, [0.0; 3]);
+    let (mut had, mut changed, mut after_total, mut after_mode) = (0.0, 0.0, 0.0, [0.0; 4]);
     for (s, &trip) in situations.iter().enumerate() {
         let w = demand.weight(demand.trips.traveller(trip));
         let counted = demand.could_change(trip);
@@ -703,9 +709,9 @@ pub(crate) fn choose(
         excess,
         expected: share(expected),
         share_by_mode: PerMode::shares(moved, held),
-        share_change: PerMode::shares(change, [total; 3]),
+        share_change: PerMode::shares(change, [total; 4]),
         mode_change: (had > 0.0).then(|| changed / had),
-        mode_split: PerMode::shares(after_mode, [after_total; 3]),
+        mode_split: PerMode::shares(after_mode, [after_total; 4]),
     })
 }
 

@@ -795,6 +795,10 @@ class Run:
         trips); ``mode_share_car``,
         ``mode_share_bike`` and ``mode_share_walk`` (the modal split of the trips choosing their
         mode after the choice, over those with a chain; ``nan`` when no trip chooses its mode);
+        when a trip choosing its mode is offered transit, each of these also for transit
+        (``found_share_transit``, ``switch_share_transit``,
+        ``mode_share_change_expected_transit``, ``mode_share_transit``), and the four
+        ``mode_share_change_expected_`` columns sum to 0;
         and each stage's wall-clock seconds, ``search_s``, ``choose_s``, ``load_s``,
         ``measure_s`` and ``assess_s``. It has no verdict. The columns below are the current
         engine's.

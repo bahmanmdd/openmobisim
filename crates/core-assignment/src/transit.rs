@@ -33,8 +33,22 @@
 //! whole seconds, and splits exactly into walking (to the first stop, between stops, from the
 //! last), waiting (from reaching a stop to the departure of the run boarded there, the boarding
 //! slack included) and in-vehicle time (each run from boarding to alighting). Its transfers are
-//! its rides less one; its money 0 (fares are not priced yet); its length the rides' distances
-//! between their stops as the crow flies.
+//! its rides less one; its money its fare ([`Fares`]: a price per journey, and per ride its
+//! kind of service's price per kilometre times the kilometres from its boarding stop to its
+//! alighting stop as the crow flies), 0 for a traveller holding a transit pass; its length the
+//! rides' distances between their stops as the crow flies.
+//!
+//! **Fare as a third criterion.** RAPTOR's Pareto set is over arrival and vehicles: where the
+//! kinds of service have different prices per kilometre, a slower or less direct journey on
+//! cheaper services can be worth offering. The search is not changed; for a traveller who pays,
+//! the trip has **one more query per cheaper price level**: for each price per kilometre below
+//! the dearest (among the kinds the timetable's lines have), the Pareto set on the view of the
+//! timetable that keeps only the runs of the kinds priced at most that much. The journeys of
+//! every query together, each with its exact fare, are kept where no other journey is as early,
+//! with as few vehicles and as cheap, and better in one of the three (of journeys equal in all
+//! three, the first found: the whole timetable's, then the cheaper views' in order). When every
+//! kind has the same price per kilometre (by default every price is 0), and for a traveller with
+//! a pass, there is no other query and the set is RAPTOR's.
 //!
 //! **Path size.** The chains of one trip share rides, not links: [`ride_path_sizes`] gives each
 //! transit chain its path-size factor over the trip's transit chains by time share, as the other
@@ -48,7 +62,8 @@
 //!
 //! **Cost:** per stop a walk-layer node and its walks to the stops within the transfer limit;
 //! per distinct origin and destination node one bounded search on the walk layer; per transit
-//! trip one RAPTOR query, once per run.
+//! trip one RAPTOR query, once per run (and with fares by kind of service, one more per cheaper
+//! price level, on a view of the timetable built once).
 
 use std::collections::HashMap;
 
@@ -57,7 +72,7 @@ use openmobisim_core_graph::geometry::{LonLat, ground_distance_metres};
 use openmobisim_core_graph::network::RoadNetwork;
 use openmobisim_core_routes::{NodeSnapper, Reach};
 use openmobisim_core_transit::{
-    Footpaths, Journey, JourneyLeg, Raptor, RaptorData, Timetable, TransitDefaults,
+    Footpaths, Journey, JourneyLeg, Raptor, RaptorData, ServiceKind, Timetable, TransitDefaults,
 };
 use openmobisim_core_types::ids::{EntityId, NULL_ID, NodeId, TripId, UserClassId};
 
@@ -79,16 +94,70 @@ pub struct Transit<'a> {
     /// and from the last (3 600 by default, the user's ruling of 2026-11-05: *an assumption*,
     /// a choice-set limit, not a preference; the walking minutes are weighed by the choice model).
     pub walk_total_max_seconds: f64,
+    /// What a journey costs a traveller without a transit pass ([`Fares::FREE`] by default).
+    pub fares: Fares,
 }
 
 /// The longest walk in a journey in all, by default, in seconds.
 pub const WALK_TOTAL_MAX_SECONDS: f64 = 3600.0;
 
 impl<'a> Transit<'a> {
-    /// `timetable` with `defaults` and the default longest walk in all.
+    /// `timetable` with `defaults`, the default longest walk in all and no fare.
     #[must_use]
     pub fn new(timetable: &'a Timetable, defaults: TransitDefaults) -> Self {
-        Self { timetable, defaults, walk_total_max_seconds: WALK_TOTAL_MAX_SECONDS }
+        Self {
+            timetable,
+            defaults,
+            walk_total_max_seconds: WALK_TOTAL_MAX_SECONDS,
+            fares: Fares::FREE,
+        }
+    }
+}
+
+/// A journey's fare, in euros, for a traveller without a transit pass: [`Self::base_eur`] once
+/// per journey, and for each ride the price per kilometre of its line's kind of service
+/// ([`Self::km_eur`]) times the ride's kilometres, from its boarding stop to its alighting stop
+/// as the crow flies. A traveller holding a transit pass pays 0.
+///
+/// *Uncalibrated: every price 0 by default (paying, like holding a pass, is access, which the
+/// traveller classes give). A city's own: the Netherlands charge one base fare and one rate per
+/// kilometre for bus, tram and metro and another for trains; Amsterdam's GVB a base of 1.16 € and
+/// 0.217 € a kilometre in 2026 (Vervoerregio Amsterdam, note BBV/2025/15361, p. 2,
+/// <https://vervoerregio.bestuurlijkeinformatie.nl/Document/View/abddeeb0-be54-4eae-9622-4ac0935df151>).*
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Fares {
+    /// The price of a journey, once, in euros.
+    pub base_eur: f64,
+    /// The price of a kilometre ridden, in euros, by kind of service, in the order of
+    /// [`ServiceKind::ALL`] (rail, metro, tram, bus, ferry, other).
+    pub km_eur: [f64; 6],
+}
+
+impl Fares {
+    /// No fare at all.
+    pub const FREE: Self = Self { base_eur: 0.0, km_eur: [0.0; 6] };
+
+    /// The price of a kilometre on a run of `kind`.
+    #[must_use]
+    pub fn km_eur_of(&self, kind: ServiceKind) -> f64 {
+        self.km_eur[kind as usize]
+    }
+
+    /// Whether some kinds of `timetable`'s lines have another price per kilometre than others:
+    /// only then does a journey's fare depend on more than its kilometres, and is it a third
+    /// criterion of the journeys (see the [module docs](self)).
+    #[must_use]
+    pub fn differ_by_kind(&self, timetable: &Timetable) -> bool {
+        self.levels(timetable).len() > 1
+    }
+
+    /// The distinct prices per kilometre of the kinds `timetable`'s lines have, cheapest first.
+    fn levels(&self, timetable: &Timetable) -> Vec<f64> {
+        let mut levels: Vec<f64> =
+            (0..timetable.route_count()).map(|r| self.km_eur_of(timetable.route_kind(r))).collect();
+        levels.sort_by(f64::total_cmp);
+        levels.dedup();
+        levels
     }
 }
 
@@ -107,6 +176,9 @@ pub fn walking_within_limits(
     let total = access + transfers.iter().sum::<f64>() + egress;
     access <= access_max && egress <= access_max && total <= total_max
 }
+
+/// A stop and the walk to it (or from it), in whole seconds.
+type StopWalk = (NodeId, u32);
 
 /// Whole seconds of a walk, rounded down.
 fn floor_seconds(s: f64) -> u32 {
@@ -129,6 +201,9 @@ pub struct TransitPlanner<'a> {
     node_stops: Vec<NodeId>,
     has_stop: Vec<bool>,
     data: RaptorData,
+    /// With fares by kind of service, per price per kilometre below the dearest (cheapest
+    /// first), the timetable's runs of the kinds priced at most that much; empty otherwise.
+    cheaper: Vec<RaptorData>,
 }
 
 impl<'a> TransitPlanner<'a> {
@@ -219,6 +294,22 @@ impl<'a> TransitPlanner<'a> {
             walks.into_iter().map(|((a, b), s)| (NodeId::new(a), NodeId::new(b), s)).collect();
         list.sort_unstable();
         let footpaths = Footpaths::new(timetable.stop_count(), list);
+        // The cheaper views, only when the kinds' prices per kilometre differ.
+        let fares = transit.fares;
+        let mut levels = fares.levels(timetable);
+        levels.pop();
+        let cheaper = levels
+            .into_iter()
+            .map(|level| {
+                RaptorData::new_keeping(
+                    timetable,
+                    timetable.scheduled(),
+                    footpaths.clone(),
+                    d.board_slack_s,
+                    |run| fares.km_eur_of(timetable.run_kind(run)) <= level,
+                )
+            })
+            .collect();
         let data = RaptorData::new(timetable, timetable.scheduled(), footpaths, d.board_slack_s);
         Ok(Self {
             timetable,
@@ -230,6 +321,7 @@ impl<'a> TransitPlanner<'a> {
             node_stops,
             has_stop,
             data,
+            cheaper,
         })
     }
 
@@ -250,9 +342,11 @@ impl<'a> TransitPlanner<'a> {
         Reach::new(self.walk, &self.walk_seconds)
     }
 
-    /// A RAPTOR scratch for [`Self::legs`].
-    pub(crate) fn raptor(&self) -> Raptor<'_> {
-        Raptor::new(&self.data, self.transit.defaults.max_rides as usize)
+    /// The RAPTOR scratches for [`Self::legs`]: one on the whole timetable, then one per cheaper
+    /// view (with fares by kind of service).
+    pub(crate) fn raptors(&self) -> Vec<Raptor<'_>> {
+        let rides = self.transit.defaults.max_rides as usize;
+        std::iter::once(&self.data).chain(&self.cheaper).map(|d| Raptor::new(d, rides)).collect()
     }
 
     /// The stops within the access limit of walk node `node` (`backward`: the stops from which
@@ -289,14 +383,17 @@ impl<'a> TransitPlanner<'a> {
     /// Every transit leg of a trip from `from` to `to` leaving at `departure` (whole seconds),
     /// given the walks from its origin (`access`) and to its destination (`egress`, both from
     /// [`Self::walks`]): one per journey of the Pareto set that is kept (see the
-    /// [module docs](self)), fewest vehicles first.
+    /// [module docs](self)), fewest vehicles first; its money the fare if the traveller `pays`
+    /// (holds no transit pass), else 0. With fares by kind of service, for a traveller who pays,
+    /// the journeys of each cheaper view are added after them, and only those no other journey
+    /// dominates on arrival, vehicles and fare are kept ([`dominated`]).
     pub(crate) fn legs(
         &self,
-        raptor: &mut Raptor<'_>,
+        raptors: &mut [Raptor<'_>],
         (from, to): (Place, Place),
         departure: u32,
-        access: &[(NodeId, u32)],
-        egress: &[(NodeId, u32)],
+        (access, egress): (&[StopWalk], &[StopWalk]),
+        pays: bool,
     ) -> Vec<Leg> {
         if access.is_empty() || egress.is_empty() {
             return Vec::new();
@@ -304,21 +401,47 @@ impl<'a> TransitPlanner<'a> {
         let at: Vec<(NodeId, u32)> =
             access.iter().map(|&(s, w)| (s, departure.saturating_add(w))).collect();
         let d = self.transit.defaults;
-        raptor
-            .pareto_before(&at, egress, u32::MAX)
-            .iter()
-            .filter(|j| !is_loop(j))
-            .filter(|j| f64::from(j.arrival.saturating_sub(departure)) <= d.journey_max_s)
-            .filter_map(|j| self.leg_of(j, from, to, departure))
+        // The whole timetable's journeys; and each cheaper view's for a traveller who pays.
+        let views = if pays { raptors.len() } else { 1 };
+        let mut found: Vec<(u32, Leg)> = Vec::new();
+        for raptor in &mut raptors[..views] {
+            found.extend(
+                raptor
+                    .pareto_before(&at, egress, u32::MAX)
+                    .iter()
+                    .filter(|j| !is_loop(j))
+                    .filter(|j| f64::from(j.arrival.saturating_sub(departure)) <= d.journey_max_s)
+                    .filter_map(|j| Some((j.arrival, self.leg_of(j, from, to, departure, pays)?))),
+            );
+        }
+        if views == 1 {
+            return found.into_iter().map(|(_, leg)| leg).collect();
+        }
+        let keys: Vec<(u32, usize, f64)> =
+            found.iter().map(|(a, leg)| (*a, leg.rides.len(), leg.attributes.money)).collect();
+        found
+            .into_iter()
+            .enumerate()
+            .filter(|&(i, _)| !dominated(&keys, i))
+            .map(|(_, (_, leg))| leg)
             .collect()
     }
 
-    /// The leg of journey `j` of a trip leaving at `departure`; `None` if its walking breaks a
-    /// limit ([`walking_within_limits`]).
-    fn leg_of(&self, j: &Journey, from: Place, to: Place, departure: u32) -> Option<Leg> {
+    /// The leg of journey `j` of a trip leaving at `departure`, its money the fare if the
+    /// traveller `pays`, else 0; `None` if its walking breaks a limit ([`walking_within_limits`]).
+    fn leg_of(
+        &self,
+        j: &Journey,
+        from: Place,
+        to: Place,
+        departure: u32,
+        pays: bool,
+    ) -> Option<Leg> {
         let (mut access, mut egress) = (0_u32, 0_u32);
         let mut transfers: Vec<f64> = Vec::new();
         let (mut walk, mut wait, mut ride, mut metres) = (0_u32, 0_u32, 0_u32, 0.0);
+        let fares = self.transit.fares;
+        let mut fare = fares.base_eur;
         let mut clock = departure;
         let mut rides = Vec::new();
         for leg in &j.legs {
@@ -339,10 +462,12 @@ impl<'a> TransitPlanner<'a> {
                 } => {
                     wait += leave.saturating_sub(clock);
                     ride += arrival.saturating_sub(leave);
-                    metres += ground_distance_metres(
+                    let m = ground_distance_metres(
                         self.timetable.stop_position(board_stop),
                         self.timetable.stop_position(alight_stop),
                     );
+                    metres += m;
+                    fare += fares.km_eur_of(self.timetable.run_kind(run)) * m / 1000.0;
                     rides.push(Ride {
                         line: self.timetable.run_route(run),
                         run,
@@ -382,6 +507,7 @@ impl<'a> TransitPlanner<'a> {
             wait_seconds: f64::from(wait),
             transfers: u32::try_from(rides.len().saturating_sub(1)).expect("few rides"),
             length_metres: metres,
+            money: if pays { fare } else { 0.0 },
             ..Attributes::default()
         };
         Some(Leg {
@@ -395,6 +521,16 @@ impl<'a> TransitPlanner<'a> {
             rides,
         })
     }
+}
+
+/// Whether journey `i` of `keys` (each journey's arrival, vehicles and fare) is dominated: another
+/// is no later, takes no more vehicles and costs no more, and is better in one of the three, or
+/// equal in all three and listed before it (the first of equal journeys is kept).
+fn dominated(keys: &[(u32, usize, f64)], i: usize) -> bool {
+    let (a, v, f) = keys[i];
+    keys.iter().enumerate().any(|(k, &(b, w, g))| {
+        k != i && b <= a && w <= v && g <= f && (k < i || b < a || w < v || g < f)
+    })
 }
 
 /// Whether a journey comes back to the stop it first boarded at (a ride out and back).
@@ -413,8 +549,9 @@ impl LegPlanner for TransitPlanner<'_> {
         Mode::Transit
     }
 
-    /// The journey arriving first (the last of the Pareto set kept); the class, the state and
-    /// the cost source are not read (the timetable is static).
+    /// The journey arriving first (the last of the Pareto set kept), its fare not priced (no
+    /// traveller is known here); the class, the state and the cost source are not read (the
+    /// timetable is static).
     fn plan(
         &self,
         from: Place,
@@ -428,8 +565,9 @@ impl LegPlanner for TransitPlanner<'_> {
         let mut reach = self.reach();
         let access = self.walks(&mut reach, o, false);
         let egress = self.walks(&mut reach, d, true);
-        let mut raptor = self.raptor();
-        self.legs(&mut raptor, (from, to), floor_seconds(departure), &access, &egress).pop()
+        let mut raptors = self.raptors();
+        let departure = floor_seconds(departure);
+        self.legs(&mut raptors, (from, to), departure, (&access, &egress), false).pop()
     }
 
     /// Nothing: a leg on the static timetable costs what it cost when planned.
@@ -487,4 +625,28 @@ pub fn boardings(
         }
     }
     (on, off)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_journey_stands_unless_another_is_as_good_in_all_three_and_better_in_one() {
+        // (arrival, vehicles, fare): a train (earlier, dearer); a bus (later, cheaper); a later
+        // and dearer bus; the train again (equal in all three, listed after); two vehicles,
+        // earlier and dearer still.
+        let keys = [(900, 1, 4.6), (1500, 1, 2.2), (1600, 1, 3.0), (900, 1, 4.6), (800, 2, 9.0)];
+        let stands: Vec<bool> = (0..keys.len()).map(|i| !dominated(&keys, i)).collect();
+        assert_eq!(stands, [true, true, false, false, true]);
+    }
+
+    #[test]
+    #[allow(clippy::float_cmp, reason = "exact zeros")]
+    fn each_kind_reads_its_own_price_per_km() {
+        let fares = Fares { base_eur: 1.0, km_eur: [0.3, 0.1, 0.1, 0.1, 0.5, 0.0] };
+        assert!((fares.km_eur_of(ServiceKind::Rail) - 0.3).abs() < 1e-15);
+        assert!((fares.km_eur_of(ServiceKind::Bus) - 0.1).abs() < 1e-15);
+        assert!(Fares::FREE.km_eur.iter().all(|p| *p == 0.0) && Fares::FREE.base_eur == 0.0);
+    }
 }
