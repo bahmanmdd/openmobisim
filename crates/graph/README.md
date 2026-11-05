@@ -26,8 +26,9 @@ Metres, m/s, seconds and veh/s inside; km/h and veh/h only in the rows and build
 - Free-flow time of a link for a mode = length / that mode's free-flow speed, nothing else. A
   signal never changes it. There is no travel-time column.
 - Capacity = the row's value when given, else lanes × `capacity_per_lane`: the flow the
-  link's downstream end passes. A link without cars has 0 lanes, infinite capacity (nothing is
-  loaded there) and no car speed. No storage, jam density, passenger-car unit or wave speed.
+  link's downstream end passes. A car row may give an unlimited capacity as infinity; its
+  downstream end then passes any flow. A link without cars has 0 lanes, infinite capacity
+  (nothing is loaded there) and no car speed. No storage, jam density, passenger-car unit or wave speed.
 - Signals (a node's flag, a link's downstream-end flag) are stored and applied nowhere.
 - Length absent = the straight line between the two nodes in the plane. For longitude/latitude
   that plane is the UTM zone of the nodes' bounding-box centre (Krüger series, WGS84; the
@@ -39,8 +40,9 @@ Metres, m/s, seconds and veh/s inside; km/h and veh/h only in the rows and build
 position kinds; a position that cannot be projected or is not finite; a duplicate node or link
 id; a signal on an undeclared node; a link to an undeclared node; a link with no mode or with
 transit; a car link without lanes or car speed, or with zero lanes; a link without cars that
-gives any car field; a car speed, length (given or straight line) or capacity that is not a
-finite number above zero; a build value that is not. The first fault in sorted order is named.
+gives any car field; a car speed or length (given or straight line) that is not a finite
+number above zero; a capacity that is not above zero (infinity is allowed); a build value that
+is not a finite number above zero. The first fault in sorted order is named.
 
 ## Bikes
 A bike is a mode on the same links as cars and walkers, with its own free-flow speed
@@ -54,6 +56,6 @@ in 360 s, on a street or a cycle path, signal or not.
 free-flow times (1 500 m at 15 km/h by bike 360 s, 1 000 m at 4.8 km/h on foot 750 s, 2 000 m
 at 50 km/h by car 144 s, unchanged by a signal; a cycle path with no car fields, 360 s by bike,
 infinite capacity, 0 lanes); hand capacities (1 200 veh/h is 1/3 veh/s; 2 lanes × 1 800 veh/h
-is 1 veh/s); Pythagoras (3 m and 4 m apart is 5 m); a hand count of a 3 × 3
+is 1 veh/s; a car row's infinity kept as an unlimited capacity); Pythagoras (3 m and 4 m apart is 5 m); a hand count of a 3 × 3
 grid (9 nodes, 24 links, out-degrees 2, 3, 4); the standard library's sort for the id order;
 the UTM grid's definition and the WGS84 meridian and parallel arcs for the projection.

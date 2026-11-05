@@ -11,6 +11,7 @@ use openmobisim_graph::geometry::{LonLat, Position, UTM_K0};
 use openmobisim_graph::network::{BuildError, BuildValues, LinkRow, Network, NetworkBuilder};
 use openmobisim_types::ids::{EntityId, LinkId, NodeId};
 use openmobisim_types::mode::{Mode, ModeSet};
+use openmobisim_types::units::Flow;
 
 fn only_link(net: &Network) -> LinkId {
     assert_eq!(net.link_count(), 1);
@@ -67,6 +68,23 @@ fn a_table_capacity_of_1200_veh_h_is_kept_as_a_third_of_a_vehicle_per_second() {
         two_nodes(LinkRow { capacity_veh_h: Some(1_200.0), ..row(3, 50.0) }).build(VALUES).unwrap();
     assert!(close(net.capacity(only_link(&net)).get(), 1.0 / 3.0));
     assert!(close(net.capacity(only_link(&net)).as_veh_per_hour(), 1_200.0));
+}
+
+#[test]
+fn a_car_link_of_unlimited_capacity_builds_with_its_lanes_and_free_flow_time_unchanged() {
+    // A row may give an unlimited capacity as infinity: its downstream end passes any flow. The
+    // lanes stay 2 and the car free-flow time stays 1 000 m / (50 000 / 3 600 m/s) = 72 s.
+    let unlimited = LinkRow { capacity_veh_h: Some(f64::INFINITY), ..row(2, 50.0) };
+    let net = two_nodes(unlimited).build(VALUES).unwrap();
+    let link = only_link(&net);
+    assert_eq!(net.capacity(link).get().to_bits(), Flow::INFINITE.get().to_bits());
+    assert_eq!(net.lanes(link), 2);
+    assert!(close(time(&net, Mode::Car), 72.0), "{}", time(&net, Mode::Car));
+    // Negative infinity and NaN are still refused.
+    for veh_h in [f64::NEG_INFINITY, f64::NAN] {
+        let err = error_of(two_nodes(LinkRow { capacity_veh_h: Some(veh_h), ..unlimited }));
+        assert!(matches!(err, BuildError::BadCapacity { .. }), "{veh_h}: {err:?}");
+    }
 }
 
 #[test]

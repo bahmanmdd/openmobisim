@@ -50,9 +50,10 @@ pub struct LinkRow {
     pub car_speed_km_h: Option<f64>,
     /// The length in metres; `None` is the straight line between the two nodes.
     pub length_m: Option<f64>,
-    /// The capacity of the downstream end across all lanes, in vehicles per hour. When cars are
-    /// allowed, `None` is lanes times [`BuildValues::capacity_per_lane`]; when they are not, it
-    /// must be `None` (the link has no capacity limit: nothing is loaded there).
+    /// The capacity of the downstream end across all lanes, in vehicles per hour, above zero;
+    /// `f64::INFINITY` is an unlimited capacity (the downstream end passes any flow). When cars
+    /// are allowed, `None` is lanes times [`BuildValues::capacity_per_lane`]; when they are not,
+    /// it must be `None` (the link has no capacity limit: nothing is loaded there).
     pub capacity_veh_h: Option<f64>,
     /// Whether a signal stands at the downstream end. Stored, applied nowhere.
     pub signal_at_downstream_end: bool,
@@ -153,7 +154,8 @@ pub enum BuildError {
         /// The length, in metres.
         metres: f64,
     },
-    /// A link's given capacity is not a finite number above zero.
+    /// A link's given capacity is not a number above zero (NaN, zero, negative or negative
+    /// infinity). Positive infinity, an unlimited capacity, is allowed.
     BadCapacity {
         /// The link.
         link: String,
@@ -210,7 +212,8 @@ impl fmt::Display for BuildError {
             }
             Self::BadCapacity { link, veh_h } => write!(
                 f,
-                "link {link} has capacity {veh_h} veh/h; it must be finite and above zero"
+                "link {link} has capacity {veh_h} veh/h; it must be above zero (infinity, \
+                 an unlimited capacity, is allowed)"
             ),
         }
     }
@@ -483,8 +486,9 @@ fn car_fields(link: &str, row: &LinkRow, per_lane: f64) -> Result<(Speed, u8, Fl
     if !(km_h.is_finite() && km_h > 0.0) {
         return Err(BuildError::BadSpeed { link: link.to_owned(), km_h });
     }
+    // Positive infinity is an unlimited capacity, kept as `Flow::INFINITE` (∞ / 3 600 = ∞).
     let veh_h = row.capacity_veh_h.unwrap_or(f64::from(lanes) * per_lane);
-    if !(veh_h.is_finite() && veh_h > 0.0) {
+    if veh_h.is_nan() || veh_h <= 0.0 {
         return Err(BuildError::BadCapacity { link: link.to_owned(), veh_h });
     }
     Ok((Speed::from_km_per_hour(km_h), lanes, Flow::from_veh_per_hour(veh_h)))

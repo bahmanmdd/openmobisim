@@ -56,10 +56,11 @@ pub fn two_nodes(row: LinkRow) -> NetworkBuilder {
     b
 }
 
-/// The external id of grid node `(row, column)`.
+/// The external id of grid node `(row, column)`. The row and the column are kept apart by `_`
+/// (the network tests' `n{r}{c}` names node (1, 23) and node (12, 3) alike from 11 × 11 on).
 #[must_use]
 pub fn node_name(r: u32, c: u32) -> String {
-    format!("n{r}{c}")
+    format!("n{r}_{c}")
 }
 
 /// An `n × n` grid of nodes 100 m apart in metres, with a two-way street (two links) along every

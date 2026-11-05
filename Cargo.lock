@@ -67,6 +67,10 @@ version = "0.2.0-dev"
 [[package]]
 name = "openmobisim-loading"
 version = "0.2.0-dev"
+dependencies = [
+ "openmobisim-graph",
+ "openmobisim-types",
+]
 
 [[package]]
 name = "openmobisim-loop"
