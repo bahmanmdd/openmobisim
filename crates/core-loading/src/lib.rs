@@ -46,12 +46,12 @@ pub use level1::{
     Bpr, StaticDemand, StaticIteration, StaticOptions, StaticResult, StaticSolver, apportion,
     solve_static,
 };
-pub use link_bins::{EntryTables, LinkBinRecorder, LinkBins};
-pub use link_times::{LinkTimes, relative_time_change};
+pub use link_bins::{Entrants, EntryTables, LinkBinRecorder, LinkBins};
+pub use link_times::{LinkTimes, LinkTimesReading, relative_time_change};
 pub use ltm::{
     CapacityChange, Chain, FidelityLevel, LiveTimes, LockReport, LtmNetwork, LtmOutput, Recording,
     Reroute, RerouteFrom, RerouteReason, RerouteRecord, RerouteRule, Rules, run_ltm,
-    run_ltm_binned, run_ltm_chained, run_ltm_recorded,
+    run_ltm_binned, run_ltm_chained, run_ltm_recorded, run_ltm_recorded_with_entrants,
 };
 pub use node_model::{TurnDemand, solve_node};
 pub use vehicle::Vehicle;

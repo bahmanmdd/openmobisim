@@ -74,6 +74,9 @@ _STATIC_ONLY = ("frank_wolfe",)
 ENGINES = ("current", "one-loop")
 #: The one-loop engine's allocations (``equilibration_options`` ``allocation``).
 ONE_LOOP_ALLOCATIONS = ("draws", "choice_quota", "quota")
+#: The one-loop engine's readings of the link travel times (``equilibration_options``
+#: ``link_times``), the default first.
+ONE_LOOP_LINK_TIMES = ("bins", "fifo")
 
 
 class EngineNotSupportedError(ValueError):
@@ -1649,7 +1652,18 @@ class Scenario:
         return new
 
     def _pipeline(self, run_id: str, output_dir: str, **extra: Any) -> Any:
-        """The core's run, with this scenario's parts and ``extra``."""
+        """The core's run, with this scenario's parts and ``extra``.
+
+        Raises:
+            ValueError: If an option of ``equilibration_options`` is text: the one-loop engine's
+                ``allocation`` and ``link_times`` are; the current engine's are numbers.
+        """
+        for name, value in (self._equilibration_options or {}).items():
+            if isinstance(value, str):
+                raise ValueError(
+                    f"equilibration_options {name} {value!r} is an option of the one-loop engine "
+                    '(engine="one-loop"); the current engine\'s options are numbers'
+                )
         return _core.run_pipeline(
             self._network,
             run_id,
@@ -1855,6 +1869,14 @@ class Scenario:
                         f"got {value!r}"
                     )
                 loop["allocation"] = value
+            if "link_times" in options:
+                value = options.pop("link_times")
+                if value not in ONE_LOOP_LINK_TIMES:
+                    raise ValueError(
+                        f"equilibration_options link_times must be one of {ONE_LOOP_LINK_TIMES}, "
+                        f"got {value!r}"
+                    )
+                loop["link_times"] = value
             for name in (
                 "gap_tolerance",
                 "gap_sample",
@@ -2113,14 +2135,22 @@ class Scenario:
                 0.01 by default and uncalibrated, below which two chains count as equal; the
                 deterministic choice splits the trips facing such a tie evenly over its chains,
                 in trip order, with no random draw, and the route search counts a new chain as
-                found only if it is cheaper than the trip's best by more than the band), and
+                found only if it is cheaper than the trip's best by more than the band),
                 ``allocation`` (how the travellers who reconsider are chosen and spread over
                 their chains: ``"draws"``, the default, a seeded draw per traveller and the
                 choice model's own choice; ``"choice_quota"``, the trips facing the same choice
                 (the same user class, the same choice set, departing in the same cost bin) that
                 reconsider spread over the chains in the model's proportions, in trip order with
                 no random draw; ``"quota"``, also who reconsiders by quota, the averaging step's
-                share of each such group, so no random draw enters the choice at all). Every car
+                share of each such group, so no random draw enters the choice at all), and
+                ``link_times`` (how the route search and the pricing read the link travel times
+                the loading measured: ``"bins"``, the default, each link's mean time per bin of
+                entry time, which is not first-in-first-out where the time falls from one bin to
+                the next, so a car entering late in a bin can leave after one entering at the
+                next bin's start; ``"fifo"``, the exit second read on straight lines through the
+                entry and exit seconds of the first and the last car to enter each link in each
+                bin, which the loading then records, so that no car leaves before one that
+                entered earlier). Every car
                 trip pays the fixed times of reaching the car and of parking and leaving it
                 (``mode_options`` ``car_access_s`` and ``car_egress_s``, rounded to whole
                 seconds): the car enters the roads ``car_access_s`` after the departure, the

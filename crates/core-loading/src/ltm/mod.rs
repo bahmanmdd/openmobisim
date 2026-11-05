@@ -655,6 +655,14 @@ impl<'a> LtmNetwork<'a> {
         self
     }
 
+    /// [`Self::with_entry_bins`], also keeping each (link, entry bin)'s first and last entrant
+    /// (see [`LinkBinRecorder::with_entrants`]).
+    #[must_use]
+    pub fn with_entrants(mut self) -> Self {
+        self.recorder = self.recorder.map(LinkBinRecorder::with_entrants);
+        self
+    }
+
     /// Tell the recorder about every vehicle still on a link (driving, or waiting at its stop
     /// line), or waiting at an origin to enter one, at second `end` (see
     /// [`LinkBinRecorder::record_unfinished`]). Call once, after the last step.
@@ -1796,8 +1804,15 @@ pub fn run_ltm_binned(
     level: FidelityLevel,
     bin_seconds: u32,
 ) -> (Vec<Trajectory>, LinkBins) {
-    let (done, bins) =
-        run_ltm_inner(network, turns, vehicles, window, step, level, Some((bin_seconds, None)));
+    let (done, bins) = run_ltm_inner(
+        network,
+        turns,
+        vehicles,
+        window,
+        step,
+        level,
+        Some((bin_seconds, None, false)),
+    );
     (done, bins.expect("bins were asked for").0)
 }
 
@@ -1825,7 +1840,38 @@ pub fn run_ltm_recorded(
         window,
         step,
         level,
-        Some((bin_seconds, Some(bin_seconds))),
+        Some((bin_seconds, Some(bin_seconds), false)),
+    );
+    let (exit, tables) = bins.expect("bins were asked for");
+    (done, exit, tables.expect("entry bins were asked for"))
+}
+
+/// [`run_ltm_recorded`], the entry-time table also keeping each (link, entry bin)'s first and
+/// last entrant ([`crate::LinkBins::entrants`]): what the interpolated reading of the link times
+/// reads ([`crate::LinkTimesReading::Fifo`]). The same trajectories and the same tables
+/// otherwise, to the bit.
+///
+/// # Panics
+///
+/// Panics if `step` is not positive.
+#[must_use]
+pub fn run_ltm_recorded_with_entrants(
+    network: &RoadNetwork,
+    turns: &TurnTable,
+    vehicles: &[Vehicle],
+    window: Duration,
+    step: Duration,
+    level: FidelityLevel,
+    bin_seconds: u32,
+) -> (Vec<Trajectory>, LinkBins, EntryTables) {
+    let (done, bins) = run_ltm_inner(
+        network,
+        turns,
+        vehicles,
+        window,
+        step,
+        level,
+        Some((bin_seconds, Some(bin_seconds), true)),
     );
     let (exit, tables) = bins.expect("bins were asked for");
     (done, exit, tables.expect("entry bins were asked for"))
@@ -1856,8 +1902,8 @@ pub fn run_ltm_chained(
 ) -> LtmOutput {
     let recording = match recording {
         Recording::Trajectories => None,
-        Recording::Bins(b) => Some((b, None)),
-        Recording::BinsAndEntry(b, e) => Some((b, Some(e))),
+        Recording::Bins(b) => Some((b, None, false)),
+        Recording::BinsAndEntry(b, e) => Some((b, Some(e), false)),
     };
     let (trajectories, bins, lock, reroutes, peak_occupancy, unfinished) = run_ltm_inner_chained(
         network, turns, vehicles, chains, window, step, level, recording, rules, rerouter,
@@ -1876,7 +1922,7 @@ fn run_ltm_inner(
     window: Duration,
     step: Duration,
     level: FidelityLevel,
-    recording: Option<(u32, Option<u32>)>,
+    recording: Option<(u32, Option<u32>, bool)>,
 ) -> (Vec<Trajectory>, Option<(LinkBins, Option<EntryTables>)>) {
     let (done, bins, _, _, _, _) = run_ltm_inner_chained(
         network,
@@ -1913,7 +1959,7 @@ fn run_ltm_inner_chained(
     window: Duration,
     step: Duration,
     level: FidelityLevel,
-    recording: Option<(u32, Option<u32>)>,
+    recording: Option<(u32, Option<u32>, bool)>,
     rules: Rules,
     mut rerouter: Option<&mut dyn Reroute>,
 ) -> Inner {
@@ -1943,12 +1989,16 @@ fn run_ltm_inner_chained(
     if !rules.capacity_changes.is_empty() {
         sim = sim.with_capacity_changes(rules.capacity_changes);
     }
-    // `recording`: the bin length, and the entry-time bins' if those are filed too (S170, S232).
-    let entry_bins = recording.is_some_and(|(_, entry)| entry.is_some());
-    if let Some((bin_seconds, entry)) = recording {
+    // `recording`: the bin length, the entry-time bins' if those are filed too (S170, S232), and
+    // whether their first and last entrants are kept.
+    let entry_bins = recording.is_some_and(|(_, entry, _)| entry.is_some());
+    if let Some((bin_seconds, entry, entrants)) = recording {
         sim = sim.with_link_bins(bin_seconds, window.get());
         if let Some(entry_seconds) = entry {
             sim = sim.with_entry_bins_of(entry_seconds);
+            if entrants {
+                sim = sim.with_entrants();
+            }
         }
     }
     if chains.is_empty() {

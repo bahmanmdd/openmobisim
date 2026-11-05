@@ -25,7 +25,10 @@ use std::collections::HashMap;
 use openmobisim_core_demand::Trips;
 use openmobisim_core_graph::network::RoadNetwork;
 use openmobisim_core_graph::turns::TurnTable;
-use openmobisim_core_loading::{EntryTables, FidelityLevel, LinkTimes, Vehicle, run_ltm_recorded};
+use openmobisim_core_loading::{
+    EntryTables, FidelityLevel, LinkTimes, LinkTimesReading, Vehicle, run_ltm_recorded,
+    run_ltm_recorded_with_entrants,
+};
 use openmobisim_core_types::ids::{EntityId, TripId, VehicleId};
 use openmobisim_core_types::units::Duration;
 
@@ -48,11 +51,17 @@ impl Loaded {
     /// The link travel times by time of day this loading measured: built from its entry-time
     /// tables ([`LinkTimes::from_tables`]: a bin nobody entered reads the last recorded time
     /// carried forward, less the time elapsed, down to free flow), or the free-flow times when
-    /// it recorded none.
+    /// it recorded none; read by their bins ([`LinkTimesReading::Bins`]).
     #[must_use]
     pub fn link_times(&self, network: &RoadNetwork) -> LinkTimes {
+        self.link_times_read(network, LinkTimesReading::Bins)
+    }
+
+    /// [`Self::link_times`], read by `reading` ([`LinkTimes::with_reading`]).
+    #[must_use]
+    pub fn link_times_read(&self, network: &RoadNetwork, reading: LinkTimesReading) -> LinkTimes {
         match &self.entry {
-            Some(tables) => LinkTimes::from_tables(network, tables),
+            Some(tables) => LinkTimes::from_tables(network, tables).with_reading(reading),
             None => LinkTimes::free_flow(network),
         }
     }
@@ -151,6 +160,10 @@ pub struct PointQueue<'a> {
     pub step_seconds: f64,
     /// The width of the entry-time bins, in seconds ([`DEFAULT_BIN_SECONDS`]).
     pub bin_seconds: u32,
+    /// Whether the entry-time table also keeps, per link and bin, the entry and exit seconds of
+    /// its first and last entrant (default `false`): what [`LinkTimesReading::Fifo`]
+    /// reads; 32 bytes more per row. The rest of the loading is the same, to the bit.
+    pub entrants: bool,
 }
 
 impl<'a> PointQueue<'a> {
@@ -171,6 +184,7 @@ impl<'a> PointQueue<'a> {
             end_seconds,
             step_seconds: DEFAULT_STEP_SECONDS,
             bin_seconds: DEFAULT_BIN_SECONDS,
+            entrants: false,
         }
     }
 
@@ -195,7 +209,8 @@ impl Loader for PointQueue<'_> {
     /// Panics if [`PointQueue::step_seconds`] is not positive or [`PointQueue::bin_seconds`]
     /// is 0.
     fn load(&self, vehicles: &[Vehicle], network: &RoadNetwork) -> Loaded {
-        let (trajectories, _, tables) = run_ltm_recorded(
+        let record = if self.entrants { run_ltm_recorded_with_entrants } else { run_ltm_recorded };
+        let (trajectories, _, tables) = record(
             network,
             self.turns,
             vehicles,
