@@ -650,7 +650,7 @@ impl<'a> StaticPlanner<'a> {
     pub fn leg_along(&self, from: Place, to: Place, departure: f64, links: Vec<LinkId>) -> Leg {
         let attributes = self.price(&links);
         let fixed = self.fixed_of(&links);
-        Leg { mode: self.mode, from, to, departure, attributes, fixed, links }
+        Leg { mode: self.mode, from, to, departure, attributes, fixed, links, rides: Vec::new() }
     }
 
     /// A search over the context of `class`.

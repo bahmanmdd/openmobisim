@@ -68,7 +68,8 @@ _STATIC_ONLY = ("frank_wolfe",)
 
 #: The engines a scenario runs on (``Scenario.run``'s ``engine``): ``"current"``, the run of
 #: every mode, loading and option described in this package; ``"one-loop"``, the assignment of
-#: car, bike and walking trips (each stated, or chosen by mode choice among the three) in one loop
+#: car, bike and walking trips (each stated, or chosen by mode choice among the three) and transit
+#: trips (stated, with a timetable) in one loop
 #: of five stages per assignment iteration (search, choose, load, measure, assess), at flow level
 #: 0 or 2.
 ENGINES = ("current", "one-loop")
@@ -1763,12 +1764,17 @@ class Scenario:
         if self._flow_level not in (0, 2):
             lacking.append(f"flow_level {self._flow_level} (it loads at 0 or 2)")
         stated: dict[str, int] = {}
+        # Transit trips ride the timetable, when the scenario has one.
+        runs = ("car", "bike", "walk") + (("transit",) if self._transit is not None else ())
         for row in self._trips or ():
-            if row[9] is not None and row[9] not in ("car", "bike", "walk"):
+            if row[9] is not None and row[9] not in runs:
                 stated[row[9]] = stated.get(row[9], 0) + 1
         if stated:
             counts = ", ".join(f"{n} {m}" for m, n in sorted(stated.items()))
-            lacking.append(f"trips of modes other than the car, the bike and walking ({counts})")
+            lacking.append(
+                "trips of modes other than the car, the bike, walking and transit with a "
+                f"timetable ({counts})"
+            )
         # Mode choice among the car, the bike and walking: a class is offered the run's modes
         # that its own list also holds, so only the run's modes can ask for another mode.
         modes = list(self._modes or ())
@@ -1777,8 +1783,8 @@ class Scenario:
             lacking.append(
                 f"modes {others} (its mode choice is among the car, the bike and walking)"
             )
-        given("transit", self._transit)
-        given("transit_options", self._transit_options)
+        if float((self._transit_options or {}).get("buses_on_roads", 0)) != 0:
+            lacking.append("transit_options buses_on_roads 1 (every bus keeps to its timetable)")
         given("parkings", self._parkings)
         given("parking_options", self._parking_options)
         given("services", self._services)
@@ -1925,6 +1931,8 @@ class Scenario:
             "bike_cost": self._bike_cost,
             "bike_route_choice": self._bike_route_choice,
             "bike_route_options": self._bike_route_options,
+            "transit": self._transit,
+            "transit_options": self._transit_options,
             "modes": modes or None,
             "class_modes": self._class_modes,
             "class_limits": class_limits or None,
@@ -2193,9 +2201,29 @@ class Scenario:
                 ``vehicle_s`` (the drive or the ride) and ``access_egress_s``; with
                 ``link_bin_s``, ``link_bins_table("bike")`` and ``("walk")`` count bikes and
                 walkers on their layers; ``convergence()`` gives each mode's shares beside the
-                totals. Anything else the
-                scenario asks for that it does not have (a mode other than these three, a
-                bike route set, a timetable, parkings,
+                totals. **Transit trips**: a trip whose mode is stated as ``"transit"``, with a
+                timetable (``transit``), walks on the walk layer to the stops within
+                ``transit_options`` ``access_walk_max_s`` (1 800 s by default) of its origin,
+                rides the timetable and walks from a stop within the same limit of its
+                destination; its choice set holds every journey of the timetable's Pareto set at
+                its departure (for each number of vehicles, the earliest arrival, if earlier than
+                with fewer vehicles), except a journey that returns to the stop it first boarded
+                at, one longer than ``journey_max_s`` door to door, and one walking more than
+                ``walk_total_max_s`` (3 600 s by default) in all, the walks between stops included.
+                The journeys are planned once (the timetable is the same in every iteration),
+                each run keeps to its timetable (``buses_on_roads`` 1 is refused), and the trip
+                arrives at its journey's arrival; the utility weighs riding as time in a vehicle,
+                walking and waiting (the boarding slack included) by ``beta_walk_min`` and
+                ``beta_wait_min`` on top of ``beta_time_min``, each transfer by
+                ``beta_transfers``; fares are not priced. The path size of a journey is over the
+                trip's journeys, by the share of its time on rides (a line between two stops) it
+                shares with others. Like a stated bike trip, a transit trip never switches by
+                anything but chance, so the stopping shares, the gaps and the spread leave it out.
+                ``chains()`` lists each journey's rides, ``transit_calls()`` the boardings at
+                every call and ``transit_lines()`` by line (``transit_lines.parquet``). Mode
+                choice with transit is not available yet. Anything else the
+                scenario asks for that it does not have (a mode other than these four, a
+                bike route set, parkings,
                 services, prices, disruptions, route sets, zones, a Python choice model, ...)
                 raises ``EngineNotSupportedError`` naming it; an option of ``"msa"`` that only
                 steers how the current engine measures its gaps or stops (``gap_tolerance``,

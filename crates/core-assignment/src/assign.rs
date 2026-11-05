@@ -57,6 +57,12 @@
 //! or unfinished trips and in the mean trip time, their trip ending at its departure plus its
 //! leg's time (access, ride and egress for a bike).
 //!
+//! **Transit trips** (a trip whose mode is given as transit, [`Inputs::transit`]) take part as
+//! bike and walking trips do: their set holds one chain per journey of the timetable kept for
+//! them, offered at the first search; their probabilities never change, so they are left out of
+//! the stopping shares, the gaps and the spread; they load nothing on the road network and arrive
+//! at their journey's arrival ([`crate::transit`]).
+//!
 //! **Trips choosing their mode** ([`Inputs::mode_choice`], [`crate::modes`]) take part as any
 //! other: their set holds a car chain from each search that finds one new (as a car trip's), and
 //! their bike and walking chains from the first search; the choice chooses among them all, a
@@ -116,6 +122,7 @@ use crate::quota::Allocation;
 use crate::report::{IterationReport, PerMode, StageSeconds};
 use crate::search::{ChainSearch, Unplanned};
 use crate::state::{State, TripState};
+use crate::transit::{Transit, TransitPlanner};
 
 /// The trips a thread takes at a time in the measure and assess stages.
 const TRIPS_PER_CHUNK: usize = 512;
@@ -229,6 +236,9 @@ pub struct Inputs<'a> {
     /// The bike and walk layers ([`Layers::NONE`] for a run of car trips): a trip whose mode is
     /// given as the bike or walking needs its layer.
     pub layers: Layers<'a>,
+    /// The timetable transit trips ride, and its limits (`None` for a run without one): a trip
+    /// whose mode is given as transit needs it, and the walk layer.
+    pub transit: Option<Transit<'a>>,
     /// The travellers.
     pub travellers: &'a Travellers,
     /// Their trips.
@@ -630,7 +640,7 @@ fn assess_stage(
 /// the other, end after `end`; `Some(Some(arrival))` otherwise.
 #[allow(clippy::option_option, reason = "no link, unfinished, or arrived")]
 fn static_arrival(chain: &Chain, start: f64, end: f64) -> Option<Option<f64>> {
-    if chain.legs().iter().all(|l| l.links.is_empty()) {
+    if !chain.moves() {
         return None;
     }
     let at = start + chain.total().total_seconds();
@@ -697,7 +707,7 @@ fn chain_search<'a>(inputs: &Inputs<'a>, params: &Params) -> Result<ChainSearch<
         Some(layer) => Some(StaticPlanner::walk(layer, inputs.classes)?),
         None => None,
     };
-    Ok(ChainSearch::with_modes(
+    let search = ChainSearch::with_modes(
         inputs.network,
         inputs.travellers,
         inputs.trips,
@@ -705,7 +715,15 @@ fn chain_search<'a>(inputs: &Inputs<'a>, params: &Params) -> Result<ChainSearch<
         params,
         inputs.mode_choice,
     )
-    .with_static(bike, walk))
+    .with_static(bike, walk);
+    // The transit planner only for a run with a transit trip (and so a timetable, `check`).
+    let stated = search.modes().contains(&TripModes::Stated(Mode::Transit));
+    Ok(match (inputs.transit, inputs.layers.walk) {
+        (Some(transit), Some(walk)) if stated => {
+            search.with_transit(TransitPlanner::new(transit, walk)?)
+        }
+        _ => search,
+    })
 }
 
 /// The state a run left, rebuilt from what it wrote: `saved`, every trip's set, current chain
@@ -763,6 +781,12 @@ pub fn restore(
                     )));
                 }
             };
+            if mode == Mode::Transit {
+                return Err(bad(format!(
+                    "chain {c} is a transit chain, and a run with transit trips cannot be \
+                     continued yet"
+                )));
+            }
             if !modes.allows(mode) {
                 return Err(bad(format!(
                     "chain {c} is of mode {}, which the trip may not use",
@@ -1008,6 +1032,13 @@ fn check(inputs: &Inputs<'_>, state: &State, params: &Params) -> Result<(), Assi
                 mode.as_str()
             )));
         }
+    }
+    let transit = modes.iter().filter(|m| **m == TripModes::Stated(Mode::Transit)).count();
+    if transit > 0 && (inputs.transit.is_none() || inputs.layers.walk.is_none()) {
+        return Err(AssignError::Input(format!(
+            "{transit} trips are given the mode transit, and the run has no timetable or no walk \
+             layer (both are needed)"
+        )));
     }
     for (c, k) in inputs.mode_choice.iter().enumerate() {
         let limits = [k.walk_max_seconds, k.bike_max_seconds];

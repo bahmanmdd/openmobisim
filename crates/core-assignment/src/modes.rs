@@ -145,12 +145,13 @@ impl TripModes {
     }
 
     /// Whether the trip could change its choice in response to the iterations: a car trip (its
-    /// route) or a trip choosing its mode. A trip of a stated bike or walking mode has its chains
-    /// planned once on static costs (one chain, or with sampled bike route sets one per route of
-    /// its pair): its choice probabilities never change, so any switch it makes is chance alone.
+    /// route) or a trip choosing its mode. A trip of a stated bike, walking or transit mode has
+    /// its chains planned once on static costs (one chain, or with sampled bike route sets one per
+    /// route of its pair, or one per journey of the timetable): its choice probabilities never
+    /// change, so any switch it makes is chance alone.
     #[must_use]
     pub fn could_change(&self) -> bool {
-        !matches!(self, Self::Stated(Mode::Bike | Mode::Walk))
+        !matches!(self, Self::Stated(Mode::Bike | Mode::Walk | Mode::Transit))
     }
 
     /// The longest leg of `mode` offered, in seconds on its layer: no limit for a stated mode.
