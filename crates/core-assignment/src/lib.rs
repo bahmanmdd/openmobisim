@@ -68,13 +68,13 @@
 //! changes and they never switch. With **sampled bike route sets** ([`Params::bike_routes`],
 //! [`BikeRoutes::Sampled`]) a bike leg has a set of routes per pair, made once by `core-routes`'
 //! doubly stochastic generator, each route a chain of the trip's set, and the choice model
-//! chooses among them with the path-size term. **Trips choosing their mode** among the car, the bike and
-//! walking ([`Inputs::mode_choice`], [`modes`]): their choice set holds their car chains beside
-//! their bike and walking chains, and the one chooser chooses among them (the nested logit puts
-//! each mode in a nest of its own). **Transit trips whose
-//! mode is stated** ([`Inputs::transit`], [`transit`]): one chain per journey of the timetable's
-//! Pareto set at the trip's departure (arrival against vehicles), planned once, ridden on the
-//! timetable's times, loading nothing on the road network. A further mode is a further [`LegPlanner`], a further loading
+//! chooses among them with the path-size term. **Trips choosing their mode** among the car, the bike,
+//! walking and transit ([`Inputs::mode_choice`], [`modes`]): their choice set holds their car
+//! chains beside their bike, walking and transit chains, and the one chooser chooses among them
+//! (the nested logit puts each mode in a nest of its own). **Transit trips** ([`Inputs::transit`],
+//! [`transit`]): one chain per journey of the timetable's Pareto set at the trip's departure
+//! (arrival against vehicles; with fares by kind of service, also the fare), planned once,
+//! ridden on the timetable's times, loading nothing on the road network. A further mode is a further [`LegPlanner`], a further loading
 //! a further [`Loader`], behind the same contracts.
 //!
 //! **Threads and shared searches.** The car planner answers the trips of one origin, user class
@@ -120,4 +120,4 @@ pub use quota::Allocation;
 pub use report::{IterationReport, PerMode, StageSeconds};
 pub use search::{ChainSearch, feasible};
 pub use state::{State, TripState};
-pub use transit::{Transit, TransitPlanner, walking_within_limits};
+pub use transit::{Fares, Transit, TransitPlanner, walking_within_limits};

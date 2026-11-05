@@ -848,6 +848,8 @@ fn modes_that_cannot_serve_a_trip_are_left_out_and_counted() {
             bike_too_long: 30,
             walk_no_route: 0,
             walk_too_long: 70,
+            transit_no_stop: 0,
+            transit_no_journey: 0,
         }
     );
     let set_modes = |class: &str| -> Vec<Mode> {

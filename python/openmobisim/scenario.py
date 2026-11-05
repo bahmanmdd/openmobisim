@@ -68,11 +68,14 @@ _STATIC_ONLY = ("frank_wolfe",)
 
 #: The engines a scenario runs on (``Scenario.run``'s ``engine``): ``"current"``, the run of
 #: every mode, loading and option described in this package; ``"one-loop"``, the assignment of
-#: car, bike and walking trips (each stated, or chosen by mode choice among the three) and transit
-#: trips (stated, with a timetable) in one loop
+#: car, bike, walking and transit trips (transit with a timetable; each stated, or chosen by mode
+#: choice among the four) in one loop
 #: of five stages per assignment iteration (search, choose, load, measure, assess), at flow level
 #: 0 or 2.
 ENGINES = ("current", "one-loop")
+#: The kinds of transit service, as a line's ``route_type`` gives them; on ``engine="one-loop"``
+#: each may have its own fare per km (``price_options`` ``fare_km_eur_<kind>``).
+TRANSIT_KINDS = ("rail", "metro", "tram", "bus", "ferry", "other")
 #: The one-loop engine's allocations (``equilibration_options`` ``allocation``).
 ONE_LOOP_ALLOCATIONS = ("draws", "choice_quota", "quota")
 #: The one-loop engine's readings of the link travel times (``equilibration_options``
@@ -1491,6 +1494,13 @@ class Scenario:
                 https://vervoerregio.bestuurlijkeinformatie.nl/Document/View/abddeeb0-be54-4eae-9622-4ac0935df151);
                 unknown names and values below 0 are refused.
                 Recorded in the fingerprint and the manifest when the choice model reads money.
+                On ``engine="one-loop"`` only the fares: ``fare_base_eur`` once per journey and,
+                per ride, ``fare_km_eur`` per km, or its line's kind of service's own price per
+                km, ``fare_km_eur_rail``, ``fare_km_eur_metro``, ``fare_km_eur_tram``,
+                ``fare_km_eur_bus``, ``fare_km_eur_ferry``, ``fare_km_eur_other``
+                (``TRANSIT_KINDS``); where the kinds' prices differ, a traveller who pays is also
+                offered the journeys of the cheaper services, each with its exact fare, where no
+                journey is as early, with as few vehicles and as cheap.
             link_values: The user's own numbers per link, for choice models:
                 ``{layer: {name: values}}``, the layer ``"road"``, ``"bike"`` or ``"walk"``,
                 the values either one per link of that layer in link order (an array as long as
@@ -1775,20 +1785,29 @@ class Scenario:
                 "trips of modes other than the car, the bike, walking and transit with a "
                 f"timetable ({counts})"
             )
-        # Mode choice among the car, the bike and walking: a class is offered the run's modes
-        # that its own list also holds, so only the run's modes can ask for another mode.
+        # Mode choice among the car, the bike, walking and transit with a timetable: a class is
+        # offered the run's modes that its own list also holds, so only the run's modes can ask
+        # for another mode.
         modes = list(self._modes or ())
-        others = sorted(set(modes) - {"car", "bike", "walk"})
+        others = sorted(set(modes) - set(runs))
         if others:
             lacking.append(
-                f"modes {others} (its mode choice is among the car, the bike and walking)"
+                f"modes {others} (its mode choice is among the car, the bike, walking and transit "
+                "with a timetable)"
             )
         if float((self._transit_options or {}).get("buses_on_roads", 0)) != 0:
             lacking.append("transit_options buses_on_roads 1 (every bus keeps to its timetable)")
         given("parkings", self._parkings)
         given("parking_options", self._parking_options)
         given("services", self._services)
-        given("price_options", self._price_options)
+        # Prices: transit's fares only (fare_base_eur, fare_km_eur, fare_km_eur_<kind>).
+        fares = ("fare_base_eur", "fare_km_eur") + tuple(f"fare_km_eur_{k}" for k in TRANSIT_KINDS)
+        prices = dict(self._price_options or {})
+        for name in sorted(set(prices) - set(fares)):
+            if float(prices[name]) != 0:
+                lacking.append(
+                    f"price_options {name} (it prices transit fares only: {', '.join(fares)})"
+                )
         given("link_values", self._link_values)
         given("person_values", self._person_values)
         given("trip_values", self._trip_values or self._trip_values_keyed or None)
@@ -1933,6 +1952,7 @@ class Scenario:
             "bike_route_options": self._bike_route_options,
             "transit": self._transit,
             "transit_options": self._transit_options,
+            "price_options": {k: float(v) for k, v in prices.items() if k in fares} or None,
             "modes": modes or None,
             "class_modes": self._class_modes,
             "class_limits": class_limits or None,
@@ -2185,16 +2205,21 @@ class Scenario:
                 the logit, 0 for the deterministic choice, by default), on a painted lane by
                 ``beta_bike_lane_km`` and on a track or path of its own by
                 ``beta_bike_separated_km`` (0 by default). **Mode choice** (``modes``, and the
-                classes' ``modes``) among ``"car"``, ``"bike"`` and ``"walk"``: a trip that states
+                classes' ``modes``) among ``"car"``, ``"bike"``, ``"walk"`` and, with a timetable,
+                ``"transit"``: a trip that states
                 no mode and is offered two or more of them chooses among them through the same
                 choice as its routes, its choice set holding its car routes (one more each
-                iteration the search finds one) beside its bike route and its walk, each planned
-                once and offered when within ``mode_options`` ``walk_max_s`` and ``bike_max_s``
+                iteration the search finds one) beside its bike route, its walk and its transit
+                journeys (as a stated transit trip's), each planned
+                once, the ride and the walk offered when within ``mode_options`` ``walk_max_s``
+                and ``bike_max_s``
                 (or its class's: the seconds walked or ridden, the fixed times not counted); a mode
-                its traveller has no vehicle for or no route serves is left out, and counted. The
+                its traveller has no vehicle for, no route serves or (transit) no stop in reach or
+                no journey serves is left out, and counted. The
                 nested logit (the default for several modes) puts each mode in a nest of scale
-                ``choice_options`` ``mu`` (0.5 by default); ``beta_mode_car``, ``beta_mode_bike``
-                and ``beta_mode_walk`` are the modes' constants (0 by default). A trip offered one
+                ``choice_options`` ``mu`` (0.5 by default); ``beta_mode_car``, ``beta_mode_bike``,
+                ``beta_mode_walk`` and ``beta_mode_transit`` are the modes' constants (0 by
+                default). A trip offered one
                 mode takes it, at any length. The trips' table gives
                 each its mode (for a trip choosing its mode, that of the chain it took; none for
                 one with no alternative, ``outcome`` ``"no_alternative"``) and ``mode_choice``,
@@ -2215,16 +2240,26 @@ class Scenario:
                 arrives at its journey's arrival; the utility weighs riding as time in a vehicle,
                 walking and waiting (the boarding slack included) by ``beta_walk_min`` and
                 ``beta_wait_min`` on top of ``beta_time_min``, each transfer by
-                ``beta_transfers``; fares are not priced. The path size of a journey is over the
+                ``beta_transfers``, its fare (``price_options``, below) by ``beta_cost_eur``. The
+                path size of a journey is over the
                 trip's journeys, by the share of its time on rides (a line between two stops) it
                 shares with others. Like a stated bike trip, a transit trip never switches by
                 anything but chance, so the stopping shares, the gaps and the spread leave it out.
                 ``chains()`` lists each journey's rides, ``transit_calls()`` the boardings at
-                every call and ``transit_lines()`` by line (``transit_lines.parquet``). Mode
-                choice with transit is not available yet. Anything else the
+                every call and ``transit_lines()`` by line (``transit_lines.parquet``). **Fares**
+                (``price_options``): ``fare_base_eur`` once per journey and, per ride, the price
+                per km of its line's kind of service (``fare_km_eur_rail`` and the other
+                ``TRANSIT_KINDS``, else ``fare_km_eur``) times the km from its boarding stop to
+                its alighting stop as the crow flies; 0 for a traveller whose class or person has
+                a transit pass; every price 0 by default. Where the kinds' prices per km differ, a
+                traveller who pays also has, beside the timetable's journeys, the journeys of
+                each cheaper level of price per km on the services priced at most that much, and
+                keeps those that no other journey beats on arrival, vehicles and fare together;
+                ``chains()`` then has each chain's ``fare_eur``. Anything else the
                 scenario asks for that it does not have (a mode other than these four, a
                 bike route set, parkings,
-                services, prices, disruptions, route sets, zones, a Python choice model, ...)
+                services, prices other than the fares, disruptions, route sets, zones, a Python
+                choice model, ...)
                 raises ``EngineNotSupportedError`` naming it; an option of ``"msa"`` that only
                 steers how the current engine measures its gaps or stops (``gap_tolerance``,
                 ``gap_sample``, ``gap_every``, ``itinerary_gap_sample``,

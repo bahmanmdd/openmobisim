@@ -7,8 +7,8 @@
 //!
 //! **What it enumerates for now:** chains of one leg, one per mode the trip may use
 //! ([`crate::modes`]: its stated mode, or the modes it chooses among), in the order car, bike,
-//! walking. A **car** leg runs from the origin's road node to the destination's, departing at the
-//! trip's departure time, its car setting off the access time later: the route of least cost in
+//! walking, transit. A **car** leg runs from the origin's road node to the destination's,
+//! departing at the trip's departure time, its car setting off the access time later: the route of least cost in
 //! utility units at the current link travel times, with the car's fixed times (see
 //! [`crate::planner`]); it is searched again at every search stage. A **bike** or **walking** leg
 //! runs on its layer, between the trip's ends snapped to that layer ([`crate::layer_planner`]):
@@ -18,10 +18,11 @@
 //! ([`crate::BikeRoutes::Sampled`]) a trip has one bike chain per route of its pair's set, all
 //! planned once and offered together. For a trip choosing its mode, a ride
 //! or a walk longer than its class's limit is not planned into its set
-//! ([`crate::ClassModes`]). A **transit** trip (its mode stated as transit) has one chain per
-//! journey of the timetable kept for it, all planned once, before the first search, and offered
-//! together at the first search ([`ChainSearch::with_transit`], [`crate::transit`]). A trip whose
-//! mode is given as another mode has no chain. Another mode
+//! ([`crate::ClassModes`]). A **transit** trip (its mode stated as transit, or a trip choosing
+//! its mode that is offered transit) has one chain per journey of the timetable kept for it, all
+//! planned once, before the first search, and offered together at the first search
+//! ([`ChainSearch::with_transit`], [`crate::transit`]). A trip whose mode is given as another
+//! mode has no chain. Another mode
 //! is another planner, and chains of several legs another shape, behind the same function.
 //!
 //! **Trip ends** are snapped once, when the search is built, to the nearest node with a street
@@ -96,20 +97,24 @@ pub struct ChainSearch<'a> {
     /// where no route exists or a trip choosing its mode would ride or walk longer than its
     /// limit.
     fixed_chains: Vec<Vec<Chain>>,
-    /// Per trip choosing its mode, each bike or walking mode it is offered that has no chain
-    /// planned, and why.
+    /// Per trip choosing its mode, each bike, walking or transit mode it is offered that has no
+    /// chain planned, and why.
     unplanned: Vec<Vec<(Mode, Unplanned)>>,
     /// The planner of transit legs, if the run has a timetable.
     transit: Option<TransitPlanner<'a>>,
 }
 
-/// Why a bike or walking mode offered to a trip choosing its mode has no chain in its set.
+/// Why a bike, walking or transit mode offered to a trip choosing its mode has no chain in its
+/// set.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Unplanned {
-    /// No route on the layer from the trip's origin to its destination.
+    /// No route on the layer from the trip's origin to its destination; for transit, no journey
+    /// of the timetable kept for the trip, with stops in reach at both ends.
     NoRoute,
     /// The ride or the walk would take longer than the class's limit.
     TooLong,
+    /// Transit: no stop within the walking limit of the trip's origin or of its destination.
+    NoStop,
 }
 
 /// The static modes (bike, walking) whose chains `modes` allows, in that order.
@@ -212,8 +217,8 @@ impl<'a> ChainSearch<'a> {
         &self.modes
     }
 
-    /// Per trip choosing its mode, the bike and walking modes it is offered that have no chain,
-    /// and why.
+    /// Per trip choosing its mode, the bike, walking and transit modes it is offered that have no
+    /// chain, and why.
     pub(crate) fn unplanned(&self, trip: TripId) -> &[(Mode, Unplanned)] {
         &self.unplanned[trip.index()]
     }
@@ -287,11 +292,13 @@ impl<'a> ChainSearch<'a> {
         self
     }
 
-    /// The search with the planner of transit legs: every trip whose mode is stated as transit is
-    /// planned now, once, its ends snapped to the walk layer, leaving at its departure; each
-    /// journey kept becomes one of its chains, fewest vehicles first ([`crate::transit`]). The
-    /// walks to and from stops are searched once per walk node, the journeys once per trip, in
-    /// parallel, each by its own search, so the chains do not depend on the number of threads.
+    /// The search with the planner of transit legs: every trip that may ride transit (its mode
+    /// stated as transit, or offered it by mode choice) is planned now, once, its ends snapped to
+    /// the walk layer, leaving at its departure; each journey kept becomes one of its chains,
+    /// fewest vehicles first, priced at its fare unless the traveller holds a transit pass
+    /// ([`crate::transit`]). The walks to and from stops are searched once per walk node, the
+    /// journeys once per trip, in parallel, each by its own search, so the chains do not depend
+    /// on the number of threads.
     ///
     /// # Panics
     ///
@@ -300,7 +307,7 @@ impl<'a> ChainSearch<'a> {
     pub fn with_transit(mut self, planner: TransitPlanner<'a>) -> Self {
         let wanted: Vec<TripId> = (0..self.trips.len())
             .map(TripId::new)
-            .filter(|t| self.modes[t.index()] == TripModes::Stated(Mode::Transit))
+            .filter(|t| self.modes[t.index()].allows(Mode::Transit))
             .collect();
         let ends: Vec<(Place, Place)> = wanted
             .iter()
@@ -327,22 +334,31 @@ impl<'a> ChainSearch<'a> {
         let planned = parallel::map(
             &items,
             STATIC_TRIPS_PER_CHUNK,
-            || planner.raptor(),
-            |raptor, &i| {
+            || planner.raptors(),
+            |raptors, &i| {
                 let (from, to) = ends[i];
-                let departure = self.trips.departure(wanted[i]).get();
-                let legs = planner.legs(
-                    raptor,
-                    (from, to),
-                    departure,
-                    walk_of(from.node(), false),
-                    walk_of(to.node(), true),
-                );
-                legs.into_iter().map(|leg| Chain::new(vec![leg])).collect::<Vec<Chain>>()
+                let trip = wanted[i];
+                let departure = self.trips.departure(trip).get();
+                let pays = !self.travellers.ownership(self.trips.traveller(trip)).transit_pass;
+                let walks: (&[_], &[_]) = (walk_of(from.node(), false), walk_of(to.node(), true));
+                if walks.0.is_empty() || walks.1.is_empty() {
+                    return Err(Unplanned::NoStop);
+                }
+                let legs = planner.legs(raptors, (from, to), departure, walks, pays);
+                if legs.is_empty() {
+                    return Err(Unplanned::NoRoute);
+                }
+                Ok(legs.into_iter().map(|leg| Chain::new(vec![leg])).collect::<Vec<Chain>>())
             },
         );
         for (trip, chains) in wanted.into_iter().zip(planned) {
-            self.fixed_chains[trip.index()].extend(chains);
+            match chains {
+                Ok(chains) => self.fixed_chains[trip.index()].extend(chains),
+                Err(why) if self.modes[trip.index()].chooses_mode() => {
+                    self.unplanned[trip.index()].push((Mode::Transit, why));
+                }
+                Err(_) => {}
+            }
         }
         self.transit = Some(planner);
         self
@@ -472,7 +488,7 @@ impl<'a> ChainSearch<'a> {
     }
 
     /// The feasible chains of `traveller`'s `trip` at `state`, one per mode it may use, in the
-    /// order car, bike, walking (see the [module docs](self) for what is enumerated).
+    /// order car, bike, walking, transit (see the [module docs](self) for what is enumerated).
     ///
     /// # Panics
     ///
@@ -630,8 +646,8 @@ impl ChainSearch<'_> {
 /// For now: a chain is feasible when it has at least one leg, its legs follow on from one
 /// another (each begins where the last ended), every leg is a car, bike, walking or transit leg,
 /// the traveller has a car for each car leg and a bike for each bike leg (from their class's or
-/// their own ownership); walking and transit need nothing (fares are not priced yet, so a
-/// transit pass is not read). Where a vehicle is during the day is not
+/// their own ownership); walking and transit need nothing (a transit pass only makes the fare
+/// 0, [`crate::transit`]). Where a vehicle is during the day is not
 /// tracked: a traveller with a car (a bike) may drive (ride) it on every trip.
 #[must_use]
 pub fn feasible(state: &State, traveller: TravellerId, chain: &Chain) -> bool {

@@ -26,8 +26,8 @@
 //! traffic: a link without a cycle lane or track of its own; on a painted lane; on a track or
 //! path of its own) cost `β_mixed`, `β_lane` and `β_separated` each **on top of** that time.
 //! `κ_mode` is the **mode's constant**: what the class's travellers dislike in the chain's mode
-//! beyond its measured attributes (`κ_car`, `κ_bike`, `κ_walk`; 0 by default: the attributes
-//! decide). It is the same for every chain of one mode, so it never changes which route of a mode
+//! beyond its measured attributes (`κ_car`, `κ_bike`, `κ_walk`, `κ_transit`; 0 by default: the
+//! attributes decide). It is the same for every chain of one mode, so it never changes which route of a mode
 //! is cheapest, only how the modes compare ([`Coefficients::chain_cost`]).
 //!
 //! a negative number in **utility units**; the **cost** of the alternative is `−V`. Each
@@ -139,6 +139,8 @@ pub struct Coefficients {
     pub bike_constant: f64,
     /// Walking's constant: what a walking chain costs on top of its attributes.
     pub walk_constant: f64,
+    /// Transit's constant: what a transit chain costs on top of its attributes.
+    pub transit_constant: f64,
 }
 
 impl Coefficients {
@@ -162,6 +164,7 @@ impl Coefficients {
             car_constant: 0.0,
             bike_constant: 0.0,
             walk_constant: 0.0,
+            transit_constant: 0.0,
         }
     }
 
@@ -180,6 +183,7 @@ impl Coefficients {
             Mode::Car => self.car_constant,
             Mode::Bike => self.bike_constant,
             Mode::Walk => self.walk_constant,
+            Mode::Transit => self.transit_constant,
             _ => 0.0,
         }
     }
