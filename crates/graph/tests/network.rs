@@ -37,6 +37,17 @@ fn a_walker_covers_1000_m_at_4_8_km_h_in_750_s() {
 }
 
 #[test]
+fn the_bike_and_walk_speeds_read_back_as_the_build_values_in_m_s() {
+    // 36 km/h = 36 000 m / 3 600 s = 10 m/s; 7.2 km/h = 7 200 m / 3 600 s = 2 m/s; and on the
+    // link, 1 000 m take 100 s by bike and 500 s on foot.
+    let values = BuildValues { bike_speed: 36.0, walk_speed: 7.2, ..VALUES };
+    let net = two_nodes(row(1, 50.0)).build(values).unwrap();
+    assert!(close(net.bike_speed().get(), 10.0), "{}", net.bike_speed().get());
+    assert!(close(net.walk_speed().get(), 2.0), "{}", net.walk_speed().get());
+    assert!(close(time(&net, Mode::Bike), 100.0) && close(time(&net, Mode::Walk), 500.0));
+}
+
+#[test]
 fn a_car_drives_2000_m_at_50_km_h_in_144_s() {
     // 50 km/h = 50 000 m / 3 600 s = 13.889 m/s; 2 000 m / 13.889 m/s = 144 s.
     let net = two_nodes(LinkRow { length_m: Some(2_000.0), ..row(1, 50.0) }).build(VALUES).unwrap();

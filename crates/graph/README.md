@@ -17,7 +17,8 @@ held as a structure of arrays. Depends on `openmobisim-types` only.
 ## Outputs
 `Network`: counts and external-id tables of nodes and links; per node its position in metres
 and signalised flag; per link its two nodes, length, free-flow speed and time per mode,
-capacity, lanes, modes and signal flag; out- and in-links per node; the projection, if any.
+capacity, lanes, modes and signal flag; out- and in-links per node; the projection, if any;
+`bike_speed()` and `walk_speed()`, the build values in m/s, the same on every link.
 
 ## Units
 Metres, m/s, seconds and veh/s inside; km/h and veh/h only in the rows and build values.
@@ -55,7 +56,8 @@ in 360 s, on a street or a cycle path, signal or not.
 `cargo test -p openmobisim-graph`. Each expected value comes from outside the crate: hand
 free-flow times (1 500 m at 15 km/h by bike 360 s, 1 000 m at 4.8 km/h on foot 750 s, 2 000 m
 at 50 km/h by car 144 s, unchanged by a signal; a cycle path with no car fields, 360 s by bike,
-infinite capacity, 0 lanes); hand capacities (1 200 veh/h is 1/3 veh/s; 2 lanes × 1 800 veh/h
+infinite capacity, 0 lanes; the bike and walk speeds read back, 36 km/h as 10 m/s and 7.2 km/h
+as 2 m/s); hand capacities (1 200 veh/h is 1/3 veh/s; 2 lanes × 1 800 veh/h
 is 1 veh/s; a car row's infinity kept as an unlimited capacity); Pythagoras (3 m and 4 m apart is 5 m); a hand count of a 3 × 3
 grid (9 nodes, 24 links, out-degrees 2, 3, 4); the standard library's sort for the id order;
 the UTM grid's definition and the WGS84 meridian and parallel arcs for the projection.

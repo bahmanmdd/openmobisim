@@ -305,6 +305,8 @@ impl NetworkBuilder {
             link_downstream: links.downstream,
             link_length: links.length,
             link_speed: [links.car_speed, vec![bike; n], vec![walk; n]],
+            bike_speed: bike,
+            walk_speed: walk,
             link_capacity: links.capacity,
             link_lanes: links.lanes,
             link_modes: links.modes,
@@ -508,6 +510,9 @@ pub struct Network {
     link_upstream: Vec<NodeId>,
     link_downstream: Vec<NodeId>,
     link_length: Vec<Metres>,
+    /// The build values' bike and walk speeds, the same on every link.
+    bike_speed: Speed,
+    walk_speed: Speed,
     /// Free-flow speed per link, one column per link mode: car, bike, walk.
     link_speed: [Vec<Speed>; 3],
     link_capacity: Vec<Flow>,
@@ -599,6 +604,22 @@ impl Network {
     #[must_use]
     pub fn length(&self, link: LinkId) -> Metres {
         self.link_length[link.index()]
+    }
+
+    /// The free-flow speed of a bike, in metres per second, the same on every link: the build
+    /// value `bike_speed` given to the builder (in km/h there).
+    #[inline]
+    #[must_use]
+    pub fn bike_speed(&self) -> Speed {
+        self.bike_speed
+    }
+
+    /// The free-flow speed of a walker, in metres per second, the same on every link: the build
+    /// value `walk_speed` given to the builder (in km/h there).
+    #[inline]
+    #[must_use]
+    pub fn walk_speed(&self) -> Speed {
+        self.walk_speed
     }
 
     /// A link's free-flow speed for a mode (car, bike or walk).

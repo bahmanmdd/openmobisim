@@ -12,3 +12,9 @@ authors.workspace = true
 workspace = true
 
 [dependencies]
+openmobisim-types = { workspace = true }
+openmobisim-graph = { workspace = true }
+openmobisim-loading = { workspace = true }
+openmobisim-search = { workspace = true }
+openmobisim-transit = { workspace = true }
+rayon = { workspace = true }
