@@ -12,3 +12,5 @@ authors.workspace = true
 workspace = true
 
 [dependencies]
+openmobisim-types = { workspace = true }
+rayon = { workspace = true }

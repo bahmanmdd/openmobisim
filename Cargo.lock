@@ -92,6 +92,10 @@ dependencies = [
 [[package]]
 name = "openmobisim-transit"
 version = "0.2.0-dev"
+dependencies = [
+ "openmobisim-types",
+ "rayon",
+]
 
 [[package]]
 name = "openmobisim-types"

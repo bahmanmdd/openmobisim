@@ -46,11 +46,14 @@ pub enum EntityKind {
     TransitRun = 6,
     /// A user class.
     UserClass = 7,
+    /// A transit stop: where runs call. Not a node: a stop knows its position only, and linking
+    /// it to the walk network is the caller's.
+    Stop = 8,
 }
 
 impl EntityKind {
     /// Every kind, in discriminant order.
-    pub const ALL: [EntityKind; 8] = [
+    pub const ALL: [EntityKind; 9] = [
         EntityKind::Node,
         EntityKind::Link,
         EntityKind::Zone,
@@ -59,6 +62,7 @@ impl EntityKind {
         EntityKind::Vehicle,
         EntityKind::TransitRun,
         EntityKind::UserClass,
+        EntityKind::Stop,
     ];
 
     /// The snake_case name written to outputs.
@@ -73,6 +77,7 @@ impl EntityKind {
             EntityKind::Vehicle => "vehicle",
             EntityKind::TransitRun => "transit_run",
             EntityKind::UserClass => "user_class",
+            EntityKind::Stop => "stop",
         }
     }
 }
@@ -231,6 +236,8 @@ define_id!(/// Identifies one run of a transit trip on the service date.
     TransitRunId, TransitRun);
 define_id!(/// Identifies a user class.
     UserClassId, UserClass);
+define_id!(/// Identifies a transit stop (not a node: see [`EntityKind::Stop`]).
+    StopId, Stop);
 
 /// Builds an [`ExternalIdTable`], assigning internal identifiers by sorted external id.
 ///

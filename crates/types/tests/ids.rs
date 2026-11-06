@@ -4,7 +4,7 @@ mod common;
 
 use common::SplitMix64;
 use openmobisim_types::ids::{
-    EntityId, EntityKind, ExternalIdTableBuilder, LinkId, MAX_ID, NULL_ID, NodeId, TripId,
+    EntityId, EntityKind, ExternalIdTableBuilder, LinkId, MAX_ID, NULL_ID, NodeId, StopId, TripId,
 };
 
 #[test]
@@ -53,7 +53,7 @@ fn indexing_with_null_is_a_bug() {
 }
 
 #[test]
-fn kinds_are_eight_in_their_documented_order() {
+fn kinds_are_nine_in_their_documented_order() {
     let expected = [
         (EntityKind::Node, "node"),
         (EntityKind::Link, "link"),
@@ -63,6 +63,7 @@ fn kinds_are_eight_in_their_documented_order() {
         (EntityKind::Vehicle, "vehicle"),
         (EntityKind::TransitRun, "transit_run"),
         (EntityKind::UserClass, "user_class"),
+        (EntityKind::Stop, "stop"),
     ];
     assert_eq!(EntityKind::ALL.len(), expected.len());
     for (i, (kind, name)) in expected.into_iter().enumerate() {
@@ -72,6 +73,17 @@ fn kinds_are_eight_in_their_documented_order() {
     }
     assert_eq!(NodeId::KIND, EntityKind::Node);
     assert_eq!(TripId::KIND, EntityKind::Trip);
+}
+
+#[test]
+fn a_stop_has_its_own_identifier_space_after_every_other_kind() {
+    // Last in the event order, so adding it moved no simultaneous event of another kind.
+    assert_eq!(StopId::KIND, EntityKind::Stop);
+    assert_eq!(EntityKind::Stop as usize, EntityKind::ALL.len() - 1);
+    assert!(EntityKind::ALL.iter().all(|&k| k <= EntityKind::Stop));
+    assert_eq!(StopId::new(4).to_string(), "4");
+    assert_eq!(format!("{:?}", StopId::NULL), "StopId(null)");
+    assert_eq!(size_of::<StopId>(), 4);
 }
 
 #[test]
