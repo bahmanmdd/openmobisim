@@ -53,9 +53,9 @@ fn three_nests_take_the_closed_form_and_sample_it_at_every_scale() {
     let rows = with_ids(&attributes, [0, 1, 2]);
     for mu in [0.2, 0.5, 0.9, 1.0] {
         let expected = nested_by_formula(mu);
-        let p = model(mu, 21).probabilities(&traveller(0, 0, 0), &rows).expect("probabilities");
+        let p = model(mu, 21).probabilities(&traveller(0, 0), &rows).expect("probabilities");
         assert!(largest_gap(&p, &expected) < 1e-12, "mu {mu}: {p:?} against {expected:?}");
-        let n = counts(&model(mu, 21), &rows, 20_000, 0);
+        let n = counts(&model(mu, 21), &rows, 20_000);
         let statistic = chi_square(&n, &expected);
         assert!(statistic < CHI_SQUARE_999_DF5, "mu {mu}: chi-square {statistic}, counts {n:?}");
     }
@@ -67,11 +67,11 @@ fn at_scale_one_the_nests_vanish_into_the_plain_logit() {
     let rows = with_ids(&attributes, [0, 1, 2]);
     let total: f64 = COSTS.iter().map(|c| (-c).exp()).sum();
     let plain: Vec<f64> = COSTS.iter().map(|c| (-c).exp() / total).collect();
-    let p = model(1.0, 0).probabilities(&traveller(0, 0, 0), &rows).expect("probabilities");
+    let p = model(1.0, 0).probabilities(&traveller(0, 0), &rows).expect("probabilities");
     assert!(largest_gap(&p, &plain) < 1e-12);
     // And every row in its own nest is the plain logit at any scale.
     let own = rows_in_own_nests(&attributes);
-    let p = model(0.3, 0).probabilities(&traveller(0, 0, 0), &own).expect("probabilities");
+    let p = model(0.3, 0).probabilities(&traveller(0, 0), &own).expect("probabilities");
     assert!(largest_gap(&p, &plain) < 1e-12);
 }
 
@@ -89,13 +89,13 @@ fn nest_ids_seven_and_four_billion_give_the_shares_of_ids_zero_and_one() {
     let large = with_ids(&attributes, [7, 4_000_000_000, 2]);
     let mu = 0.5;
     let expected = nested_by_formula(mu);
-    let who = traveller(0, 0, 0);
+    let who = traveller(0, 0);
     let (m, n) = (model(mu, 4), 20_000);
     let p_small = m.probabilities(&who, &small).expect("probabilities");
     let p_large = m.probabilities(&who, &large).expect("probabilities");
     assert_eq!(p_small, p_large);
     for rows in [&small, &large] {
-        let counts = counts(&m, rows, n, 3);
+        let counts = counts(&m, rows, n);
         let statistic = chi_square(&counts, &expected);
         assert!(statistic < CHI_SQUARE_999_DF5, "chi-square {statistic}, counts {counts:?}");
     }
@@ -123,11 +123,11 @@ fn a_mode_and_route_nest_gives_the_walk_and_the_short_car_route_their_hand_share
     for (mu, p_walk, p_short_car) in cases {
         let model =
             Logit::new(one_class(&["time_s"], &[0.03 / 60.0]), mu, RngKey::new(17)).expect("valid");
-        let p = model.probabilities(&traveller(0, 0, 0), &rows).expect("probabilities");
+        let p = model.probabilities(&traveller(0, 0), &rows).expect("probabilities");
         assert!((p[2] - p_walk).abs() < 1e-12, "mu {mu}: P(walk) {}", p[2]);
         assert!((p[0] / (p[0] + p[1]) - p_short_car).abs() < 1e-12, "mu {mu}: {p:?}");
 
-        let n = counts(&model, &rows, 6_000, 1);
+        let n = counts(&model, &rows, 6_000);
         let share = |k: u64, of: u64| {
             #[allow(clippy::cast_precision_loss, reason = "counts far below 2^53")]
             let (k, of) = (k as f64, of as f64);

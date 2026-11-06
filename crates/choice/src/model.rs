@@ -37,16 +37,19 @@
 //! keystream block, so each block holds the draws of eight rows (even words) and eight nests
 //! (odd words):
 //!
-//! | Draw | Address (trip, iteration, third component) | Word of the block |
+//! | Draw | Address (trip, block) | Word of the block |
 //! |---|---|---|
-//! | `ε_j` of the row at index `j` | (trip, iteration, `j / 8`) | `2 · (j mod 8)` |
-//! | `ε_n` of the nest with id `n` | (trip, iteration, `n / 8`) | `2 · (n mod 8) + 1` |
+//! | `ε_j` of the row at index `j` | (trip, `j / 8`) | `2 · (j mod 8)` |
+//! | `ε_n` of the nest with id `n` | (trip, `n / 8`) | `2 · (n mod 8) + 1` |
 //!
 //! So no two draws share a bit: two rows, or two nests, differ in their address or their
 //! word, and a row and a nest in the parity of their word. The nest id is a `u32` by type and
-//! enters the address as it is: two nests with different ids never share a draw. A traveller's
-//! choice depends on its trip, its iteration, its class, its rows and the run's seed alone,
-//! whatever order travellers are asked in and on whatever thread.
+//! enters the address as it is: two nests with different ids never share a draw.
+//!
+//! The draws are the traveller's taste, fixed for the whole run: they depend on its trip, the
+//! row's position in its set (the set is append-only, so a position is stable) or the nest id,
+//! and the seed, never on the iteration. The choice changes only when the costs change, and is
+//! the same whatever order travellers are asked in and on whatever thread.
 
 use openmobisim_types::ids::EntityId;
 use openmobisim_types::rng::{DrawAddress, DrawBlock, RngKey, Stream, StreamRng};
@@ -67,7 +70,6 @@ enum Kind {
 struct Draws<'a> {
     stream: &'a StreamRng,
     trip: u32,
-    iteration: u32,
     last: Option<(u32, DrawBlock)>,
 }
 
@@ -78,7 +80,7 @@ impl Draws<'_> {
         let block = match self.last {
             Some((held, block)) if held == at => block,
             _ => {
-                let address = DrawAddress::from_triple(self.trip, self.iteration, at);
+                let address = DrawAddress::from_pair(self.trip, at);
                 let block = self.stream.block(address);
                 self.last = Some((at, block));
                 block
@@ -230,8 +232,7 @@ impl Logit {
 
     /// The draws of `traveller`'s choice.
     fn draws(&self, traveller: &Traveller) -> Draws<'_> {
-        let (trip, iteration) = (traveller.trip.raw(), traveller.iteration);
-        Draws { stream: &self.draws, trip, iteration, last: None }
+        Draws { stream: &self.draws, trip: traveller.trip.raw(), last: None }
     }
 }
 

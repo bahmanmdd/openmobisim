@@ -21,10 +21,10 @@ pub fn one_class(columns: &[&str], betas: &[f64]) -> Coefficients {
     Coefficients::new(columns, 1, &[(UserClassId::new(0), betas.to_vec())]).expect("valid")
 }
 
-/// Trip `trip` of class `class` at iteration `iteration`.
+/// Trip `trip` of class `class`.
 #[must_use]
-pub fn traveller(trip: u32, class: u32, iteration: u32) -> Traveller {
-    Traveller { trip: TripId::new(trip), class: UserClassId::new(class), iteration }
+pub fn traveller(trip: u32, class: u32) -> Traveller {
+    Traveller { trip: TripId::new(trip), class: UserClassId::new(class) }
 }
 
 /// One row per attribute vector, of `mode`, row `j` in nest `nests[j]`.
@@ -34,21 +34,16 @@ pub fn rows<'a>(attributes: &'a [Vec<f64>], mode: Mode, nests: &[u32]) -> Vec<Ro
     attributes.iter().zip(nests).map(|(a, &nest)| Row { attributes: a, mode, nest }).collect()
 }
 
-/// How often each row is chosen by trips `0..draws` of class 0 at `iteration`, the trips
+/// How often each row is chosen by trips `0..draws` of class 0, the trips
 /// spread over four threads (each choice depends on its trip alone, so the counts do not
 /// depend on the spread).
 #[must_use]
-pub fn counts(
-    model: &(dyn Choice + Sync),
-    rows: &[Row<'_>],
-    draws: u32,
-    iteration: u32,
-) -> Vec<u64> {
+pub fn counts(model: &(dyn Choice + Sync), rows: &[Row<'_>], draws: u32) -> Vec<u64> {
     const THREADS: u32 = 4;
     let count = |part: u32| {
         let mut counts = vec![0; rows.len()];
         for trip in (part..draws).step_by(THREADS as usize) {
-            counts[model.choose(&traveller(trip, 0, iteration), rows).expect("a choice")] += 1;
+            counts[model.choose(&traveller(trip, 0), rows).expect("a choice")] += 1;
         }
         counts
     };

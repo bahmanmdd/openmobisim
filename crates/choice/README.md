@@ -9,7 +9,7 @@ timetables or the network.
 - `Coefficients::new(columns, classes, by_class)`: the names of the columns (for example
   `time_s`, `money_eur`, `ln_path_size`), the run's number of user classes, and per class one
   coefficient per column. Fixed once built.
-- Per choice, a `Traveller { trip, class, iteration }` and the alternatives as `Row
+- Per choice, a `Traveller { trip, class }` and the alternatives as `Row
   { attributes, mode, nest }`: the attributes one per column, in the columns' order and units;
   the mode, a label nothing here reads; the nest, a `u32` (rows with the same nest share it).
 - For the logit family, the nest scale `μ` in (0, 1] and the run's seed (`RngKey`).
@@ -39,11 +39,14 @@ seconds. Probabilities have no unit; `μ` has none.
   of −1 on it. There is no third implementation.
 - Sampling is exact, by Gumbel-max in two stages: the nest of greatest `μ I_n + ε_n`, then in it
   the row of greatest `v_j + ε_j`, each `ε` an independent standard Gumbel draw.
-- The draws come from the choice stream of the run's seed, at addresses made of the trip, the
-  iteration and the row's index or the nest's id: row `j` at block `j / 8`, word `2 (j mod 8)`;
-  nest `n` at block `n / 8`, word `2 (n mod 8) + 1`. No two draws share a bit; two nests with
-  different ids never share a draw. A choice depends on its trip, iteration, rows, class and the
-  seed alone: the same in any order, on any thread, over two runs.
+- The draws come from the choice stream of the run's seed, at addresses made of the trip and the
+  row's index or the nest's id: row `j` at block `j / 8`, word `2 (j mod 8)`; nest `n` at block
+  `n / 8`, word `2 (n mod 8) + 1`. No two draws share a bit; two nests with different ids never
+  share a draw.
+- The draws are the traveller's taste, fixed for the whole run: they depend on its trip, the
+  row's position in its set (the set is append-only, so a position is stable) or the nest id,
+  and the seed, never on the iteration. The choice changes only when the costs change, and is
+  the same in any order, on any thread, over two runs.
 
 ## Errors
 Refused when built: a class's coefficients not one per column, a coefficient not finite, a

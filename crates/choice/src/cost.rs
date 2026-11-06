@@ -31,15 +31,13 @@ pub struct Row<'a> {
     pub nest: u32,
 }
 
-/// Who is choosing, and when: what selects the coefficients and keys the random draws.
+/// Who is choosing: what selects the coefficients and keys the random draws.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Traveller {
     /// The trip, which is also its traveller.
     pub trip: TripId,
     /// The traveller's user class: which coefficients weigh its rows.
     pub class: UserClassId,
-    /// The iteration of the loop (0 on free-flow costs).
-    pub iteration: u32,
 }
 
 /// Why a model could not be built, or a choice could not be made. Each names what it refuses.

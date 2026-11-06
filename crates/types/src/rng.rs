@@ -37,8 +37,9 @@ const DOMAIN_TAG: &[u8; 22] = b"openmobisim-stream-rng";
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 #[repr(u16)]
 pub enum Stream {
-    /// The random part of choice. Addressed by (trip, iteration, block), each block holding the
-    /// draws of eight alternatives in its even words and eight nests in its odd words.
+    /// The random part of choice. Addressed by (trip, block), each block holding the draws of
+    /// eight alternatives in its even words and eight nests in its odd words; the draw is the
+    /// traveller's fixed taste for the run.
     Choice = 0,
     /// Who re-chooses at an iteration under the method of successive averages. Addressed by
     /// (trip, iteration).
@@ -82,8 +83,8 @@ impl RngKey {
 /// `from_pair(a, b)` sets the ChaCha stream to `a · 2³² + b` and the block counter to zero;
 /// `from_triple(a, b, c)` sets the same stream and the block counter to `c`. So
 /// `from_pair(a, b)` and `from_triple(a, b, 0)` are the same address: each stream uses one arity
-/// throughout ([`Stream::Choice`] the triple, [`Stream::MsaReselection`] the pair), and two
-/// streams cannot collide because their keys differ.
+/// throughout ([`Stream::Choice`] and [`Stream::MsaReselection`] the pair), and two streams
+/// cannot collide because their keys differ.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug, Default)]
 pub struct DrawAddress {
     stream_pos: u64,

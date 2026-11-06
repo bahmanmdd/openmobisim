@@ -20,7 +20,7 @@ fn the_least_cost_is_taken_with_probability_one_and_a_tie_goes_to_the_lowest_ind
             .map(|r| r.to_vec())
             .collect();
     let model = Deterministic::new(one_class(&["time_s", "money_eur"], &[1.0, 100.0]));
-    let who = traveller(3, 0, 2);
+    let who = traveller(3, 0);
     let all = rows(&attributes, Mode::Car, &[0, 0, 0, 0, 0]);
     assert_eq!(model.choose(&who, &all), Ok(0));
     assert_eq!(model.probabilities(&who, &all), Ok(vec![1.0, 0.0, 0.0, 0.0, 0.0]));
@@ -31,8 +31,8 @@ fn the_least_cost_is_taken_with_probability_one_and_a_tie_goes_to_the_lowest_ind
     let fewer = rows(&attributes[2..], Mode::Walk, &[0, 0, 0]);
     assert_eq!(model.choose(&who, &fewer), Ok(1));
     assert_eq!(model.probabilities(&who, &fewer), Ok(vec![0.0, 1.0, 0.0]));
-    // The same for any trip and iteration: no draw is made.
-    assert_eq!(model.choose(&traveller(99, 0, 40), &fewer), Ok(1));
+    // The same for any trip: no draw is made.
+    assert_eq!(model.choose(&traveller(99, 0), &fewer), Ok(1));
 }
 
 #[test]
@@ -72,7 +72,7 @@ fn no_rows_a_short_row_an_unknown_class_and_a_cost_that_is_not_finite_are_refuse
     let logit = Logit::new(one_class(&["time_s"], &[1.0]), 0.5, RngKey::new(0)).expect("valid");
     let best = Deterministic::new(one_class(&["time_s"], &[1.0]));
     let models: [&dyn Choice; 2] = [&logit, &best];
-    let who = traveller(0, 0, 0);
+    let who = traveller(0, 0);
     let (one, none, infinite) = ([60.0], [], [f64::INFINITY]);
     let row = |attributes| Row { attributes, mode: Mode::Car, nest: 0 };
     for model in models {
@@ -80,7 +80,7 @@ fn no_rows_a_short_row_an_unknown_class_and_a_cost_that_is_not_finite_are_refuse
         assert_eq!(model.probabilities(&who, &[]), Err(ChoiceError::NoRows));
         let short = ChoiceError::RowLength { row: 1, columns: 1, attributes: 0 };
         assert_eq!(model.choose(&who, &[row(&one), row(&none)]), Err(short));
-        let stranger = traveller(0, 1, 0);
+        let stranger = traveller(0, 1);
         let unknown = Err(ChoiceError::UnknownClass(UserClassId::new(1)));
         assert_eq!(model.choose(&stranger, &[row(&one)]), unknown);
         let not_finite = Err(ChoiceError::NotFiniteCost { row: 1 });

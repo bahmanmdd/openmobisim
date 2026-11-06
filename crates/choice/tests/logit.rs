@@ -30,11 +30,11 @@ fn six_alternatives_take_the_closed_form_shares_and_sample_them() {
     let (attributes, nests) = six(&costs);
     let rows = rows(&attributes, Mode::Car, &nests);
     let model = Logit::new(one_class(&["cost"], &[1.0]), 1.0, RngKey::new(11)).expect("valid");
-    let p = model.probabilities(&traveller(0, 0, 0), &rows).expect("probabilities");
+    let p = model.probabilities(&traveller(0, 0), &rows).expect("probabilities");
     assert!(largest_gap(&p, &by_hand) < 1e-12, "{p:?} against {by_hand:?}");
     assert!(largest_gap(&p, &logit_by_formula(&costs)) < 1e-12);
 
-    let n = counts(&model, &rows, 200_000, 0);
+    let n = counts(&model, &rows, 200_000);
     let statistic = chi_square(&n, &by_hand);
     assert!(statistic < CHI_SQUARE_999_DF5, "chi-square {statistic} for counts {n:?}");
 }
@@ -51,7 +51,7 @@ fn arbitrary_costs_and_two_columns_take_the_formula() {
     let model =
         Logit::new(one_class(&["time_s", "money_eur"], &[1.0 / 600.0, 0.4]), 1.0, RngKey::new(3))
             .expect("valid");
-    let p = model.probabilities(&traveller(0, 0, 0), &rows).expect("probabilities");
+    let p = model.probabilities(&traveller(0, 0), &rows).expect("probabilities");
     assert!(largest_gap(&p, &logit_by_formula(&costs)) < 1e-12);
     assert!((p.iter().sum::<f64>() - 1.0).abs() < 1e-12);
 }
@@ -63,7 +63,7 @@ fn a_cost_of_hours_in_seconds_neither_overflows_nor_underflows() {
     let attributes = [vec![7_200.0], vec![7_201.0]];
     let rows = rows(&attributes, Mode::Walk, &[0, 1]);
     let model = Logit::new(one_class(&["time_s"], &[1.0]), 1.0, RngKey::new(0)).expect("valid");
-    let p = model.probabilities(&traveller(0, 0, 0), &rows).expect("probabilities");
+    let p = model.probabilities(&traveller(0, 0), &rows).expect("probabilities");
     let e = 1.0_f64.exp();
     assert!(largest_gap(&p, &[e / (1.0 + e), 1.0 / (1.0 + e)]) < 1e-12, "{p:?}");
 }
@@ -79,7 +79,7 @@ fn path_size_shares(phi: f64, beta_ln_ps: f64) -> Vec<f64> {
     let rows = rows(&attributes, Mode::Bike, &[0, 1, 2]);
     let coefficients = one_class(&["time_s", "ln_path_size"], &[0.0005, beta_ln_ps]);
     let model = Logit::new(coefficients, 1.0, RngKey::new(9)).expect("valid");
-    model.probabilities(&traveller(0, 0, 0), &rows).expect("probabilities")
+    model.probabilities(&traveller(0, 0), &rows).expect("probabilities")
 }
 
 #[test]
@@ -114,14 +114,14 @@ fn two_user_classes_over_the_same_rows_take_each_its_own_closed_form() {
     let best = Deterministic::new(coefficients);
     let e3 = 3.0_f64.exp();
     for (class, p_a, least) in [(0, 1.0 / (1.0 + e3), 1), (1, e3 / (1.0 + e3), 0)] {
-        let who = traveller(0, class, 0);
+        let who = traveller(0, class);
         let p = logit.probabilities(&who, &rows).expect("probabilities");
         assert!(largest_gap(&p, &[p_a, 1.0 - p_a]) < 1e-12, "class {class}: {p:?}");
         assert_eq!(best.choose(&who, &rows), Ok(least), "class {class}");
         // 20 000 draws of the class: the share of A within three standard deviations.
         let draws = 20_000_u32;
         let took_a =
-            (0..draws).filter(|&t| logit.choose(&traveller(t, class, 0), &rows) == Ok(0)).count();
+            (0..draws).filter(|&t| logit.choose(&traveller(t, class), &rows) == Ok(0)).count();
         let share = f64::from(u32::try_from(took_a).expect("small")) / f64::from(draws);
         let sigma = (p_a * (1.0 - p_a) / f64::from(draws)).sqrt();
         assert!((share - p_a).abs() < 3.0 * sigma, "class {class}: {share} against {p_a}");
