@@ -40,6 +40,9 @@ version = "0.2.0-dev"
 [[package]]
 name = "openmobisim-choice"
 version = "0.2.0-dev"
+dependencies = [
+ "openmobisim-types",
+]
 
 [[package]]
 name = "openmobisim-demand"

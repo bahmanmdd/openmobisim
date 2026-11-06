@@ -37,7 +37,8 @@ const DOMAIN_TAG: &[u8; 22] = b"openmobisim-stream-rng";
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 #[repr(u16)]
 pub enum Stream {
-    /// The random part of choice. Addressed by (trip, iteration, alternative).
+    /// The random part of choice. Addressed by (trip, iteration, block), each block holding the
+    /// draws of eight alternatives in its even words and eight nests in its odd words.
     Choice = 0,
     /// Who re-chooses at an iteration under the method of successive averages. Addressed by
     /// (trip, iteration).
