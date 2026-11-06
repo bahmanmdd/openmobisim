@@ -86,6 +86,16 @@ dependencies = [
 [[package]]
 name = "openmobisim-loop"
 version = "0.2.0-dev"
+dependencies = [
+ "openmobisim-choice",
+ "openmobisim-demand",
+ "openmobisim-graph",
+ "openmobisim-loading",
+ "openmobisim-search",
+ "openmobisim-transit",
+ "openmobisim-types",
+ "rayon",
+]
 
 [[package]]
 name = "openmobisim-search"
