@@ -51,6 +51,8 @@ built in metres they are metres in its plane, taken as given. The walk speed is 
 - Reach: once per stop, in parallel by stop, the walk network is searched from the stop's
   node both ways (`Search::reach_backward`, node to stop, and `Search::reach`, stop to node),
   bounded by `stop_walk_max` over the walk speed; the results are kept per node by stop.
+  The search is public (`reach::NearStops`, with `index::NodeIndex`): the GTFS reader derives
+  the footpaths between stops with it, bounded by `transfer_walk_max`.
 - Lists: for a trip with transit in its set, the access list holds each stop reached on foot
   from the origin's walk node, with the walking seconds = origin gap / walk speed + node to stop
   + stop gap / walk speed; a stop is kept when the whole walk, in metres at walking speed, is at

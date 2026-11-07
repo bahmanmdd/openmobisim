@@ -35,6 +35,10 @@ rand_chacha = { version = "0.10", default-features = false }
 rayon = "1.11"
 # The `.osm.pbf` decoder, with flate2's pure-Rust backend: no C in the tree.
 osmpbf = { version = "0.3", default-features = false, features = ["rust-zlib"] }
+# A GTFS feed's zip: deflate only, through flate2's pure-Rust zlib-rs backend, no C in the tree.
+zip = { version = "7.2", default-features = false, features = ["deflate-flate2-zlib-rs"] }
+# The CSV state machine alone (no serde, no allocation): a GTFS file streams through a fixed buffer.
+csv-core = "0.1"
 
 [workspace.lints.rust]
 missing_docs = "warn"

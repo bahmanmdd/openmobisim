@@ -38,6 +38,8 @@ jobs:
         run: cargo test --release -p openmobisim-loop --test braess --test sioux_falls -- --ignored
       - name: Delft read in release (under 3 s)
         run: cargo test --release -p openmobisim-io-osm --test delft -- --nocapture
+      - name: Delft feed read in release, footpaths included (under 3 s)
+        run: cargo test --release -p openmobisim-io-gtfs --test delft -- --nocapture
       - name: Budgets
         run: bash tools/check_limits.sh
       - name: Leak guard, built-in rules

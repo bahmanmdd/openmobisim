@@ -1,6 +1,6 @@
 [package]
 name = "openmobisim-io-gtfs"
-description = "Reading timetables from GTFS."
+description = "Reading one GTFS feed into the timetable of its busiest weekday, with footpaths on the walk network."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -12,3 +12,13 @@ authors.workspace = true
 workspace = true
 
 [dependencies]
+openmobisim-types = { workspace = true }
+openmobisim-graph = { workspace = true }
+openmobisim-transit = { workspace = true }
+openmobisim-demand = { workspace = true }
+zip = { workspace = true }
+csv-core = { workspace = true }
+
+[dev-dependencies]
+# The Delft network the Delft feed is read on.
+openmobisim-io-osm = { workspace = true }

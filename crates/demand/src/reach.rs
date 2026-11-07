@@ -52,9 +52,10 @@ impl PerNode {
     }
 }
 
-/// The stops within walking reach of each node, each way.
+/// The stops within walking reach of each node, each way. Public for the GTFS reader, which
+/// derives the footpaths between stops from it.
 #[derive(Clone, Debug, Default)]
-pub(crate) struct NearStops {
+pub struct NearStops {
     to_stop: PerNode,
     from_stop: PerNode,
 }
@@ -62,6 +63,7 @@ pub(crate) struct NearStops {
 impl NearStops {
     /// Search from the node of every stop (`stop_nodes[s]` is stop `s`'s), on foot, within
     /// `bound` seconds, both ways.
+    #[must_use]
     pub fn new(network: &Network, stop_nodes: &[NodeId], bound: Duration) -> Self {
         let times = free_flow(network);
         let first = Search::new(network, &times);
@@ -82,11 +84,13 @@ impl NearStops {
     }
 
     /// The stops a walker reaches from `node` within the bound, by stop, with the seconds.
+    #[must_use]
     pub fn stops_reached_from(&self, node: NodeId) -> &[(StopId, f64)] {
         self.to_stop.of(node)
     }
 
     /// The stops from which a walker reaches `node` within the bound, by stop, with the seconds.
+    #[must_use]
     pub fn stops_reaching(&self, node: NodeId) -> &[(StopId, f64)] {
         self.from_stop.of(node)
     }
