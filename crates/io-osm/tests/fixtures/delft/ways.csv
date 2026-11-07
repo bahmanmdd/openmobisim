@@ -1,0 +1,21 @@
+way,case,length_m,forward_modes,forward_lanes,forward_speed_km_h,backward_modes,backward_lanes,backward_speed_km_h,tags
+7478468,motorway,104.33239426205583,c,3,100.0,-,,,highway=motorway|oneway=yes|lanes=3|maxspeed=100
+7467826,motorway_link,60.12260541296029,c,3,100.0,-,,,highway=motorway_link|oneway=yes|lanes=3|maxspeed=100
+7478460,trunk,18.07608824398517,c,3,70.0,-,,,highway=trunk|oneway=yes|motorroad=yes|lanes=3|maxspeed=70
+24470941,both lane sides,29.837996615465148,cw,2,50.0,cw,1,50.0,highway=residential|bicycle=no|lanes=3|lanes:forward=2|lanes:backward=1|maxspeed=50
+7537940,total and forward only,30.228926651042343,cw,2,50.0,cw,1,50.0,highway=tertiary|bicycle=use_sidepath|lanes=3|lanes:forward=2|maxspeed=50
+126553746,total and backward only,26.29644191337933,c,2,50.0,c,1,50.0,highway=secondary|bicycle=no|foot=use_sidepath|lanes=3|lanes:backward=1|maxspeed=50
+1345177969,maxspeed by direction,18.265632020396485,cbw,1,30.0,cbw,1,80.0,highway=unclassified|maxspeed:forward=30|maxspeed:backward=80
+7468829,secondary two-way lanes 2,75.26741909051816,c,1,50.0,c,1,50.0,highway=secondary|bicycle=use_sidepath|foot=use_sidepath|lanes=2|maxspeed=50
+143566285,one-way with bikes both ways,72.91476180361941,cbw,1,30.0,bw,,,highway=tertiary|oneway=yes|oneway:bicycle=no|maxspeed=30
+7478195,oneway=alternating,6.25799789641521,cw,1,80.0,cw,1,80.0,highway=tertiary|oneway=alternating|bicycle=use_sidepath|lanes=1|maxspeed=80
+7465913,residential,76.75048182179677,cbw,1,30.0,cbw,1,30.0,highway=residential|maxspeed=30
+7448493,living_street,76.37994467634192,cbw,1,15.0,cbw,1,15.0,highway=living_street|maxspeed=15
+7465986,bicycle=no on a car street,5.005622182210305,c,1,50.0,-,,,highway=secondary|oneway=yes|bicycle=no|foot=no|lanes=1|maxspeed=50
+7448365,parking aisle,30.212693478632588,bw,,,bw,,,highway=service|service=parking_aisle|maxspeed=30
+4239535,cycleway,395.856931312214,bw,,,bw,,,highway=cycleway|motor_vehicle=no|foot=yes
+7448310,one-way cycleway,781.3894238466918,bw,,,w,,,highway=cycleway|oneway=yes
+4239388,footway,232.24088369453722,w,,,w,,,highway=footway
+4348586,footway with bicycle=yes,76.26907807276406,bw,,,bw,,,highway=footway|bicycle=yes
+7465876,path,176.9284264134812,bw,,,bw,,,highway=path
+7482919,roundabout,36.24908280984973,c,1,50.0,-,,,highway=tertiary|junction=roundabout|bicycle=use_sidepath|foot=use_sidepath|lanes=1|maxspeed=50

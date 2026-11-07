@@ -33,6 +33,8 @@ openmobisim-io-parquet = { path = "crates/io-parquet", version = "0.2.0-dev" }
 # External: kept short. Every addition is a decision, made when a module needs it.
 rand_chacha = { version = "0.10", default-features = false }
 rayon = "1.11"
+# The `.osm.pbf` decoder, with flate2's pure-Rust backend: no C in the tree.
+osmpbf = { version = "0.3", default-features = false, features = ["rust-zlib"] }
 
 [workspace.lints.rust]
 missing_docs = "warn"

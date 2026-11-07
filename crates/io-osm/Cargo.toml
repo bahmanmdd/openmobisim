@@ -1,6 +1,6 @@
 [package]
 name = "openmobisim-io-osm"
-description = "Reading networks from OpenStreetMap."
+description = "Reading one OpenStreetMap extract into the network: car, bike and walk links by the wiki's access rules."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -12,3 +12,6 @@ authors.workspace = true
 workspace = true
 
 [dependencies]
+openmobisim-types = { workspace = true }
+openmobisim-graph = { workspace = true }
+osmpbf = { workspace = true }
