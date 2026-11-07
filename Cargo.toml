@@ -39,6 +39,11 @@ osmpbf = { version = "0.3", default-features = false, features = ["rust-zlib"] }
 zip = { version = "7.2", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 # The CSV state machine alone (no serde, no allocation): a GTFS file streams through a fixed buffer.
 csv-core = "0.1"
+# The Parquet writer through Arrow, as version 1 pins it, with no codec: the files are written with the crate's
+# default compression, none, so no codec is compiled (zstd's C library least of all).
+parquet = { version = "59", default-features = false, features = ["arrow"] }
+arrow-array = { version = "59", default-features = false }
+arrow-schema = { version = "59", default-features = false }
 
 [workspace.lints.rust]
 missing_docs = "warn"

@@ -12,3 +12,11 @@ authors.workspace = true
 workspace = true
 
 [dependencies]
+openmobisim-types = { workspace = true }
+openmobisim-graph = { workspace = true }
+openmobisim-loading = { workspace = true }
+openmobisim-demand = { workspace = true }
+openmobisim-loop = { workspace = true }
+parquet = { workspace = true }
+arrow-array = { workspace = true }
+arrow-schema = { workspace = true }

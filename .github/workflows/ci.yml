@@ -40,6 +40,13 @@ jobs:
         run: cargo test --release -p openmobisim-io-osm --test delft -- --nocapture
       - name: Delft feed read in release, footpaths included (under 3 s)
         run: cargo test --release -p openmobisim-io-gtfs --test delft -- --nocapture
+      - name: The hand run's Parquet files read by pyarrow 26.0.1 against the hand numbers
+        run: |
+          python3 -m venv "$RUNNER_TEMP/pyarrow"
+          "$RUNNER_TEMP/pyarrow/bin/pip" install --quiet pyarrow==26.0.1
+          "$RUNNER_TEMP/pyarrow/bin/python" crates/io-parquet/tests/read_back.py target/tmp/io-parquet-hand-run
+      - name: Sioux Falls's run written in release (under 1 s)
+        run: cargo test --release -p openmobisim-io-parquet --test sioux_falls -- --ignored --nocapture
       - name: Budgets
         run: bash tools/check_limits.sh
       - name: Leak guard, built-in rules
