@@ -8,13 +8,6 @@
 //! times, the short one at capacity, so the trips leaving after `t*` split by capacity: `c1 / q`
 //! on the short route (Wardrop). The mean trip over the hour is
 //! `[t1 t* + (q − c1) t*² / (2 c1) + (T − t*) t2] / T`.
-//!
-//! Tolerances. The step of the method of successive averages at 100 iterations bounds the
-//! residual at 1 800/100 veh/h, 54 s of queue over the hour on the 1 200 veh/h bottleneck; the
-//! two-route equilibrium corrects itself faster (a queue past `t2 − t1` sends the next
-//! re-choosers to the long route), so the test demands 3 % of a time, a sixth of that bound,
-//! and 0.03 on the share. `t*` is read from the count on the long route: the reading's knots
-//! are the 60 s bins, so the switching instant is resolved to one bin, 60 s.
 
 #![allow(
     clippy::cast_precision_loss,

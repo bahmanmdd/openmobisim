@@ -3,16 +3,20 @@
 //! 2022), the linear program `equilibrium_lp.py` solves with scipy at 0.045 of the TNTP demand
 //! per hour with the capacities at a tenth (the program is invariant to scaling flows and
 //! capacities together; 0.45 of TNTP is 0.9 of the hourly demand version 1 used, where the
-//! total time is unique, range 0.014 %). Judged, at 3 % as test 5: the mean trip 11.18 min and
-//! `Σ τ x` 151 080 veh·min per hour. The OD times are judged against their ranges over the
-//! dual's optimal face (all but a few are points) as the demand-weighted mean of each pair's
-//! distance outside its range, at the step's bound: a run of K iterations last moved a share
-//! 1/K of travellers, so a link at capacity ν saw an inflow residual of ν/K and its queue
-//! drifted by 3 600/K s over the hour read, which is what a pair's time crossing one queued
-//! link can be off by (109 s at K = 33; a pair's hourly mean also rests on a few dozen trips).
-//! As inclusions, every link with a standing queue is one the program may queue, its entries at
-//! capacity within 3 %. Three hours of constant demand; the second hour's departures are the
-//! steady state.
+//! total time is unique, range 0.014 %): the mean trip 11.18 min, `Σ τ x` 151 080 veh·min per
+//! hour, 20 links that must queue, each at its capacity. Three hours of constant demand; the
+//! second hour's departures are read as the steady state. Two tiers. The regular tier, 48 814
+//! trips at the stopping rule: 3 % on a time and on `Σ τ x`, 3 % of capacity on a queued link's
+//! entries. The convergence tier (ignored in the debug suite; CI runs it in release), twice the
+//! population (0.09 of TNTP per hour, capacities at a fifth, 97 362 trips) to a fixed 400
+//! iterations: `Σ τ x`, the route pattern, converges to the program (measured −0.00 % at 400,
+//! +0.02 % at four times the population) and is judged at 0.1 %; a queued link's entries at
+//! 2 % of capacity (measured within 1.7 %); the mean trip only at 1 %, because the queues of a
+//! point queue at constant demand drift along the window (measured by departure hour at four
+//! times the population and 400 iterations: −0.8 % in hour 2, −0.5 % in hour 3; with five
+//! hours of demand +0.7 % in hour 4), a residual that vanishes neither with iterations nor with
+//! the population. The OD times' distance outside their ranges over the dual's optimal face is
+//! reported.
 //!
 //! Bar-Gera's user-equilibrium flows (`SiouxFalls_flow.tntp`) are the equilibrium of the BPR
 //! functions, a model without capacity or queue; they are not a point-queue equilibrium and are
@@ -32,6 +36,7 @@ use benchmark::{equilibrium, fixtures, link_hours, steady, streams};
 use common::{at, car_link, demand, print_iterations, time_only};
 use openmobisim_graph::geometry::{LonLat, Projection};
 use openmobisim_graph::network::{Network, NetworkBuilder};
+use openmobisim_loop::parameters::Parameters;
 use openmobisim_loop::run::run;
 use openmobisim_types::ids::EntityId;
 use openmobisim_types::time::Second;
@@ -70,17 +75,25 @@ fn network(capacity_scale: f64) -> Network {
     b.build(common::VALUES).expect("a network")
 }
 
-#[test]
-fn the_steady_hour_is_the_capacity_constrained_equilibrium() {
-    let e = equilibrium("sioux_falls");
-    assert_eq!(e.scale, (0.045, 0.1), "the fixture's scales");
+/// The steady hour against the fixture `file`, solved at `scale`, run with `parameters`,
+/// judged at `tol_time` on the mean trip, `tol_taux` on `Σ τ x`, `tol_entries` of capacity on a
+/// queued link's entries.
+fn steady_hour(
+    file: &str,
+    scale: (f64, f64),
+    parameters: &Parameters,
+    tol_time: f64,
+    tol_taux: f64,
+    tol_entries: f64,
+) {
+    let e = equilibrium("sioux_falls", file);
+    assert_eq!(e.scale, scale, "the fixture's scales");
     assert!((e.mean.1 - e.mean.0) / e.mean.0 < 0.001, "the mean trip is unique");
     let net = network(e.scale.1);
     let rows = streams(&net, &e, 3.0);
     let dem = demand(&net, &rows);
     let started = std::time::Instant::now();
-    let result =
-        run(&net, &dem, None, (Second(0), Second(4 * 3_600)), &time_only(100)).expect("a run");
+    let result = run(&net, &dem, None, (Second(0), Second(4 * 3_600)), parameters).expect("a run");
     println!(
         "{} trips, {} iterations in {:.1} s",
         rows.len(),
@@ -115,7 +128,7 @@ fn the_steady_hour_is_the_capacity_constrained_equilibrium() {
                 "  link {id:>5}: standing queue, entries {:6.1}, discharge {:6.1}, capacity {cap:6.1} veh/h, mean delay {:4.0} s (program: flow {lp_flow:6.1}, queue {q_lo:3.0} to {q_hi:3.0} s)",
                 h.entries, h.discharge, h.delay
             );
-            if (h.entries / cap - 1.0).abs() > 0.03 || q_hi <= 0.0 {
+            if (h.entries / cap - 1.0).abs() > tol_entries || q_hi <= 0.0 {
                 off.push(id);
             }
         }
@@ -131,17 +144,29 @@ fn the_steady_hour_is_the_capacity_constrained_equilibrium() {
         outside += rate * (lo - got).max(got - hi).max(0.0);
         weight += rate;
     }
-    let bound = 3_600.0 / result.iterations.len() as f64;
     println!(
-        "OD times: demand-weighted mean distance outside the program's ranges {:.1} s, the step's bound {bound:.1} s",
-        outside / weight
+        "OD times: demand-weighted mean distance outside the program's ranges {:.1} s of a {:.1} s mean trip",
+        outside / weight,
+        e.mean.0
     );
-    assert!(outside / weight <= bound, "OD times outside their ranges by {} s", outside / weight);
-    assert!((s.mean - e.mean.0).abs() <= 0.03 * e.mean.0, "mean trip {}", s.mean);
-    assert!((s.tau_x - e.tau_x.0).abs() <= 0.03 * e.tau_x.0, "Σ τ x {}", s.tau_x);
+    assert!((s.mean - e.mean.0).abs() <= tol_time * e.mean.0, "mean trip {}", s.mean);
+    assert!((s.tau_x - e.tau_x.0).abs() <= tol_taux * e.tau_x.0, "Σ τ x {}", s.tau_x);
     assert!(standing_links > 0, "some link has a standing queue");
     assert!(
         off.is_empty(),
         "links with a standing queue off their capacity or never queued by the program: {off:?}"
     );
+}
+
+#[test]
+fn the_steady_hour_is_the_capacity_constrained_equilibrium() {
+    steady_hour("equilibrium.csv", (0.045, 0.1), &time_only(100), 0.03, 0.03, 0.03);
+}
+
+/// The convergence tier: twice the population to a fixed 400 iterations.
+#[test]
+#[ignore = "the convergence tier: about 25 s in release, run by CI's release step"]
+fn at_twice_the_population_and_400_iterations_the_route_pattern_within_0_1_percent() {
+    let fixed = Parameters { iteration_floor: 400, ..time_only(400) };
+    steady_hour("equilibrium_x2.csv", (0.09, 0.2), &fixed, 0.01, 0.001, 0.02);
 }

@@ -15,8 +15,9 @@ nothing of the simulator in it.
 
     python3 equilibrium_lp.py nguyen_dupuis 0.9 1
     python3 equilibrium_lp.py sioux_falls 0.045 0.1
+    python3 equilibrium_lp.py sioux_falls 0.09 0.2 equilibrium_x2.csv
 
-writes fixtures/<case>/equilibrium.csv for the case's demand times the first factor (veh/h) and
+writes fixtures/<case>/equilibrium.csv (or the fourth argument's name) for the case's demand times the first factor (veh/h) and
 its capacities times the second. Nguyen–Dupuis: the tables of Sensors 25(7) 2262 (2025, CC BY
 4.0) as version 1 of openmobisim made them dynamic (minutes as free-flow times, capacities and
 demand ×10 per hour). Sioux Falls: TNTP (bstabler/TransportationNetworks), capacities in veh/h,
@@ -146,11 +147,12 @@ def solve(arcs, tau, nu, demand):
 
 def main():
     case, d_scale, c_scale = sys.argv[1], float(sys.argv[2]), float(sys.argv[3])
+    name = sys.argv[4] if len(sys.argv) > 4 else "equilibrium.csv"
     folder, arcs, tau, cap, demand = {"nguyen_dupuis": nguyen_dupuis, "sioux_falls": sioux_falls}[case]()
     nu = {k: c * c_scale for k, c in cap.items()}
     dem = {od: q * d_scale for od, q in demand.items()}
     out = solve(arcs, tau, nu, dem)
-    with (folder / "equilibrium.csv").open("w") as f:
+    with (folder / name).open("w") as f:
         f.write(f"scale,{d_scale},{c_scale}\n")
         f.write(f"mean,{out['mean_lo']:.6f},{out['mean_hi']:.6f}\n")
         f.write(f"taux,{out['tau_x']:.6f},{out['demand']:.6f}\n")

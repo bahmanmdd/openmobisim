@@ -20,6 +20,9 @@ pub struct Parameters {
     pub link_bin: u32,
     /// The most iterations a run does, counting iteration 0.
     pub iteration_cap: u32,
+    /// The iterations a run does before the stopping rule is read: 0 reads it from the first;
+    /// at or above the cap the run goes to the cap.
+    pub iteration_floor: u32,
     /// The run's seed: every random draw is a function of it, a stream and an identity.
     pub seed: u64,
     /// The seconds a traveller must be at the stop before a run leaves, every boarding.
@@ -47,6 +50,7 @@ impl Parameters {
         Self {
             link_bin: 300,
             iteration_cap: 50,
+            iteration_floor: 0,
             seed: 0,
             boarding_slack: 60,
             max_rides: 4,

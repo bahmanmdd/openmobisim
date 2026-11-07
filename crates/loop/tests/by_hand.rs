@@ -253,6 +253,20 @@ fn row(mean: f64, found: f64) -> Iteration {
     }
 }
 
+/// A lone bike trip finds nothing after iteration 0 and its mean never moves, so the rule stops
+/// the run as soon as it is read with five iterations: the floor decides when that is.
+#[test]
+fn the_rule_is_not_read_before_the_floor() {
+    let net = two_nodes();
+    let dem = demand(&net, &[trip(0.0, &[Mode::Bike])]);
+    for (floor, expected, by_rule) in [(0, 5, true), (12, 12, true), (30, 20, false)] {
+        let p = Parameters { iteration_floor: floor, ..time_only(20) };
+        let r = run(&net, &dem, None, WINDOW, &p).expect("a run");
+        assert_eq!(r.iterations.len(), expected, "floor {floor}");
+        assert_eq!(r.stopped_by_rule, by_rule, "floor {floor}");
+    }
+}
+
 #[test]
 fn the_stopping_rule_by_hand() {
     let flat: Vec<Iteration> = (0..5).map(|_| row(1_000.0, 0.005)).collect();

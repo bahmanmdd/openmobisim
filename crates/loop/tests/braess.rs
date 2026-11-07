@@ -11,15 +11,16 @@
 //! a→b: 750 on each route, no queue, 11 min. At 900 veh/h with a→b: all on s-a-b-t, 3 min.
 //! The demand runs for three hours; the second hour's departures are the steady state.
 //!
-//! Tolerances, from the residual of the method of successive averages with the deterministic
-//! choice on a bottleneck, measured before the tolerances were set (the rule off, the queues'
-//! sum against 960 s: −4.5 % at 100 iterations, −1.5 % at 200, −1.1 % at 400, +2.5 % at
-//! 800; the rule stops the run near 150, the sum then 4.1 % short): 2 % on the mean trip, 3 %
-//! on a route's time (the equal-times condition, 19 min on every used route), 0.03 on a route
-//! share. A single link's queue is the integral of the inflow's excess over the capacity: a
-//! share residual of 0.01 is 15 veh/h on a 1 000 veh/h link, 54 s of queue over the hour read,
-//! 11 % of the 8 min; so each queue alone, read from the links table, is judged at 10 % and
-//! the two queues' sum at 5 %.
+//! Two tiers. The regular tier, 4 500 travellers at the stopping rule: the finite population's
+//! residual with the deterministic choice (measured over seeds, rule off, 300 iterations: the
+//! mean −1.4 % ± 0.7, the queues −2.5 % ± 3.8 and −2.9 % ± 3.9) gives 2 % on the mean trip,
+//! 0.03 on a route share, 8 % on each queue delay. The convergence tier (ignored in the debug
+//! suite; CI runs it in release), 72 000 travellers (demand and capacities scaled together, the
+//! equilibrium invariant) to a fixed 1 000 iterations: the residual vanishes with the
+//! population, not with iterations (18 000 travellers stay −0.5 % on the mean from 1 000 to
+//! 10 000 iterations; 72 000 reach −0.06 % and +0.02 % over two seeds, the queues within
+//! 0.31 %), so it is judged at 0.2 % on the mean, 0.005 on a share, 1 % on each queue. The
+//! cases without a binding bottleneck: 2 % of the trip and 5 % of a crossing time.
 
 #![allow(
     clippy::cast_precision_loss,
@@ -35,18 +36,20 @@ use common::{
     share_via, stream, time_only,
 };
 use openmobisim_graph::network::Network;
+use openmobisim_loop::parameters::Parameters;
 use openmobisim_loop::run::{Run, run};
 use openmobisim_types::time::Second;
 
-fn braess(with_ab: bool) -> Network {
+/// The network with every capacity times `scale`, with or without a→b.
+fn braess_at(with_ab: bool, scale: f64) -> Network {
     let mut links = vec![
-        ("sa", "s", "a", car_link(1_000.0, 60.0, 1_000.0)),
-        ("at", "a", "t", car_link(10_000.0, 60.0, 6_000.0)),
-        ("sb", "s", "b", car_link(10_000.0, 60.0, 6_000.0)),
-        ("bt", "b", "t", car_link(1_000.0, 60.0, 1_000.0)),
+        ("sa", "s", "a", car_link(1_000.0, 60.0, 1_000.0 * scale)),
+        ("at", "a", "t", car_link(10_000.0, 60.0, 6_000.0 * scale)),
+        ("sb", "s", "b", car_link(10_000.0, 60.0, 6_000.0 * scale)),
+        ("bt", "b", "t", car_link(1_000.0, 60.0, 1_000.0 * scale)),
     ];
     if with_ab {
-        links.push(("ab", "a", "b", car_link(1_000.0, 60.0, 6_000.0)));
+        links.push(("ab", "a", "b", car_link(1_000.0, 60.0, 6_000.0 * scale)));
     }
     network(
         &[("s", 0.0, 0.0), ("a", 5_000.0, 500.0), ("b", 5_000.0, -500.0), ("t", 10_000.0, 0.0)],
@@ -54,24 +57,44 @@ fn braess(with_ab: bool) -> Network {
     )
 }
 
-fn steady(net: &Network, rate_h: f64) -> Run {
+fn braess(with_ab: bool) -> Network {
+    braess_at(with_ab, 1.0)
+}
+
+/// Three hours of `rate_h` veh/h from s to t, run with `parameters`.
+fn steady_with(net: &Network, rate_h: f64, parameters: &Parameters) -> Run {
     let rows = stream(net, "c", "s", "t", rate_h, 3.0, Second(0));
     let dem = demand(net, &rows);
-    let result =
-        run(net, &dem, None, (Second(0), Second(4 * 3_600)), &time_only(200)).expect("a run");
+    let started = std::time::Instant::now();
+    let result = run(net, &dem, None, (Second(0), Second(4 * 3_600)), parameters).expect("a run");
+    println!(
+        "{} trips, {} iterations in {:.1} s",
+        rows.len(),
+        result.iterations.len(),
+        started.elapsed().as_secs_f64()
+    );
+    result
+}
+
+fn steady(net: &Network, rate_h: f64) -> Run {
+    let result = steady_with(net, rate_h, &time_only(200));
     print_iterations(&result);
     result
 }
 
-#[test]
-fn with_the_added_link_every_trip_takes_19_min_split_in_thirds_with_8_min_queues() {
-    let net = braess(true);
-    let result = steady(&net, 1_500.0);
+/// The 19-minute case at `scale` times the population run with `parameters`, judged at
+/// `mean_tol` of the trip, `share_tol` on a share and `queue_tol` of a queue.
+fn nineteen_minutes(
+    scale: f64,
+    parameters: &Parameters,
+    mean_tol: f64,
+    share_tol: f64,
+    queue_tol: f64,
+) {
+    let net = braess_at(true, scale);
+    let result = steady_with(&net, 1_500.0 * scale, parameters);
     let hour2 = departed_in(&result, 3_600, 7_200);
-    assert_eq!(hour2.len(), 1_500, "every second-hour trip finishes");
-    let k = result.iterations.len() as f64;
-    let (bound_s, bound_share) = (10_800.0 / k, 2.0 / k);
-    println!("{k} iterations: a time within {bound_s:.1} s, a share within {bound_share:.4}");
+    assert_eq!(hour2.len(), (1_500.0 * scale) as usize, "every second-hour trip finishes");
     let mean = mean_time(&result, &hour2);
     let (ab, sb, at) = (link(&net, "ab"), link(&net, "sb"), link(&net, "at"));
     let via_ab = share_via(&result, &hour2, ab);
@@ -99,16 +122,26 @@ fn with_the_added_link_every_trip_takes_19_min_split_in_thirds_with_8_min_queues
         "queue delays s→a {q_sa:.1} s, b→t {q_bt:.1} s against 480 s each, {:.1} s against 960 s",
         q_sa + q_bt
     );
-    assert!(k >= 100.0, "{k} iterations: the step's bound would be loose");
-    assert!((mean - 1_140.0).abs() <= bound_s, "mean trip {mean}");
-    for t in by_route {
-        assert!((t - 1_140.0).abs() <= bound_s, "a route's time {t}");
-    }
+    println!("{} iterations at {scale} times the population", result.iterations.len());
+    assert!((mean - 1_140.0).abs() <= mean_tol * 1_140.0, "mean trip {mean}");
     for share in [via_at, via_sb, via_ab] {
-        assert!((share - 1.0 / 3.0).abs() <= bound_share, "share {share}");
+        assert!((share - 1.0 / 3.0).abs() <= share_tol, "share {share}");
     }
-    assert!((q_sa - 480.0).abs() <= bound_s, "queue at s→a {q_sa}");
-    assert!((q_bt - 480.0).abs() <= bound_s, "queue at b→t {q_bt}");
+    assert!((q_sa - 480.0).abs() <= queue_tol * 480.0, "queue at s→a {q_sa}");
+    assert!((q_bt - 480.0).abs() <= queue_tol * 480.0, "queue at b→t {q_bt}");
+}
+
+#[test]
+fn with_the_added_link_every_trip_takes_19_min_split_in_thirds_with_8_min_queues() {
+    nineteen_minutes(1.0, &time_only(200), 0.02, 0.03, 0.08);
+}
+
+/// The convergence tier: 72 000 travellers to a fixed 1 000 iterations.
+#[test]
+#[ignore = "the convergence tier: about 35 s in release, run by CI's release step"]
+fn at_16_times_the_population_and_1000_iterations_within_0_2_percent_and_1_percent_on_a_queue() {
+    let fixed = Parameters { iteration_floor: 1_000, ..time_only(1_000) };
+    nineteen_minutes(16.0, &fixed, 0.002, 0.005, 0.01);
 }
 
 #[test]

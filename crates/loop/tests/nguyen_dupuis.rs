@@ -1,15 +1,13 @@
 //! Test 5, Nguyen–Dupuis (1984): 13 nodes, 19 links, four OD pairs, against the
 //! capacity-constrained equilibrium (Larsson and Patriksson 1995; Cominetti, Correa and Olver
-//! 2022), the linear program `equilibrium_lp.py` solves with scipy at 0.9 of the case's demand.
-//! Judged, at 3 % (the residual of the method, as in test 4), what the program fixes
-//! uniquely over its dual's optimal face: the mean trip, 36.10 min (range 0.003 %); the OD
-//! times, 32, 38, 37 and 34 min (each a point); `Σ τ x` of the routes taken, 60 610 veh·min per
-//! hour of demand. Judged as inclusions: a link with a standing queue in the run is one the
-//! program may queue (its greatest queue over the face above zero) and its entries are at its
-//! capacity within 3 %; the program's queue levels themselves (links 5 and 8 must queue, 13 and
-//! 19 may) are reported, not judged, since the step residual on a 270 veh/h link at the stop is
-//! larger than they are. Each OD pair runs at its constant rate for three hours; the second
-//! hour's departures are the steady state, the links read over minutes 80 to 140.
+//! 2022), the linear program `equilibrium_lp.py` solves with scipy at 0.9 of the case's demand,
+//! where its total time is unique (range 0.003 %): the mean trip 36.10 min, the OD times 32,
+//! 38, 37 and 34 min (each a point over the dual's optimal face), `Σ τ x` 60 610 veh·min per
+//! hour of demand; links 5 and 8 must queue, 13 and 19 may; a link with a standing queue runs
+//! at its capacity. Each OD pair runs at its constant rate for three hours; the second hour's
+//! departures are the steady state, the links read over minutes 80 to 140. Tolerances, as
+//! version 1's case set them: 3 % on a time and on `Σ τ x`, 2 % of capacity on a queued
+//! link's entries.
 //!
 //! The network's numbers are the tables of Sensors 25(7) 2262 (2025, CC BY 4.0), made dynamic
 //! as version 1 did: a free-flow minute is a kilometre at 60 km/h, capacities and demand ×10
@@ -52,7 +50,7 @@ fn network() -> Network {
 
 #[test]
 fn the_steady_hour_is_the_capacity_constrained_equilibrium() {
-    let e = equilibrium("nguyen_dupuis");
+    let e = equilibrium("nguyen_dupuis", "equilibrium.csv");
     assert_eq!(e.scale, (0.9, 1.0), "the fixture's scales");
     assert!((e.mean.1 - e.mean.0) / e.mean.0 < 0.001, "the mean trip is unique");
     let net = network();
@@ -107,6 +105,6 @@ fn the_steady_hour_is_the_capacity_constrained_equilibrium() {
             "  link {id} with a standing queue: entries {entries:.1} of capacity {cap:.1} veh/h, mean delay {delay:.0} s"
         );
         assert!(*q_hi > 0.0, "link {id} queues in the run but never in the program");
-        assert!((entries / cap - 1.0).abs() <= 0.03, "link {id}: entries {entries} of {cap}");
+        assert!((entries / cap - 1.0).abs() <= 0.02, "link {id}: entries {entries} of {cap}");
     }
 }

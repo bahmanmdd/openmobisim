@@ -43,15 +43,14 @@ pub struct Equilibrium {
     pub od: Vec<((String, String), f64, f64, f64)>,
 }
 
-/// Read `equilibrium.csv` of `case`.
+/// Read the fixture `file` of `case`.
 ///
 /// # Panics
 ///
 /// If the file is missing or malformed.
 #[must_use]
-pub fn equilibrium(case: &str) -> Equilibrium {
-    let text =
-        std::fs::read_to_string(fixtures(case).join("equilibrium.csv")).expect("the fixture");
+pub fn equilibrium(case: &str, file: &str) -> Equilibrium {
+    let text = std::fs::read_to_string(fixtures(case).join(file)).expect("the fixture");
     let mut e = Equilibrium {
         scale: (0.0, 0.0),
         mean: (0.0, 0.0),

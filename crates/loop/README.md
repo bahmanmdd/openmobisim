@@ -9,7 +9,7 @@ stopping rule; and the three tables a run returns. Depends on `openmobisim-types
   network and on the timetable), and the `Timetable` (`openmobisim-transit`) or none.
 - The window `(start, end)`, two seconds of the clock: the study period, the user's, never
   defaulted; a whole number of link bins long.
-- `Parameters` (`PARAMETERS.md`, the rulings): `link_bin` (s), `iteration_cap`, `seed`,
+- `Parameters` (`PARAMETERS.md`, the rulings): `link_bin` (s), `iteration_cap`, `iteration_floor`, `seed`,
   `boarding_slack` (s), `max_rides`, `choice` (deterministic or logit), `nest_scale`, and per
   user class the three coefficients on `time_s`, `money_eur` and `ln_path_size`.
 
@@ -61,7 +61,10 @@ run).
   costs, reported, never judged.
 - **Stop** after an iteration when its found share is at most 0.5 % and the range of the last
   five mean trip times, greatest less least, is at most 0.3 % of the latest (never while one of
-  the five has no finished trip); always at the cap. The three shares and the gap are `NaN`
+  the five has no finished trip); not before `iteration_floor` iterations have run; always at
+  the cap. The rule reads the slope of the mean, which the method of successive averages makes
+  about the residual over the iteration count, so a run it stops early can still be short of
+  equilibrium; the floor lets a test run to a fixed count. The three shares and the gap are `NaN`
   when no trip has an alternative.
 - Money is 0 for every alternative until a source of money comes through the door; gaps are
   walked at the walking speed by every mode. Transit's walking legs are not on links: the

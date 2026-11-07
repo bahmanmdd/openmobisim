@@ -34,6 +34,8 @@ jobs:
         run: cargo clippy --workspace --all-targets -- -D warnings
       - name: Tests
         run: cargo test --workspace
+      - name: Convergence tier (release; tests 4 and 6 at a large population to a fixed count)
+        run: cargo test --release -p openmobisim-loop --test braess --test sioux_falls -- --ignored
       - name: Budgets
         run: bash tools/check_limits.sh
       - name: Leak guard, built-in rules

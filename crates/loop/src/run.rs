@@ -215,7 +215,7 @@ fn trips(
 }
 
 /// Run the loop: iteration 0 on free-flow costs and the timetable, then the five stages per
-/// iteration until the stopping rule or the cap.
+/// iteration until the stopping rule (read once `iteration_floor` iterations have run) or the cap.
 ///
 /// # Errors
 ///
@@ -261,7 +261,7 @@ pub fn run(
         let t5 = Instant::now();
         row.stage_seconds = [t1 - t0, t2 - t1, t3 - t2, t4 - t3, t5 - t4].map(|d| d.as_secs_f64());
         iterations.push(row);
-        if stops(&iterations) {
+        if k + 1 >= parameters.iteration_floor && stops(&iterations) {
             stopped_by_rule = true;
             break;
         }
