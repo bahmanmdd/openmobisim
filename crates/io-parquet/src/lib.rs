@@ -5,8 +5,10 @@
 //! external ids), and a folder; it writes `trips.parquet`, `links.parquet` and
 //! `iterations.parquet` there and returns their paths and row counts ([`Written`]). One row per
 //! entity, external ids as strings, every column named with its unit; null, never `NaN`, where
-//! the loop's `NaN` means "no value". The files are written with the `parquet` crate's default
-//! settings: no compression, dictionary encoding, one row group per 1 048 576 rows.
+//! the loop's `NaN` means "no value". Every time of day is a second of the clock (seconds after
+//! midnight of the run's day): the loop's seconds after the window's start plus the window's
+//! start, converted here and nowhere else. The files are written with the `parquet` crate's
+//! default settings: no compression, dictionary encoding, one row group per 1 048 576 rows.
 
 use core::fmt;
 use std::fs::File;
@@ -135,8 +137,9 @@ pub fn write(
         return Err(WriteError::NotTheRunsNetwork { link, network_links });
     }
     std::fs::create_dir_all(folder)?;
+    let start = run.links.window().origin();
     Ok(Written {
-        trips: file(folder, "trips.parquet", &trips::batch(&run.trips, demand)?)?,
+        trips: file(folder, "trips.parquet", &trips::batch(&run.trips, demand, start)?)?,
         links: file(folder, "links.parquet", &links::batch(&run.links, network)?)?,
         iterations: file(folder, "iterations.parquet", &iterations::batch(&run.iterations)?)?,
     })

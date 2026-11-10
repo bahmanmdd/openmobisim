@@ -11,15 +11,28 @@
 //! The network: nodes a (0, 0), b (1 500, 0), c (2 500, 0) metres; a path `ab` a→b of 1 500 m
 //! for bikes (15 km/h: 360 s) and walkers (4.8 km/h: 1 125 s); a street `st1` a→b of 2 000 m at
 //! 50 km/h (144 s), 1 800 veh/h (a car every 2 s); a street `st2` b→c of 1 000 m at 36 km/h
-//! (100 s), 900 veh/h (a car every 4 s). The window 0 to 3 600 s in bins of 60 s, three
+//! (100 s), 900 veh/h (a car every 4 s). The window from 07:00:00 to 08:00:00, that is
+//! S = 25 200 s to 28 800 s of the clock (seconds after midnight), in bins of 60 s, three
 //! iterations, the least cost on time alone. Every trip starts and ends at a node (no gaps).
+//! The window does not start at 0, so a time written after the window's start instead of on
+//! the clock differs from the hand number by S. Below, times after the window's start come
+//! first, then the clock: S + that.
 //!
-//! - `car1`, `car2`, `car3` (class `commute`), a→c at 0, 1 and 2 s: on `st1` they leave at
-//!   max(t + 144, previous + 2) = 144, 146, 148 s; on `st2` at max(t + 100, previous + 4) = 244,
-//!   248, 252 s. Their travel times 244, 247, 250 s.
-//! - `bike` a→b at 0: 360 s. `walk` a→b at 0: 1 125 s. `walk-late` a→b at 3 000 s: still walking
-//!   at 3 600 s, unfinished, its arrival null, its cost 1 125 s. `lost`, transit only and no
-//!   timetable: no alternative, its mode, arrival and cost null (all class `leisure`).
+//! - `car1`, `car2`, `car3` (class `commute`), a→c at 0, 1 and 2 s after the start (on the
+//!   clock 25 200 + 0, 1, 2 = 25 200, 25 201, 25 202 s): on `st1` they leave at
+//!   max(t + 144, previous + 2) = 144, 146, 148 s after the start, on the clock
+//!   25 200 + 144, 146, 148 = 25 344, 25 346, 25 348 s; on `st2` at max(t + 100, previous + 4)
+//!   = 244, 248, 252 s, on the clock 25 200 + 244, 248, 252 = 25 444, 25 448, 25 452 s, which are
+//!   their arrivals. Their travel times 244, 247, 250 s (durations, the same on either clock):
+//!   25 200 + 244 = 25 444, 25 201 + 247 = 25 448, 25 202 + 250 = 25 452. They enter `st2` at
+//!   144 to 148 s after the start, in the bin from 120 s, on the clock 25 200 + 120 = 25 320 s.
+//! - `bike` a→b at 0 (25 200): 360 s, arriving at 25 200 + 360 = 25 560. `walk` a→b at 0
+//!   (25 200): 1 125 s, arriving at 25 200 + 1 125 = 26 325. Both enter `ab` in the bin from
+//!   25 200. `walk-late` a→b at 3 000 s after the start (25 200 + 3 000 = 28 200), entering `ab`
+//!   in the bin from 28 200: it would arrive at 4 125 s, past the window's end at 3 600 s
+//!   (28 800), so it is unfinished, its arrival null, its cost 1 125 s. `lost`, transit only and
+//!   no timetable, at 0 (25 200): no alternative, its mode, arrival and cost null (all class
+//!   `leisure`).
 
 use std::path::{Path, PathBuf};
 
@@ -37,6 +50,9 @@ use openmobisim_types::units::Metres;
 /// The build values of the rulings.
 const VALUES: BuildValues =
     BuildValues { capacity_per_lane: 1_800.0, bike_speed: 15.0, walk_speed: 4.8 };
+
+/// The window's start, 07:00:00: seconds of the clock.
+const START: u32 = 25_200;
 
 /// A one-lane car street of `length_m` at `speed_km_h` passing `capacity_veh_h`.
 fn street(length_m: f64, speed_km_h: f64, capacity_veh_h: f64) -> LinkRow {
@@ -79,13 +95,13 @@ fn demand(network: &Network) -> Demand {
         modes: ModeSet::of(&[mode]),
     };
     let rows = [
-        row("car1", 2_500.0, 0, "commute", Mode::Car),
-        row("car2", 2_500.0, 1, "commute", Mode::Car),
-        row("car3", 2_500.0, 2, "commute", Mode::Car),
-        row("bike", 1_500.0, 0, "leisure", Mode::Bike),
-        row("walk", 1_500.0, 0, "leisure", Mode::Walk),
-        row("walk-late", 1_500.0, 3_000, "leisure", Mode::Walk),
-        row("lost", 1_500.0, 0, "leisure", Mode::Transit),
+        row("car1", 2_500.0, START, "commute", Mode::Car),
+        row("car2", 2_500.0, START + 1, "commute", Mode::Car),
+        row("car3", 2_500.0, START + 2, "commute", Mode::Car),
+        row("bike", 1_500.0, START, "leisure", Mode::Bike),
+        row("walk", 1_500.0, START, "leisure", Mode::Walk),
+        row("walk-late", 1_500.0, START + 3_000, "leisure", Mode::Walk),
+        row("lost", 1_500.0, START, "leisure", Mode::Transit),
     ];
     let classes = ["commute".to_string(), "leisure".to_string()];
     Demand::build(&rows, &classes, network, None, Metres(400.0)).expect("a demand")
@@ -99,7 +115,7 @@ fn hand_run(network: &Network, demand: &Demand) -> Run {
         coefficients: vec![[1.0, 0.0, 0.0]; 2],
         ..Parameters::defaults(2)
     };
-    run(network, demand, None, (Second(0), Second(3_600)), &parameters).expect("a run")
+    run(network, demand, None, (Second(START), Second(START + 3_600)), &parameters).expect("a run")
 }
 
 /// The folder `read_back.py` reads.

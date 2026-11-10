@@ -14,7 +14,8 @@ links table's type), `-demand`, `-loop`, and `parquet` with `arrow-array` and `a
 
 ## Outputs
 `Written`, one `Table` (its `path` and its `rows`) per file. Three files, one row per entity,
-external ids as strings, every column named with its unit, null where there is no value:
+external ids as strings, every column named with its unit, every time of day in seconds of the
+clock, null where there is no value:
 - `trips.parquet`, one row per trip in trip id order (the external ids sorted bytewise):
   `trip_id` (Utf8), `class_id` (Utf8), `departure_s` (UInt32), `mode` (Utf8, nullable: `car`,
   `bike`, `walk`, `transit`), `arrival_s`, `travel_time_s` (Float64, nullable), `finished`
@@ -32,11 +33,13 @@ in `src/trips.rs`, `src/links.rs` and `src/iterations.rs`. A column that cannot 
 marked so in the file's schema.
 
 ## Units
-Seconds and counts; metric only. `departure_s` and `bin_start_s` are seconds of the clock;
-`arrival_s`, `first_exit_s` and `last_exit_s` are seconds after the window's start, as the loop
-holds them (a trip's arrival on the clock is `departure_s + travel_time_s`). `travel_time_s`,
-`car_time_s` and the stage seconds are durations. `cost` is in the choice model's unit:
-seconds in a time-only run. The shares and the gap are fractions.
+Seconds and counts; metric only. Every time of day, `departure_s`, `arrival_s`, `bin_start_s`,
+`first_exit_s` and `last_exit_s`, is in seconds of the clock (seconds after midnight of the
+run's day), so a file reads without the run's window: the writer adds the window's start to the
+loop's seconds after it, once, here. For a finished trip `arrival_s = departure_s +
+travel_time_s` on the clock. `travel_time_s`, `car_time_s` and the stage seconds are durations.
+`cost` is in the choice model's unit: seconds in a time-only run. The shares and the gap are
+fractions.
 
 ## Meanings and assumptions
 - **Null, never `NaN`.** The loop's `NaN` means "no value" in exactly these places, written as
@@ -67,15 +70,18 @@ bike has `mode` `bike` and its door-to-door time like any other mode.
 
 ## Tests
 `cargo test -p openmobisim-io-parquet`. Each expected value comes from outside the simulator:
-- **The hand run** (`tests/hand_run.rs`): seven trips on three links, every value derived by
-  hand in the test's header: a bike that rides 1 500 m in 360 s, a walker at 1 125 s, a walker
-  still walking at the window's end (arrival null, cost 1 125 s), a trip without an alternative,
-  three cars through two streets by the point queue (`st1`: 144, 146, 148 s; `st2`: 244, 248,
-  252 s, from 120 s), in three iterations. The test writes the three files, checks they exist
-  with 7, 4 and 3 rows, and that a second write is byte-identical; then
+- **The hand run** (`tests/hand_run.rs`): seven trips on three links in a window from 07:00:00
+  (25 200 s of the clock), so the clock and the window's seconds differ in every time column;
+  every value derived by hand in the test's header: a bike that rides 1 500 m in 360 s, a
+  walker at 1 125 s, a walker still walking at the window's end (arrival null, cost 1 125 s), a
+  trip without an alternative, three cars through two streets by the point queue (`st1` exits
+  at 25 344, 25 346, 25 348 s; `st2` at 25 444, 25 448, 25 452 s, the bin from 25 320 s), in
+  three iterations. The test writes the three files, checks they exist with 7, 4 and 3 rows,
+  and that a second write is byte-identical; then
   `tests/read_back.py` reads them with **pyarrow 26.0.1** and checks every column's name,
   Arrow type and nullability and every value against the hand numbers written in the script,
-  and that no float is `NaN`; it exits 1 on any difference (CI runs it):
+  that no float is `NaN`, and that every finished trip's `arrival_s` is `departure_s +
+  travel_time_s` exactly; it exits 1 on any difference (CI runs it):
   `python3 crates/io-parquet/tests/read_back.py target/tmp/io-parquet-hand-run`.
 - The refusals: a demand and a network not the run's, a folder that cannot be made.
 - **Sioux Falls** (`tests/sioux_falls.rs`, ignored in the debug suite): the loop's regular test

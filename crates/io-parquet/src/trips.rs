@@ -7,7 +7,7 @@
 //! | `class_id` | Utf8 | no | its user class's external id |
 //! | `departure_s` | UInt32 | no | its departure, a second of the clock |
 //! | `mode` | Utf8 | yes | the mode taken: `car`, `bike`, `walk` or `transit`; null without an alternative |
-//! | `arrival_s` | Float64 | yes | the arrival at the door, seconds after the window's start; null unfinished or without an alternative |
+//! | `arrival_s` | Float64 | yes | the arrival at the door, seconds of the clock (`departure_s + travel_time_s` for a finished trip); null unfinished or without an alternative |
 //! | `travel_time_s` | Float64 | yes | door to door as realised, seconds; null likewise |
 //! | `finished` | Boolean | no | whether it arrived before the window's end |
 //! | `cost` | Float64 | yes | the cost of the alternative taken at the last measure, in the choice model's unit (seconds in a time-only run); null without an alternative |
@@ -20,12 +20,21 @@ use arrow_schema::{DataType, Field, Schema};
 use openmobisim_demand::demand::Demand;
 use openmobisim_loop::run::Trips;
 use openmobisim_types::ids::EntityId;
+use openmobisim_types::time::Second;
 
 use crate::{WriteError, column, value};
 
-/// The trips table as one batch; `demand` gives the external ids.
-pub(crate) fn batch(trips: &Trips, demand: &Demand) -> Result<RecordBatch, WriteError> {
+/// The trips table as one batch; `demand` gives the external ids, `start` the window's start
+/// on the clock, added to the loop's arrivals (seconds after it).
+pub(crate) fn batch(
+    trips: &Trips,
+    demand: &Demand,
+    start: Second,
+) -> Result<RecordBatch, WriteError> {
     let floats = |v: &[f64]| column(v.iter().map(|&x| value(x)).collect::<Float64Array>());
+    let start = f64::from(start.get());
+    let arrivals = trips.arrival.iter().map(|&x| value(x).map(|x| start + x));
+    let arrivals = arrivals.collect::<Float64Array>();
     let schema = Schema::new(vec![
         Field::new("trip_id", DataType::Utf8, false),
         Field::new("class_id", DataType::Utf8, false),
@@ -44,7 +53,7 @@ pub(crate) fn batch(trips: &Trips, demand: &Demand) -> Result<RecordBatch, Write
         )),
         column(UInt32Array::from_iter_values(trips.departure.iter().map(|d| d.get()))),
         column(trips.mode.iter().map(|m| m.map(|m| m.to_string())).collect::<StringArray>()),
-        floats(&trips.arrival),
+        column(arrivals),
         floats(&trips.travel_time),
         column(BooleanArray::from(trips.finished.clone())),
         floats(&trips.cost),

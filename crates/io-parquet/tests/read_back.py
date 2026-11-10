@@ -1,6 +1,9 @@
 """The hand run's three Parquet files, read by another tool (pyarrow 26.0.1), checked against the
 hand numbers written below: the column names in order, their Arrow types, their nullability,
-every value, and no NaN anywhere. Exits 1 on any difference, naming it.
+every value, no NaN anywhere, and every finished trip's arrival_s equal to its departure_s plus
+its travel_time_s. Every time of day is in seconds of the clock; the window starts at 07:00:00
+(25 200 s), so a time after the window's start would differ by 25 200. Exits 1 on any
+difference, naming it.
 
     cargo test -p openmobisim-io-parquet --test hand_run
     python3 crates/io-parquet/tests/read_back.py target/tmp/io-parquet-hand-run
@@ -8,7 +11,8 @@ every value, and no NaN anywhere. Exits 1 on any difference, naming it.
 CI runs it with pyarrow 26.0.1 in a virtual environment. The derivations are in the header of
 `hand_run.rs`: a path a->b of 1 500 m (a bike at 15 km/h in 360 s, a walker at 4.8 km/h in
 1 125 s); streets a->b (144 s, a car every 2 s) and b->c (100 s, a car every 4 s); the point
-queue's exit max(t + free flow, previous exit + headway); bins of 60 s; three iterations.
+queue's exit max(t + free flow, previous exit + headway); a window of 3 600 s from 25 200 s in
+bins of 60 s; three iterations.
 """
 
 import math
@@ -40,26 +44,36 @@ ITERATIONS_SCHEMA = [
     ("switch_share", F64, True), ("found_share", F64, True), ("gap", F64, True),
 ] + [(s, F64, False) for s in STAGES]
 
+# Every time of day is in seconds of the clock: the window starts at 07:00:00, S = 25 200 s, and
+# each instant is S plus the seconds after the start derived in `hand_run.rs`.
 # Trips in id order (bytewise): id, class, departure, mode, arrival, travel time, finished,
-# cost, alternatives. Cars: st1 exits 144, 146, 148; st2 exits 244, 248, 252.
+# cost, alternatives. Departures S + 0, 1, 2 (cars), S + 3 000 = 28 200 (walk-late), S (the
+# rest). Arrivals: bike S + 360 = 25 560; cars, their st2 exits S + 244, 248, 252 = 25 444,
+# 25 448, 25 452; walk S + 1 125 = 26 325.
 TRIPS = [
-    ("bike", "leisure", 0, "bike", 360.0, 360.0, True, 360.0, 1),
-    ("car1", "commute", 0, "car", 244.0, 244.0, True, 244.0, 1),
-    ("car2", "commute", 1, "car", 248.0, 247.0, True, 247.0, 1),
-    ("car3", "commute", 2, "car", 252.0, 250.0, True, 250.0, 1),
-    ("lost", "leisure", 0, N, N, N, False, N, 0),
-    ("walk", "leisure", 0, "walk", 1125.0, 1125.0, True, 1125.0, 1),
-    ("walk-late", "leisure", 3000, "walk", N, N, False, 1125.0, 1),
+    ("bike", "leisure", 25200, "bike", 25560.0, 360.0, True, 360.0, 1),
+    ("car1", "commute", 25200, "car", 25444.0, 244.0, True, 244.0, 1),
+    ("car2", "commute", 25201, "car", 25448.0, 247.0, True, 247.0, 1),
+    ("car3", "commute", 25202, "car", 25452.0, 250.0, True, 250.0, 1),
+    ("lost", "leisure", 25200, N, N, N, False, N, 0),
+    ("walk", "leisure", 25200, "walk", 26325.0, 1125.0, True, 1125.0, 1),
+    ("walk-late", "leisure", 28200, "walk", N, N, False, 1125.0, 1),
 ]
 # Links in id order then bin: id, bin start, cars, their summed crossing time, exit less entry
 # (st1: 144 + 145 + 146 = 435; st2: 100 + 102 + 104 = 306), first exit, last exit, bikes,
-# walkers. st2's cars enter at 144 to 148 s, the bin from 120 s.
+# walkers. Bins from S + 0 = 25 200 and S + 3 000 = 28 200 (ab), S + 0 = 25 200 (st1), and
+# S + 120 = 25 320 (st2, its cars entering at S + 144 to S + 148). Exits: st1 S + 144 = 25 344
+# and S + 148 = 25 348; st2 S + 244 = 25 444 and S + 252 = 25 452.
 LINKS = [
-    ("ab", 0, 0, N, N, N, 1, 1),
-    ("ab", 3000, 0, N, N, N, 0, 1),
-    ("st1", 0, 3, 435.0, 144.0, 148.0, 0, 0),
-    ("st2", 120, 3, 306.0, 244.0, 252.0, 0, 0),
+    ("ab", 25200, 0, N, N, N, 1, 1),
+    ("ab", 28200, 0, N, N, N, 0, 1),
+    ("st1", 25200, 3, 435.0, 25344.0, 25348.0, 0, 0),
+    ("st2", 25320, 3, 306.0, 25444.0, 25452.0, 0, 0),
 ]
+# The finished trips, for each of which the file's arrival must be its departure plus its travel
+# time exactly, on one clock (by hand: 25 200 + 360 = 25 560, 25 200 + 244 = 25 444,
+# 25 201 + 247 = 25 448, 25 202 + 250 = 25 452, 25 200 + 1 125 = 26 325).
+FINISHED = ["bike", "car1", "car2", "car3", "walk"]
 # Iterations: mean over the five finished (360 + 244 + 247 + 250 + 1 125) / 5 = 445.2 s;
 # 5 finished, 1 unfinished, 1 without an alternative; nobody switches; at iteration 0 all six
 # with an alternative found their first, after it nothing new; each takes its set's least: gap 0.
@@ -100,10 +114,27 @@ def check(folder, name, schema, rows, errors):
                 errors.append(f"{name}: row {i}, {column} is {have[column]!r}, not >= 0")
 
 
+def check_arrivals(folder, errors):
+    """The finished trips are the hand run's, and each one's arrival_s is its departure_s plus
+    its travel_time_s, exactly: departure and arrival on the same clock."""
+    rows = [r for r in pq.read_table(folder / "trips.parquet").to_pylist() if r["finished"]]
+    ids = [r["trip_id"] for r in rows]
+    if ids != FINISHED:
+        errors.append(f"trips.parquet: finished trips {ids}, not {FINISHED}")
+    for r in rows:
+        a, d, t = r["arrival_s"], r["departure_s"], r["travel_time_s"]
+        if a is None or t is None or a != d + t:
+            errors.append(
+                f"trips.parquet: {r['trip_id']} arrives at {a!r}, not departure {d} + travel "
+                f"time {t!r}"
+            )
+
+
 def main():
     folder = Path(sys.argv[1])
     errors = []
     check(folder, "trips.parquet", TRIPS_SCHEMA, TRIPS, errors)
+    check_arrivals(folder, errors)
     check(folder, "links.parquet", LINKS_SCHEMA, LINKS, errors)
     check(folder, "iterations.parquet", ITERATIONS_SCHEMA, ITERATIONS, errors)
     for e in errors:
