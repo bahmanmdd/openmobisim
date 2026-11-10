@@ -255,7 +255,25 @@ impl Recorder {
     /// The finished table, sorted by link then bin.
     pub(crate) fn finish(mut self) -> LinkBins {
         self.car_rows.sort_unstable_by_key(|r| (r.link, r.bin));
-        self.active.sort_unstable();
+        // The crossings sorted by link in one counting pass (their links are dense), then each
+        // link's few by bin: the same order as one comparison sort of them all.
+        let mut from = vec![0_usize; self.current.len() + 1];
+        for &(l, _, _) in &self.active {
+            from[l as usize + 1] += 1;
+        }
+        for l in 0..self.current.len() {
+            from[l + 1] += from[l];
+        }
+        let mut sorted = vec![(0, 0, false); self.active.len()];
+        let mut next = from.clone();
+        for &crossing in &self.active {
+            sorted[next[crossing.0 as usize]] = crossing;
+            next[crossing.0 as usize] += 1;
+        }
+        for l in 0..self.current.len() {
+            sorted[from[l]..from[l + 1]].sort_unstable();
+        }
+        self.active = sorted;
         let mut out = LinkBins::empty(self.window);
         let (mut c, mut a) = (0, 0);
         while c < self.car_rows.len() || a < self.active.len() {

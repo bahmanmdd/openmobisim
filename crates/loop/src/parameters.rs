@@ -1,8 +1,32 @@
 //! The parameters of a run the loop reads (`PARAMETERS.md`), and the choice model's name.
 
-/// The columns of a choice row, in order: seconds, euros, the natural logarithm of the route's
-/// path size.
-pub const COLUMNS: [&str; 3] = ["time_s", "money_eur", "ln_path_size"];
+/// The columns of a choice row, in order: the times of each mode's parts in minutes (a car or
+/// bike alternative's walks between door and node in `walk_min`), the transfers, euros, the
+/// natural logarithm of a car route's path size, and one constant per mode (1 for the
+/// alternative's mode, 0 for the others). An alternative fills only its mode's columns.
+pub const COLUMNS: [&str; N] = [
+    "car_drive_min",
+    "bike_ride_min",
+    "walk_min",
+    "transit_in_vehicle_min",
+    "transit_access_min",
+    "transit_egress_min",
+    "transit_first_wait_min",
+    "transit_transfer_wait_min",
+    "transit_transfer_walk_min",
+    "transit_transfers",
+    "money_eur",
+    "car_ln_path_size",
+    "is_car",
+    "is_bike",
+    "is_walk",
+    "is_transit",
+];
+
+/// How many columns a choice row has.
+pub const N: usize = 16;
+/// The column of the path size.
+pub const LN_PS: usize = 11;
 
 /// Which choice model a run uses.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -34,15 +58,23 @@ pub struct Parameters {
     /// The nest scale of the logit, in (0, 1]; read by [`ChoiceModel::Logit`] only.
     pub nest_scale: f64,
     /// Per user class, in class id order, one coefficient per column of [`COLUMNS`]: cost per
-    /// second, cost per euro, cost per unit of `ln PS`.
-    pub coefficients: Vec<[f64; 3]>,
+    /// minute of each time, per transfer, per euro, per unit of `ln PS`, and each mode's
+    /// constant.
+    pub coefficients: Vec<[f64; N]>,
 }
 
 impl Parameters {
-    /// the rulings's coefficients of a class: a time scale of 1/600 per second (0.1 per
-    /// minute), a value of time of 10 euros per hour (0.6 per euro), and −1 on `ln PS` (the
-    /// path-size logit's definition).
-    pub const DEFAULT_COEFFICIENTS: [f64; 3] = [1.0 / 600.0, 0.6, -1.0];
+    /// The default coefficients of a class, in the order of [`COLUMNS`]: 0.1 per minute driving,
+    /// riding a bike or in a vehicle; 0.165 per minute walking (to and from a stop, between
+    /// stops, or the whole way); 0.145 per minute waiting; 0.5 per transfer; 0.6 per euro (a
+    /// value of time of 10 euros per hour); −1 on `ln PS` (the path-size logit's definition);
+    /// constants 0 for car and bike, 0.5 for walk, 0.25 for transit. Starting values to be
+    /// calibrated per study; the time, walking and waiting weights are in the proportions of
+    /// release 0.1's built-in model.
+    pub const DEFAULT_COEFFICIENTS: [f64; N] = [
+        0.1, 0.1, 0.165, 0.1, 0.165, 0.165, 0.145, 0.145, 0.165, 0.5, 0.6, -1.0, 0.0, 0.0, 0.5,
+        0.25,
+    ];
 
     /// The defaults of the rulings for a run with `classes` user classes.
     #[must_use]
@@ -62,16 +94,15 @@ impl Parameters {
 
     /// The cost of `attributes` (one per column) for class `class`: the systematic utility.
     #[must_use]
-    pub fn cost(&self, class: usize, attributes: &[f64; 3]) -> f64 {
+    pub fn cost(&self, class: usize, attributes: &[f64; N]) -> f64 {
         let b = &self.coefficients[class];
-        b[0] * attributes[0] + b[1] * attributes[1] + b[2] * attributes[2]
+        b.iter().zip(attributes).map(|(b, x)| b * x).sum()
     }
 
-    /// The cost of `attributes` on time and money alone: what decides whether a route the search
-    /// found is cheaper than the set's cheapest.
+    /// The cost of `attributes` without the path-size term: what decides whether a route the
+    /// search found is cheaper than the set's cheapest.
     #[must_use]
-    pub fn time_money_cost(&self, class: usize, attributes: &[f64; 3]) -> f64 {
-        let b = &self.coefficients[class];
-        b[0] * attributes[0] + b[1] * attributes[1]
+    pub fn time_money_cost(&self, class: usize, attributes: &[f64; N]) -> f64 {
+        self.cost(class, attributes) - self.coefficients[class][LN_PS] * attributes[LN_PS]
     }
 }

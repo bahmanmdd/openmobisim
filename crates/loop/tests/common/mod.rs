@@ -13,7 +13,7 @@ use openmobisim_demand::demand::Demand;
 use openmobisim_demand::input::TripRow;
 use openmobisim_graph::geometry::{Position, Xy};
 use openmobisim_graph::network::{BuildValues, LinkRow, Network, NetworkBuilder};
-use openmobisim_loop::parameters::{ChoiceModel, Parameters};
+use openmobisim_loop::parameters::{COLUMNS, ChoiceModel, Parameters};
 use openmobisim_loop::run::Run;
 use openmobisim_types::ids::{EntityId, LinkId, TripId};
 use openmobisim_types::mode::{Mode, ModeSet};
@@ -104,15 +104,22 @@ pub fn demand(network: &Network, rows: &[TripRow]) -> Demand {
     Demand::build(rows, &["default".to_string()], network, None, Metres(1_500.0)).expect("a demand")
 }
 
-/// Time-only parameters with the deterministic choice: cost in seconds, `link_bin` 60 s, the
-/// cap `iterations`, seed 0.
+/// The coefficients of a time-only run: 1 on each of the nine time columns (minutes), 0 on the
+/// transfers, money, path size and the mode constants, so a cost is the door-to-door time in
+/// minutes.
+pub const TIME_ONLY: [f64; 16] =
+    [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0];
+
+/// Time-only parameters with the deterministic choice: cost in minutes, door to door,
+/// `link_bin` 60 s, the cap `iterations`, seed 0.
 #[must_use]
 pub fn time_only(iterations: u32) -> Parameters {
+    assert!(COLUMNS[..9].iter().all(|c| c.ends_with("_min")), "the time columns come first");
     Parameters {
         link_bin: 60,
         iteration_cap: iterations,
         choice: ChoiceModel::Deterministic,
-        coefficients: vec![[1.0, 0.0, 0.0]],
+        coefficients: vec![TIME_ONLY],
         ..Parameters::defaults(1)
     }
 }

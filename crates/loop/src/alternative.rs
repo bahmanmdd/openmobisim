@@ -11,6 +11,7 @@ use openmobisim_types::mode::Mode;
 use openmobisim_types::time::Second;
 use openmobisim_types::units::Duration;
 
+use crate::parameters::{LN_PS, N};
 use crate::whole;
 
 /// A leg: one mode between two places.
@@ -40,8 +41,8 @@ pub struct Alternative {
     pub legs: Vec<Leg>,
     /// Door to door, seconds, as priced at the last measure.
     pub time: f64,
-    /// The natural logarithm of the route's path size among the set's routes of its mode; 0
-    /// for a journey or a lone route.
+    /// The natural logarithm of a car route's path size among the set's car routes; 0 for a
+    /// lone car route and for every other mode.
     pub ln_path_size: f64,
 }
 
@@ -55,11 +56,51 @@ impl Alternative {
         })
     }
 
-    /// The choice row's attributes: time in seconds, money in euros (0: no source of money
-    /// exists yet), `ln PS`.
+    /// The choice row of the alternative's mode, the columns of
+    /// [`crate::parameters::COLUMNS`]; times in minutes; a column of another mode is 0.
     #[must_use]
-    pub fn attributes(&self) -> [f64; 3] {
-        [self.time, 0.0, self.ln_path_size]
+    pub fn attributes(&self) -> [f64; N] {
+        let mut x = [0.0; N];
+        let gaps: f64 =
+            self.legs.iter().map(|leg| if let Leg::Walk(d) = leg { d.get() } else { 0.0 }).sum();
+        match self.mode {
+            Mode::Car => {
+                x[0] = (self.time - gaps) / 60.0;
+                x[2] = gaps / 60.0;
+                x[LN_PS] = self.ln_path_size;
+            }
+            Mode::Bike => {
+                x[1] = (self.time - gaps) / 60.0;
+                x[2] = gaps / 60.0;
+            }
+            Mode::Walk => x[2] = self.time / 60.0,
+            Mode::Transit => self.transit_parts(&mut x),
+        }
+        x[12 + usize::from(self.mode.as_u8())] = 1.0;
+        x
+    }
+
+    /// The parts of a journey, minutes: in vehicle, the walk to the first stop, the walk from
+    /// the last, the first wait, the waits at transfers, the walks between stops, the transfers.
+    /// The first wait runs from the end of the access walk to the first boarding, so it holds
+    /// the wait for the whole second the stop is reached on, and the six times add up to the
+    /// door-to-door time.
+    fn transit_parts(&self, x: &mut [f64; N]) {
+        let (Some(Leg::Walk(access)), Some(Leg::Journey(j)), Some(Leg::Walk(egress))) =
+            (self.legs.first(), self.legs.get(1), self.legs.get(2))
+        else {
+            return;
+        };
+        let board = f64::from(j.rides[0].board.1.get());
+        let alight = j.rides.last().map_or(board, |r| f64::from(r.alight.1.get()));
+        let first_wait = self.time - access.get() - egress.get() - (alight - board);
+        x[3] = j.in_vehicle().get() / 60.0;
+        x[4] = access.get() / 60.0;
+        x[5] = egress.get() / 60.0;
+        x[6] = first_wait / 60.0;
+        x[7] = (j.wait().get() - (board - f64::from(j.access.1.get()))) / 60.0;
+        x[8] = j.transfer_walk().get() / 60.0;
+        x[9] = f64::from(u32::try_from(j.ride_count()).unwrap_or(u32::MAX)) - 1.0;
     }
 
     /// Whether `links` is this alternative's route, by `mode`.
@@ -94,14 +135,14 @@ pub fn price(times: &LinkTimes, start: Second, departure: f64, legs: &[Leg]) -> 
     t - departure
 }
 
-/// Rewrite every `ln_path_size` of `set`: per mode, over the set's routes of that mode, the
-/// path size of Ben-Akiva and Bierlaire (1999), `PS_i = Σ_{a ∈ i} (l_a / L_i) / n_a`, `n_a` the
-/// routes of the mode using link `a`; 1 for a lone route, an empty route or a journey.
+/// Rewrite every `ln_path_size` of `set`: over the set's car routes, the path size of
+/// Ben-Akiva and Bierlaire (1999), `PS_i = Σ_{a ∈ i} (l_a / L_i) / n_a`, `n_a` the car routes
+/// using link `a`; 1 for a lone car route, an empty route, a bike or walk route and a journey.
 pub fn path_sizes(network: &Network, set: &mut [Alternative]) {
     for alternative in set.iter_mut() {
         alternative.ln_path_size = 0.0;
     }
-    for mode in [Mode::Car, Mode::Bike, Mode::Walk] {
+    for mode in [Mode::Car] {
         let routes: Vec<usize> =
             (0..set.len()).filter(|&i| set[i].mode == mode && set[i].route().is_some()).collect();
         if routes.len() < 2 {

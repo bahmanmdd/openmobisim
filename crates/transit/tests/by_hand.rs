@@ -1,4 +1,5 @@
-//! Transfers, slack and footpaths on small timetables, every arrival worked out by hand.
+//! Transfers, slack and footpaths on small timetables, every arrival worked out by hand; and
+//! the journeys by number of rides (`Raptor::by_rides`) on the same timetables.
 //!
 //! Stops s00 to s05. Run P: s00 at 1 000 to s01 at 1 300. Runs Q1 and Q2: s01 to s02, leaving
 //! at 1 330 and 1 930, 270 s each. Run R: s03 at 1 400 to s04 at 1 700. The traveller is at
@@ -121,4 +122,53 @@ fn a_walk_only_answer_is_no_journey() {
         max_rides: 3,
     };
     assert_eq!(ask(&rows, 0.0, &q), None);
+}
+
+/// Each journey of `by_rides` as (its runs, its door arrival), every one checked against the
+/// rows on its own.
+fn by_rides(rows: &Rows, slack: f64, q: &Query) -> Vec<(Vec<String>, Second)> {
+    let tt = rows.build();
+    let all = Raptor::new(&tt, Duration(slack)).by_rides(q);
+    for j in &all {
+        check_journey(rows, &tt, slack, q, j);
+    }
+    all.iter().map(|j| (runs(rows, j), j.arrival)).collect()
+}
+
+#[test]
+fn a_slow_direct_run_and_a_faster_connection_are_two_journeys_fewest_rides_first() {
+    // Add a slow direct run D: s00 at 1 000 to s02 at 2 000. Slack 0, from s00 at 940 to s02
+    // (egress walk 120 s). One ride: D, at s02 at 2 000, at the door at 2 120. Two rides: P and
+    // Q1 as in the first test, at the door at 1 600 + 120 = 1 720, earlier: both, D first.
+    let mut rows = rows(None);
+    rows.runs.push(("D".into(), vec![(0, 1_000, 1_000), (2, 2_000, 2_000)]));
+    let two = vec![
+        (vec!["D".to_owned()], Second(2_120)),
+        (vec!["P".to_owned(), "Q1".to_owned()], Second(1_720)),
+    ];
+    assert_eq!(by_rides(&rows, 0.0, &to_s02()), two);
+    // The last is the earliest journey.
+    let tt = rows.build();
+    let earliest = Raptor::new(&tt, Duration(0.0)).earliest(&to_s02()).expect("a journey");
+    assert_eq!((runs(&rows, &earliest), earliest.arrival), two[1]);
+    // At most one ride: D alone.
+    let one = Query { max_rides: 1, ..to_s02() };
+    assert_eq!(by_rides(&rows, 0.0, &one), [(vec!["D".to_owned()], Second(2_120))]);
+    // Slack 60: P then Q2 reaches the door at 2 200 + 120 = 2 320, later than D's 2 120, so two
+    // rides improve on nothing: D alone.
+    assert_eq!(by_rides(&rows, 60.0, &to_s02()), [(vec!["D".to_owned()], Second(2_120))]);
+}
+
+#[test]
+fn a_direct_run_as_early_as_the_connection_is_the_one_journey() {
+    // D from s00 at 1 000 to s02 at 1 600, as early as P then Q1 (door at 1 720): two rides do
+    // not arrive earlier than one, so one journey, D. And D at 1 500 (door at 1 620), earlier
+    // still: one journey, D.
+    for (at_s02, door) in [(1_600, 1_720), (1_500, 1_620)] {
+        let mut rows = rows(None);
+        rows.runs.push(("D".into(), vec![(0, 1_000, 1_000), (2, at_s02, at_s02)]));
+        assert_eq!(by_rides(&rows, 0.0, &to_s02()), [(vec!["D".to_owned()], Second(door))]);
+    }
+    // No journey at all: nothing (slack 61 misses P, the only run from s00 without D).
+    assert_eq!(by_rides(&rows(None), 61.0, &to_s02()), []);
 }

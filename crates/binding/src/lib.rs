@@ -234,7 +234,7 @@ fn parameters(given: &Given<'_>, demand: &RustDemand) -> PyResult<Parameters> {
     };
     let mut coefficients = d.coefficients.clone();
     if given.raw("coefficients").is_some() {
-        let rows: BTreeMap<String, [f64; 3]> = given.get("coefficients", BTreeMap::new())?;
+        let rows: BTreeMap<String, [f64; 16]> = given.get("coefficients", BTreeMap::new())?;
         if let Some(other) = rows.keys().find(|c| demand.class_ids().id_of(c).is_none()) {
             return Err(PyValueError::new_err(format!(
                 "coefficients: {other} is not a class of the demand"

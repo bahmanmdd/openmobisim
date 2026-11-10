@@ -64,6 +64,26 @@ fn a_three_link_route_takes_the_sum_of_its_links_and_is_counted_on_each() {
 }
 
 #[test]
+fn crossings_recorded_out_of_order_come_out_by_link_then_bin() {
+    // Links of 1 500 m and 1 000 m, bins of 300 s; the loading records each trip's crossings in
+    // trip order. Trip 0, a bike on the second link from 900 s: bin 3 of link 1. Trip 1, a
+    // walker on both from 0 s: link 0 at 0 s (bin 0), link 1 at 1 125 s (bin 3). Trip 2, a bike
+    // on the second link from 0 s: bin 0 of link 1. Recorded as (1, 3), (0, 0), (1, 3), (1, 0);
+    // the table holds (0, 0), (1, 0), (1, 3), the last with one bike and one walker.
+    let net = line(&[street(1_500.0), street(1_000.0)]);
+    let trips = [
+        vehicle(0, Mode::Bike, &[link(1)], 900),
+        vehicle(1, Mode::Walk, &whole_line(2), 0),
+        vehicle(2, Mode::Bike, &[link(1)], 0),
+    ];
+    let t = load(&net, &trips, window(300, 3_600)).unwrap().links;
+    let rows: Vec<(u32, u32, u32, u32, u32)> = (0..t.len())
+        .map(|r| (t.links()[r].raw(), t.bins()[r].get(), t.cars()[r], t.bikes()[r], t.walkers()[r]))
+        .collect();
+    assert_eq!(rows, [(0, 0, 0, 0, 1), (1, 0, 0, 1, 0), (1, 3, 0, 1, 1)]);
+}
+
+#[test]
 fn a_bike_on_a_cycle_path_rides_1500_m_in_360_s() {
     let net = line(&[LinkRow { length_m: Some(1_500.0), ..cycle_path() }]);
     let run = load(&net, &[vehicle(0, Mode::Bike, &[link(0)], 0)], window(300, 3_600)).unwrap();

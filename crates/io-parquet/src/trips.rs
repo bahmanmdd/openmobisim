@@ -10,7 +10,7 @@
 //! | `arrival_s` | Float64 | yes | the arrival at the door, seconds of the clock (`departure_s + travel_time_s` for a finished trip); null unfinished or without an alternative |
 //! | `travel_time_s` | Float64 | yes | door to door as realised, seconds; null likewise |
 //! | `finished` | Boolean | no | whether it arrived before the window's end |
-//! | `cost` | Float64 | yes | the cost of the alternative taken at the last measure, in the choice model's unit (seconds in a time-only run); null without an alternative |
+//! | `cost` | Float64 | yes | the cost of the alternative taken at the last measure, in the choice model's unit (minutes in a time-only run); null without an alternative |
 //! | `alternatives` | UInt32 | no | how many alternatives its set holds |
 
 use std::sync::Arc;

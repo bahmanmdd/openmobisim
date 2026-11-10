@@ -14,7 +14,8 @@ built on), `openmobisim-search`, `openmobisim-transit` and `rayon`, nothing else
 - The user classes, a list of external ids.
 - The `Network` (`openmobisim-graph`).
 - The `Timetable` (`openmobisim-transit`) or none: its stops, by position in metres.
-- `stop_walk_max`, the longest walk to or from a stop, in metres (`PARAMETERS.md`).
+- `stop_walk_max`, the longest walk to or from a stop that the lists hold beside others, in
+  metres (`PARAMETERS.md`): an end with no stop within it gets its nearest stop instead.
 
 ## Outputs
 `Demand::build(&rows, &classes, &network, timetable, stop_walk_max)` returns a `Demand`, a
@@ -25,11 +26,13 @@ structure of arrays read through accessors:
   the end is linked to and the straight line to it in metres; `None` for a mode not in the
   trip's set. Transit's end is the walk node.
 - Per trip, `access` and `egress`: slices of `(StopId, Duration)`, by stop id, the walking
-  seconds from the origin to the stop and from the stop to the destination; empty for a trip
-  without transit in its set.
+  seconds from the origin to the stop and from the stop to the destination: every stop within
+  `stop_walk_max`, or, with none within it, the one stop with the least walk; empty for a trip
+  without transit in its set, and at an end from which no stop can be reached on foot.
 - `stop_count`, and per stop `stop_end`: its walk node and gap.
 - `origins_without_stop`, `destinations_without_stop`: the trips with transit in their set
-  whose list is empty at that end; `trips_without_transit`: those with either list empty.
+  whose list is empty at that end, that is from whose end no stop can be reached on foot at any
+  distance; `trips_without_transit`: those with either list empty.
 
 Nothing here builds a transit query or a route: that is the loop's.
 
@@ -59,8 +62,16 @@ built in metres they are metres in its plane, taken as given. The walk speed is 
   most `stop_walk_max`, read to a part in a billion (1.5 µm at 1 500 m) so that the rounding of
   a sum of link times cannot drop a walk of exactly the limit. The egress list is the same from
   each stop to the destination. A gap is walked in a straight line at walking speed.
-- A trip with transit in its set and an empty list on either end has no transit alternative:
-  counted, not an error. Without a timetable every transit trip is such a trip.
+- Nearest stop: an end with no stop within `stop_walk_max` gets, as its only entry, the stop
+  with the least whole walk (end gap + network walk + stop gap), ties to the lower stop id,
+  with its walking seconds; a stop beyond the limit is never in a list beside one within it.
+  Origins walk from the end to the stop, destinations from the stop to the end. Found by one
+  walk search per distinct node of such ends, in parallel, bounded first at twice the limit
+  and doubled while a stop not yet reached could still be nearer, unbounded after 16 times the
+  limit (`reach::nearest_stops`); the bound changes the work, never the stop.
+- A trip with transit in its set and an empty list on either end (no stop reachable on foot
+  from it) has no transit alternative: counted, not an error. Without a timetable every
+  transit trip is such a trip.
 - Every result is the same at any number of threads: each trip and each stop is computed
   from its own row alone, and the results are filed in id order.
 
@@ -87,11 +98,17 @@ transit query as its own list).
 linking equal to a full scan of every node for 20 000 points over a jittered 100 × 100 grid
 with car-only, cycle-path and footway zones (60 000 ends, 0 mismatches, ties to the lower id
 exercised on over 13 000 ends) and a bike's end on a cycle path by hand; the access and
-egress lists equal to networkx's bounded Dijkstra by length plus the gaps on a 20 × 20 grid
+egress lists equal to networkx's Dijkstra by length plus the gaps on a 20 × 20 grid
 with one-way walk links, 6 stops off the nodes and 50 trip ends (`tests/networkx_access.py`
 writes the fixture; networkx 3.7; seconds within 1e-9 of metres over 4.8 km/h); the gaps by
 hand (30 m + 1 000 m + 40 m = 1 070 m in 802.5 s at 4.8 km/h; at `stop_walk_max` 1 500 m a
-walk of 1 500 m in, 1 501 m out); the refusals, each naming its row; determinism over 1 and 8
-threads and two runs (3 000 trips, 60 stops). The run time on a 20 000-node grid with 300 stops
-and 13 000 trips is reported by hand: `cargo test --release -p openmobisim-demand --test
-run_time -- --ignored --nocapture`.
+walk of 1 500 m in, 1 501 m out beside it); the nearest stop by hand: a lone stop at 1 501 m
+offered in 1 125.75 s, of two beyond the limit the nearer by whole walk (2 130 m, not 2 180 m,
+gaps counted), a tie to the lower stop id, a destination on a one-way walk (1 570 m, not the
+1 060 m of the other way), an end with no walk to any stop left empty; networkx's unbounded
+Dijkstra for the 26 of the 50 ends of the networkx fixture with no stop within 600 m; the
+refusals, each naming its row. The demand's determinism over 1 and 8 threads and two runs is
+tested with the whole chain (`crates/loop/tests/determinism.rs`: every end and both lists, with
+entries within `stop_walk_max` and nearest stops beyond it). The run time on a 20 000-node grid with 300 stops and 13 000
+trips is reported by hand: `cargo test --release -p openmobisim-demand --test run_time --
+--ignored --nocapture`.

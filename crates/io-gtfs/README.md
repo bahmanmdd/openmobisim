@@ -113,4 +113,5 @@ bike to the transit query, not a footpath.
   date, trips, runs, calls, night runs and stops against `fixtures/delft/expected.csv`, written
   by `tests/delft_gtfs.py` with gtfs-kit 14.1.1 (pandas 3.1.1): 2026-10-09, 1 707 trips and
   runs, 39 156 calls, 0 night runs, 1 340 stops. The read time is printed and must be under
-  3 s in release: `cargo test --release -p openmobisim-io-gtfs --test delft -- --nocapture`.
+  3 s in release. Release only (about 7 s in debug, skipped by `cargo test`; CI runs it):
+  `cargo test --release -p openmobisim-io-gtfs --test delft -- --ignored --nocapture`.

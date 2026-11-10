@@ -23,7 +23,7 @@ pub struct Iteration {
     /// The share of trips with an alternative that changed alternative in this iteration's choice.
     pub switch_share: f64,
     /// The share of trips with an alternative for which this iteration's search found one
-    /// cheaper on time and money than their set's cheapest.
+    /// cheaper, without the path-size term, than their set's cheapest.
     pub found_share: f64,
     /// The relative duality gap at this iteration's measured costs: over trips with an
     /// alternative, the sum of the chosen alternative's cost less the set's least cost, over

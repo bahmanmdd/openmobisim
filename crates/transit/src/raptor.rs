@@ -20,6 +20,11 @@
 //! can be caught. What comes before the last ride is the earliest way to be at its boarding
 //! stop with the rides left, by the fewest rides.
 //!
+//! [`Raptor::by_rides`] answers, for each number of rides `k` that reaches the door earlier than
+//! every smaller number, the journey the same rule gives among those of at most `k` rides, fewest
+//! rides first: round `k`'s door arrival is the earliest with at most `k` rides, so the rounds
+//! that improve on it are those numbers, and each journey is read back from its round's labels.
+//!
 //! # How
 //!
 //! Round `k` finds the earliest arrival at every stop with at most `k` rides. It scans every
@@ -291,15 +296,53 @@ impl<'a> Raptor<'a> {
             }
         }
         let found = self.run_rounds(query, k_max);
-        let journey = found.map(|(k, at)| self.journey(query, k, at));
+        let journey = found.last().map(|&(k, at)| self.journey(query, k, at));
         self.clean(query);
         journey
     }
 
-    /// The rounds. The first round reaching the earliest door arrival and that arrival, if any.
-    fn run_rounds(&mut self, query: &Query, k_max: usize) -> Option<(usize, u32)> {
+    /// The journeys of `query` by number of rides: for each count of rides that reaches the door
+    /// earlier than every smaller count does, the earliest journey with that many rides, fewest
+    /// rides first. The last is [`Raptor::earliest`]'s; empty when there is none.
+    ///
+    /// # Panics
+    ///
+    /// As [`Raptor::earliest`].
+    pub fn by_rides(&mut self, query: &Query) -> Vec<Journey> {
+        let k_max = usize::from(query.max_rides);
+        if k_max == 0 {
+            return Vec::new();
+        }
+        let n = self.best.len();
+        while self.rounds.len() <= k_max {
+            self.rounds.push(Round::new(n));
+        }
+        for &(s, w) in &query.egress {
+            assert!(w.is_finite() && w.get() >= 0.0, "the egress walk from stop {s} is {w}");
+            self.egress[s.index()] = self.egress[s.index()].min(on_clock(w));
+        }
+        for &(s, t) in &query.access {
+            let (i, t) = (s.index(), t.get());
+            if t < self.rounds[0].arr[i] {
+                self.rounds[0].touch(s);
+                self.touch(s);
+                self.rounds[0].arr[i] = t;
+                self.best[i] = self.best[i].min(t);
+                self.prev[i] = self.prev[i].min(t);
+                self.mark(s);
+            }
+        }
+        let found = self.run_rounds(query, k_max);
+        let journeys = found.iter().map(|&(k, at)| self.journey(query, k, at)).collect();
+        self.clean(query);
+        journeys
+    }
+
+    /// The rounds. Every round whose door arrival is earlier than any round before it, with
+    /// that arrival, in round order: the last is the earliest arrival.
+    fn run_rounds(&mut self, query: &Query, k_max: usize) -> Vec<(usize, u32)> {
         let mut bound = INF;
-        let mut found = None;
+        let mut found = Vec::new();
         for k in 1..=k_max {
             if self.marked_list.is_empty() {
                 break;
@@ -322,7 +365,7 @@ impl<'a> Raptor<'a> {
                 .unwrap_or(INF);
             if at < bound {
                 bound = at;
-                found = Some((k, at));
+                found.push((k, at));
             }
             for &s in &self.marked_list {
                 self.prev[s.index()] = self.best[s.index()];
@@ -543,4 +586,19 @@ pub fn earliest_many(
 ) -> Vec<Option<Journey>> {
     let first = Raptor::new(timetable, boarding_slack);
     queries.par_iter().map_init(|| first.clone(), |raptor, q| raptor.earliest(q)).collect()
+}
+
+/// [`Raptor::by_rides`] for every query, in parallel, as [`earliest_many`].
+///
+/// # Panics
+///
+/// As [`Raptor::new`] and [`Raptor::earliest`].
+#[must_use]
+pub fn by_rides_many(
+    timetable: &Timetable,
+    boarding_slack: Duration,
+    queries: &[Query],
+) -> Vec<Vec<Journey>> {
+    let first = Raptor::new(timetable, boarding_slack);
+    queries.par_iter().map_init(|| first.clone(), |raptor, q| raptor.by_rides(q)).collect()
 }

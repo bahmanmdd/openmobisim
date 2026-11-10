@@ -8,7 +8,8 @@
 //! cycleway, a one-way cycleway, a footway with and without `bicycle=yes`, a path.
 //!
 //! The import time is printed. In a release build it must be under 3 s (version 1: 2.0 s):
-//! `cargo test --release -p openmobisim-io-osm --test delft -- --nocapture`.
+//! `cargo test --release -p openmobisim-io-osm --test delft -- --ignored --nocapture` (release
+//! only: ignored in the debug suite).
 
 mod common;
 
@@ -18,6 +19,7 @@ use std::time::Instant;
 use common::{VALUES, close, direction};
 
 #[test]
+#[ignore = "release only: about 7 s in debug; CI runs it in release with --ignored"]
 fn delft_reads_in_full_and_twenty_ways_match_libosmium_and_pyproj() {
     let started = Instant::now();
     let (net, report) =

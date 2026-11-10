@@ -8,7 +8,8 @@ walkers (4.8 km/h: 1 125 s); a street st1 a->b of 2 000 m at 50 km/h, 1 lane, 1 
 street st2 b->c of 1 000 m at 36 km/h, 1 lane, 900 veh/h. Seven trips: three cars a->c at 0, 1,
 2 s after 07:00:00 (25 200 s of the clock), a bike and a walker a->b at 25 200 s, a walker at
 28 200 s still walking at the window's end, a transit-only trip with no timetable. The window
-25 200 s to 28 800 s in bins of 60 s, three iterations, the least cost on time alone. For a
+25 200 s to 28 800 s in bins of 60 s, three iterations, the least cost on time alone (1 on each
+of the nine time columns, in minutes, 0 on the other seven: a cost in minutes). For a
 bike: the bike's row is its own trip at 360 s and its own count in the links table.
 """
 
@@ -18,6 +19,9 @@ from pathlib import Path
 
 import openmobisim as oms
 
+# Time alone: 1 on the nine time columns of the choice row (minutes), 0 on transfers, money,
+# path size and the four mode constants.
+TIME_ONLY = (1.0,) * 9 + (0.0,) * 7
 READ_BACK = Path(__file__).resolve().parents[2] / "io-parquet" / "tests" / "read_back.py"
 START = 25_200
 
@@ -60,7 +64,7 @@ def test_the_hand_run_through_python_passes_read_back(tmp_path):
     result = oms.run(
         network, demand, window=(START, START + 3_600), out=tmp_path,
         link_bin=60, iteration_cap=3, choice="deterministic",
-        coefficients={"commute": (1.0, 0.0, 0.0), "leisure": (1.0, 0.0, 0.0)},
+        coefficients={"commute": TIME_ONLY, "leisure": TIME_ONLY},
     )
     assert [Path(p).name for p in (result.trips, result.links, result.iterations)] == [
         "trips.parquet", "links.parquet", "iterations.parquet"

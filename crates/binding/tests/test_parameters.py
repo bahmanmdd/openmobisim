@@ -28,12 +28,14 @@ ELSEWHERE = {
     "transfer_walk_max": {"Transit.from_gtfs"},
     "stop_walk_max": {"Demand.from_table"},
 }
+# Time alone: 1 on the nine time columns of the choice row (minutes), 0 on the other seven.
+TIME_ONLY = (1.0,) * 9 + (0.0,) * 7
 # A value each row can take (test values, not the defaults).
 VALUES = {
     "capacity_per_lane": 2_000.0, "bike_speed": 18.0, "walk_speed": 5.0,
     "osm_class_defaults": None, "transfer_walk_max": 300.0, "stop_walk_max": 1_000.0,
     "boarding_slack": 30, "max_rides": 3, "choice": "deterministic",
-    "coefficients": {"all": (1.0, 0.0, 0.0)}, "nest_scale": 0.7, "iteration_cap": 2,
+    "coefficients": {"all": TIME_ONLY}, "nest_scale": 0.7, "iteration_cap": 2,
     "iteration_floor": 1, "link_bin": 600, "seed": 7,
 }
 NODES = {"node_id": ["a", "b"], "x_m": [0.0, 1_500.0], "y_m": [0.0, 0.0]}
@@ -111,7 +113,7 @@ def test_an_unknown_keyword_and_a_missing_window_are_refused_by_name(tmp_path):
         oms.run(network, demand, window=(0, 3_600), out=tmp_path, choice="probit")
     with pytest.raises(ValueError, match="other is not a class of the demand"):
         oms.run(network, demand, window=(0, 3_600), out=tmp_path,
-                coefficients={"all": (1.0, 0.0, 0.0), "other": (1.0, 0.0, 0.0)})
+                coefficients={"all": TIME_ONLY, "other": TIME_ONLY})
 
 
 def test_a_missing_or_unknown_column_is_refused_by_name():

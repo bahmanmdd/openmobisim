@@ -38,7 +38,7 @@ Seconds and counts; metric only. Every time of day, `departure_s`, `arrival_s`, 
 run's day), so a file reads without the run's window: the writer adds the window's start to the
 loop's seconds after it, once, here. For a finished trip `arrival_s = departure_s +
 travel_time_s` on the clock. `travel_time_s`, `car_time_s` and the stage seconds are durations.
-`cost` is in the choice model's unit: seconds in a time-only run. The shares and the gap are
+`cost` is in the choice model's unit: minutes in a time-only run. The shares and the gap are
 fractions.
 
 ## Meanings and assumptions
@@ -73,7 +73,7 @@ bike has `mode` `bike` and its door-to-door time like any other mode.
 - **The hand run** (`tests/hand_run.rs`): seven trips on three links in a window from 07:00:00
   (25 200 s of the clock), so the clock and the window's seconds differ in every time column;
   every value derived by hand in the test's header: a bike that rides 1 500 m in 360 s, a
-  walker at 1 125 s, a walker still walking at the window's end (arrival null, cost 1 125 s), a
+  walker at 1 125 s, a walker still walking at the window's end (arrival null, cost 1 125 s / 60 = 18.75 min), a
   trip without an alternative, three cars through two streets by the point queue (`st1` exits
   at 25 344, 25 346, 25 348 s; `st2` at 25 444, 25 448, 25 452 s, the bin from 25 320 s), in
   three iterations. The test writes the three files, checks they exist with 7, 4 and 3 rows,

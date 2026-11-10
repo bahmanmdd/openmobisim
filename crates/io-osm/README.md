@@ -120,5 +120,6 @@ Tested in `tests/tags.rs` (`what_every_rule_means_for_a_bike`) and `tests/connec
 - Delft (`tests/fixtures/delft/network.osm.pbf`, 17 976 211 bytes, © OpenStreetMap
   contributors, ODbL 1.0) read in full; 20 ways' modes, lanes, speeds and lengths against
   `fixtures/delft/ways.csv`, written once by `tests/delft_ways.py` from libosmium (pyosmium
-  4.3.2) and pyproj; the read time printed, under 3 s in release:
-  `cargo test --release -p openmobisim-io-osm --test delft -- --nocapture`.
+  4.3.2) and pyproj; the read time printed, under 3 s in release. Release only (about 7 s in
+  debug, skipped by `cargo test`; CI runs it):
+  `cargo test --release -p openmobisim-io-osm --test delft -- --ignored --nocapture`.

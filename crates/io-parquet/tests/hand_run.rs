@@ -13,7 +13,9 @@
 //! 50 km/h (144 s), 1 800 veh/h (a car every 2 s); a street `st2` b→c of 1 000 m at 36 km/h
 //! (100 s), 900 veh/h (a car every 4 s). The window from 07:00:00 to 08:00:00, that is
 //! S = 25 200 s to 28 800 s of the clock (seconds after midnight), in bins of 60 s, three
-//! iterations, the least cost on time alone. Every trip starts and ends at a node (no gaps).
+//! iterations, the least cost on time alone (a coefficient of 1 on each time column, in
+//! minutes, 0 on the rest: a cost is the door-to-door time in minutes, seconds / 60). Every
+//! trip starts and ends at a node (no gaps).
 //! The window does not start at 0, so a time written after the window's start instead of on
 //! the clock differs from the hand number by S. Below, times after the window's start come
 //! first, then the clock: S + that.
@@ -30,7 +32,7 @@
 //!   (25 200): 1 125 s, arriving at 25 200 + 1 125 = 26 325. Both enter `ab` in the bin from
 //!   25 200. `walk-late` a→b at 3 000 s after the start (25 200 + 3 000 = 28 200), entering `ab`
 //!   in the bin from 28 200: it would arrive at 4 125 s, past the window's end at 3 600 s
-//!   (28 800), so it is unfinished, its arrival null, its cost 1 125 s. `lost`, transit only and
+//!   (28 800), so it is unfinished, its arrival null, its cost 1 125 / 60 = 18.75 min. `lost`, transit only and
 //!   no timetable, at 0 (25 200): no alternative, its mode, arrival and cost null (all class
 //!   `leisure`).
 
@@ -50,6 +52,10 @@ use openmobisim_types::units::Metres;
 /// The build values of the rulings.
 const VALUES: BuildValues =
     BuildValues { capacity_per_lane: 1_800.0, bike_speed: 15.0, walk_speed: 4.8 };
+
+/// Time alone: 1 on each of the nine time columns (minutes), 0 on the rest.
+const TIME_ONLY: [f64; 16] =
+    [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0];
 
 /// The window's start, 07:00:00: seconds of the clock.
 const START: u32 = 25_200;
@@ -112,7 +118,7 @@ fn hand_run(network: &Network, demand: &Demand) -> Run {
         link_bin: 60,
         iteration_cap: 3,
         choice: ChoiceModel::Deterministic,
-        coefficients: vec![[1.0, 0.0, 0.0]; 2],
+        coefficients: vec![TIME_ONLY; 2],
         ..Parameters::defaults(2)
     };
     run(network, demand, None, (Second(START), Second(START + 3_600)), &parameters).expect("a run")

@@ -36,10 +36,14 @@ jobs:
         run: cargo test --workspace
       - name: Convergence tier (release; tests 4 and 6 at a large population to a fixed count)
         run: cargo test --release -p openmobisim-loop --test braess --test sioux_falls -- --ignored
-      - name: Delft read in release (under 3 s)
-        run: cargo test --release -p openmobisim-io-osm --test delft -- --nocapture
-      - name: Delft feed read in release, footpaths included (under 3 s)
-        run: cargo test --release -p openmobisim-io-gtfs --test delft -- --nocapture
+      - name: Car against bike behind a bottleneck, one run (release only)
+        run: >-
+          cargo test --release -p openmobisim-loop --test bottleneck_mode_choice -- --ignored --exact
+          one_run_follows_the_trajectory_and_reaches_the_steady_state_within_sampling_error
+      - name: Delft read in release (under 3 s; release only)
+        run: cargo test --release -p openmobisim-io-osm --test delft -- --ignored --nocapture
+      - name: Delft feed read in release, footpaths included (under 3 s; release only)
+        run: cargo test --release -p openmobisim-io-gtfs --test delft -- --ignored --nocapture
       - name: The hand run's Parquet files read by pyarrow 26.0.1 against the hand numbers
         run: |
           python3 -m venv "$RUNNER_TEMP/pyarrow"

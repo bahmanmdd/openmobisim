@@ -7,7 +7,7 @@
 //!
 //! The read time (feed and footpaths, the network read before) is printed. In a release build
 //! it must be under 3 s: `cargo test --release -p openmobisim-io-gtfs --test delft --
-//! --nocapture`.
+//! --ignored --nocapture` (release only: ignored in the debug suite).
 
 mod common;
 
@@ -18,6 +18,7 @@ use common::VALUES;
 use openmobisim_types::units::Metres;
 
 #[test]
+#[ignore = "release only: about 7 s in debug; CI runs it in release with --ignored"]
 fn delft_reads_and_its_counts_match_gtfs_kit() {
     let started = Instant::now();
     let (net, _) = openmobisim_io_osm::read(

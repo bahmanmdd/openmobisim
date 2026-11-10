@@ -29,6 +29,9 @@ at the instant the route enters it; and its tree form, every node within a bound
   sorted by node id; the destination is among them, at 0.
 - `fastest_many(&network, &times, &queries)` answers every query in parallel (rayon, one
   scratch per thread); answer `i` is query `i`'s, the same bit for bit at any thread count.
+  The queries are grouped by mode and destination; each group is steered by an exact bound,
+  the free-flow time from every node to that destination (one backward search per group),
+  instead of the straight line. The routes are the same as `fastest`'s, query by query.
 
 ## Units
 Seconds and metres. The departure is a whole second of the clock (`Second`); the arrival is
@@ -91,7 +94,8 @@ bike direct in 96 s); the switch between a queued short link and a free long rou
 bottleneck (72 + t/2 against 144 s: short at departures 0 and 100, long at 300, arrivals 72,
 222 and 444 s by hand and equal to the reading's walk to the bit); an empty route at the
 origin, a link forbidding cars, transit refused; a brute force on five fully linked nodes with
-queues (200 queries, the arrival equal to the best of every simple path walked on the reading);
-determinism over 1 and 8 threads and two runs (2 000 queries, 20 × 20 loaded grid). The run time
+queues (200 queries, the arrival equal to the best of every simple path walked on the reading).
+`fastest_many`'s determinism over 1 and 8 threads and two runs is tested with the whole chain,
+by car, bike and walk on loaded readings (`crates/loop/tests/determinism.rs`). The run time
 on the 100 × 100 grid is reported by hand: `cargo test --release -p openmobisim-search --test
 run_time -- --ignored --nocapture`.

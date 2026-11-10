@@ -5,12 +5,16 @@
 //! to 4 rides. The brute force (`common::brute_force`) enumerates every journey by the
 //! definition and keeps the earliest arrival, then the fewest rides, then the lowest last run
 //! id; RAPTOR must give the same three, or both nothing, and its journey must check out against
-//! the rows on its own.
+//! the rows on its own. On the same queries, the journeys by number of rides (`by_rides`): at
+//! each count `k` of rides, the brute force at most `k` rides gives the earliest arrival with
+//! at most `k`; `by_rides` must hold exactly the counts that arrive earlier than every smaller
+//! one, each with the brute force's arrival, rides and last run.
 
 mod common;
 
-use common::{Draws, Rows, brute_force, check_journey};
+use common::{Draws, Outcome, Rows, brute_force, check_journey};
 use openmobisim_transit::raptor::{Query, Raptor};
+use openmobisim_transit::timetable::Timetable;
 use openmobisim_types::ids::{EntityId, StopId};
 use openmobisim_types::time::Second;
 use openmobisim_types::units::Duration;
@@ -105,10 +109,43 @@ fn random_query(draws: &mut Draws, n: usize) -> Query {
     Query { access, egress, max_rides: u8::try_from(draws.between(1, 4)).unwrap() }
 }
 
+/// `by_rides` against the brute force at each ride count `k` from 1 to the query's most: the
+/// brute force at most `k` rides gives the earliest arrival with at most `k` rides (and, among
+/// those, the fewest rides and the lowest last run); `by_rides` must give exactly the answers
+/// whose arrival is earlier than every smaller `k`'s, fewest rides first.
+fn by_rides_agree(
+    rows: &Rows,
+    tt: &Timetable,
+    slack: f64,
+    q: &Query,
+    raptor: &mut Raptor<'_>,
+) -> usize {
+    let mut expected = Vec::new();
+    for k in 1..=q.max_rides {
+        let at_most_k = Query { max_rides: k, ..q.clone() };
+        if let Some(o) = brute_force(rows, tt, slack, &at_most_k)
+            && expected.last().is_none_or(|&(a, _, _)| o.0 < a)
+        {
+            expected.push(o);
+        }
+    }
+    let got = raptor.by_rides(q);
+    for j in &got {
+        check_journey(rows, tt, slack, q, j);
+    }
+    let outcome: Vec<Outcome> = got
+        .iter()
+        .map(|j| (j.arrival.get(), j.rides.len(), j.rides.last().expect("a ride").run.raw()))
+        .collect();
+    assert_eq!(outcome, expected, "by rides, slack {slack} s, {q:?}");
+    got.len()
+}
+
 #[test]
 fn raptor_equals_the_brute_force_on_300_random_timetables() {
     let mut draws = Draws::new(8);
     let (mut queries, mut answered, mut transfers, mut walked, mut overtaking) = (0, 0, 0, 0, 0);
+    let mut several = 0;
     for t in 0..300 {
         let rows = random_rows(&mut draws);
         let tt = rows.build();
@@ -132,6 +169,7 @@ fn raptor_equals_the_brute_force_on_300_random_timetables() {
                 (j.arrival.get(), j.rides.len(), j.rides.last().expect("a ride").run.raw())
             });
             assert_eq!(outcome, expected, "timetable {t}, slack {slack} s, {q:?}");
+            several += usize::from(by_rides_agree(&rows, &tt, slack, &q, &mut raptor) >= 2);
             if let Some(j) = &got {
                 check_journey(&rows, &tt, slack, &q, j);
                 answered += 1;
@@ -142,7 +180,7 @@ fn raptor_equals_the_brute_force_on_300_random_timetables() {
         }
     }
     eprintln!(
-        "{overtaking} of 300 timetables hold runs that overtake; {queries} queries: {answered} with a journey, {transfers} of two rides or more, {walked} with a footpath"
+        "{overtaking} of 300 timetables hold runs that overtake; {queries} queries: {answered} with a journey, {transfers} of two rides or more, {walked} with a footpath; {several} with two journeys or more by number of rides"
     );
     // The test tests little unless many queries have a journey and many of those transfer.
     assert!(answered >= queries / 2, "only {answered} of {queries} queries have a journey");

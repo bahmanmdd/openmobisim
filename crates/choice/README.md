@@ -22,9 +22,9 @@ timetables or the network.
 
 ## Units
 The cost of a row for a traveller of class `c` is `Σ_k β[c][k] · x[k]`, each attribute `x[k]`
-in its column's unit (seconds, euros, none for `ln PS`) and each coefficient in cost per that
-unit. A time-only run has a coefficient of 1 on `time_s` and 0 on the rest: its cost is in
-seconds. Probabilities have no unit; `μ` has none.
+in its column's unit (the loop's columns: minutes, transfers, euros, none for `ln PS` and the
+mode constants) and each coefficient in cost per that unit. A time-only run has a coefficient
+of 1 on each of the loop's time columns and 0 on the rest: its cost is in minutes. Probabilities have no unit; `μ` has none.
 
 ## Meanings and assumptions
 - Least cost is best. The cost is the systematic part of the choice model, the same for the

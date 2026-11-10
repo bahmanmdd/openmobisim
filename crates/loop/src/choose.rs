@@ -59,7 +59,8 @@ fn choice(
     i: usize,
     set: &[Alternative],
 ) -> Result<u32, ChoiceError> {
-    let attributes: Vec<[f64; 3]> = set.iter().map(Alternative::attributes).collect();
+    let attributes: Vec<[f64; crate::parameters::N]> =
+        set.iter().map(Alternative::attributes).collect();
     let rows: Vec<Row<'_>> = set
         .iter()
         .zip(&attributes)

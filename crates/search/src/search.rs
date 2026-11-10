@@ -206,7 +206,36 @@ impl<'a> Search<'a> {
     /// In debug builds, if a link time read is below the link's free-flow time.
     pub fn fastest(&mut self, query: &Query) -> Option<Route> {
         let start = self.times.since_start(query.departure).get();
-        let found = self.settle(query.origin, query.mode, start, Stop::At(query.destination));
+        let found = self.settle(query.origin, query.mode, start, Stop::At(query.destination), None);
+        let route = found.then(|| self.route_to(query.destination));
+        self.clean();
+        route
+    }
+
+    /// Per node, the free-flow time by `mode` to `destination`, shrunk by one part in a million
+    /// (infinity where the destination cannot be reached): one backward label-setting over the
+    /// whole network. No link is crossed faster than free flow, so as the bound on the rest of
+    /// the way it never overestimates and is consistent; the shrinking keeps rounding from
+    /// breaking either.
+    fn free_flow_to(&mut self, destination: NodeId, mode: Mode) -> Vec<f64> {
+        self.settle_backward(destination, mode, f64::INFINITY);
+        let mut to_goal = vec![f64::INFINITY; self.arrival.len()];
+        for &node in &self.touched {
+            to_goal[node.index()] = self.arrival[node.index()] * (1.0 - 1e-6);
+        }
+        self.clean();
+        to_goal
+    }
+
+    /// [`Self::fastest`], goal-directed by `to_goal` (from [`Self::free_flow_to`] for the
+    /// query's destination and mode) instead of the straight line: the same route.
+    fn fastest_toward(&mut self, query: &Query, to_goal: &[f64]) -> Option<Route> {
+        if to_goal[query.origin.index()].is_infinite() {
+            return None;
+        }
+        let start = self.times.since_start(query.departure).get();
+        let stop = Stop::At(query.destination);
+        let found = self.settle(query.origin, query.mode, start, stop, Some(to_goal));
         let route = found.then(|| self.route_to(query.destination));
         self.clean();
         route
@@ -231,7 +260,7 @@ impl<'a> Search<'a> {
     ) -> Vec<(NodeId, Duration)> {
         let start = self.times.since_start(departure).get();
         assert!(mode != Mode::Transit, "transit is not on links: it runs on its timetable");
-        self.settle(origin, mode, start, Stop::Beyond(bound.get()));
+        self.settle(origin, mode, start, Stop::Beyond(bound.get()), None);
         let out = self.within(start, bound.get());
         self.clean();
         out
@@ -266,13 +295,23 @@ impl<'a> Search<'a> {
     /// Run the search from `origin` until `stop`. Whether the destination was reached (always
     /// false for a bound); the labels are left in place for [`Self::route_to`] and
     /// [`Self::within`].
-    fn settle(&mut self, origin: NodeId, mode: Mode, start: f64, stop: Stop) -> bool {
+    fn settle(
+        &mut self,
+        origin: NodeId,
+        mode: Mode,
+        start: f64,
+        stop: Stop,
+        to_goal: Option<&[f64]>,
+    ) -> bool {
         let net = self.network;
         let (target, k) = match stop {
             Stop::At(destination) => (net.node_position(destination), self.per_metre[column(mode)]),
             Stop::Beyond(_) => (net.node_position(origin), 0.0),
         };
-        let rest = |node: NodeId| net.node_position(node).distance_to(target) * k;
+        let rest = |node: NodeId| match to_goal {
+            Some(to_goal) => to_goal[node.index()],
+            None => net.node_position(node).distance_to(target) * k,
+        };
         self.label(origin, start, LinkId::NULL, 0.0, 0);
         self.heap.push(Entry { key: start + rest(origin), arrival: start, node: origin.raw() });
         while let Some(Entry { arrival: at, node, .. }) = self.heap.pop() {
@@ -430,5 +469,29 @@ impl<'a> Search<'a> {
 #[must_use]
 pub fn fastest_many(network: &Network, times: &LinkTimes, queries: &[Query]) -> Vec<Option<Route>> {
     let first = Search::new(network, times);
-    queries.par_iter().map_init(|| first.clone(), |search, q| search.fastest(q)).collect()
+    // The queries by (mode, destination): one exact bound per group, shared by its queries.
+    let mut order: Vec<usize> = (0..queries.len()).collect();
+    order.sort_unstable_by_key(|&i| (column(queries[i].mode), queries[i].destination, i));
+    let same = |a: &usize, b: &usize| {
+        queries[*a].mode == queries[*b].mode && queries[*a].destination == queries[*b].destination
+    };
+    let groups: Vec<&[usize]> = order.chunk_by(same).collect();
+    let answered: Vec<Vec<Option<Route>>> = groups
+        .par_iter()
+        .map(|group| {
+            let q = &queries[group[0]];
+            let to_goal = first.clone().free_flow_to(q.destination, q.mode);
+            group
+                .par_iter()
+                .map_init(|| first.clone(), |s, &i| s.fastest_toward(&queries[i], &to_goal))
+                .collect()
+        })
+        .collect();
+    let mut out = vec![None; queries.len()];
+    for (group, answers) in groups.iter().zip(answered) {
+        for (&i, answer) in group.iter().zip(answers) {
+            out[i] = answer;
+        }
+    }
+    out
 }

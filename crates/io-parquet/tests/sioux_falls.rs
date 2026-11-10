@@ -116,7 +116,9 @@ fn sioux_falls_s_run_is_written_in_under_1_s() {
         link_bin: 60,
         iteration_cap: 100,
         choice: ChoiceModel::Deterministic,
-        coefficients: vec![[1.0, 0.0, 0.0]],
+        coefficients: vec![[
+            1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+        ]],
         ..Parameters::defaults(1)
     };
     let started = Instant::now();

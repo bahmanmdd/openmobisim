@@ -1,7 +1,7 @@
 # openmobisim-transit
 
 The timetable of one service day and the earliest-arrival journey over it, by RAPTOR (Delling,
-Pajor and Werneck 2015). Depends on `openmobisim-types` and `rayon`, nothing else. It knows
+Pajor and Werneck 2015), and the earliest journey per number of rides. Depends on `openmobisim-types` and `rayon`, nothing else. It knows
 stops by position only: linking stops to the walk network, and choosing which stops are within
 reach of a trip's ends, is the caller's; the access and egress lists arrive already chosen.
 
@@ -17,7 +17,11 @@ reach of a trip's ends, is the caller's; the access and egress lists arrive alre
 ## Outputs
 - `Raptor::new(&timetable, slack)` is the search with its scratch, reusable across queries.
   `Raptor::earliest(&query)` returns `Option<Journey>`: `None` when no journey of at least one
-  ride reaches an egress stop.
+  ride reaches an egress stop. `Raptor::by_rides(&query)` returns `Vec<Journey>`: for each
+  number of rides whose door arrival is earlier than every smaller number's, the earliest
+  journey with that many rides (by the same rule as `earliest`), fewest rides first; the last
+  is `earliest`'s; empty when there is none. A slower journey of fewer rides is kept, a later
+  one of more rides is not.
 - `Journey { rides, footpaths, access, egress, arrival }`: each `Ride { run, board: (stop,
   second), alight: (stop, second) }`; between ride `i` and ride `i + 1`, `Some(Footpath { from,
   to, seconds })` or `None` (boarded where alighted); the access stop and second; the egress
@@ -25,8 +29,9 @@ reach of a trip's ends, is the caller's; the access and egress lists arrive alre
   departure less the instant the traveller is at the stop, the slack included), `in_vehicle()`,
   `transfer_walk()`, `egress_walk()`; and `ride_count()`. The access walk is the caller's. The
   access second plus the four parts is the door instant, the arrival before it is rounded up.
-- `earliest_many(&timetable, slack, &queries)` answers every query in parallel (rayon, one
-  scratch per thread); answer `i` is query `i`'s, the same at any thread count.
+- `earliest_many(&timetable, slack, &queries)` and `by_rides_many` answer every query in
+  parallel (rayon, one scratch per thread); answer `i` is query `i`'s, the same at any thread
+  count.
 - `Timetable` accessors, read-only: stop and run counts and external ids, stop positions, a
   run's calls and pattern, a pattern's stops and runs, a stop's footpaths.
 
@@ -76,13 +81,17 @@ rides to the stops and gives the seconds it reaches each as the access list.
 ## Tests
 `cargo test -p openmobisim-transit`. Each expected value comes from outside the crate: RAPTOR
 equal to a brute force that enumerates every journey by the definition (arrival, rides and last
-run) on 300 random timetables, 1 500 queries; the wait for the first of two lines A to B at 600
+run) on 300 random timetables, 1 500 queries, and `by_rides` equal on the same queries to the
+brute force at each number of rides `k` (the earliest arrival with at most `k` rides); the wait for the first of two lines A to B at 600
 and 870 s, against uniform independent phases (mean `H₁/2 − H₁²/(6H₂)` = 231.0 s within 10 s,
 the share `1 − H₁/(2H₂)` = 0.655 within 0.02), and a fast and a slow line against
 `E[min(U₁ + 900, U₂ + 1 500)]` integrated numerically in the test; one line at regular and
 irregular headways against Osuna and Newell's `E[H²]/(2E[H])`; the network of Spiess and Florian
 (1989) as timetables, every traveller equal to the brute force, the mean door time reported
 against the paper's 27.75 min (a frequency-based strategy, not asserted); transfers, slack and
-footpaths by hand; the refusals; determinism over 1 and 8 threads and two runs (1 000 queries).
+footpaths by hand; `by_rides` by hand (a slow direct run and a faster connection: two journeys;
+a direct run as early or earlier: one); the refusals; `earliest_many`'s determinism over 1 and 8
+threads and two runs (1 000 queries; a run does not call it). `by_rides_many`'s, the one a run
+calls, is tested with the whole chain (`crates/loop/tests/determinism.rs`).
 The run time is reported by hand: `cargo test --release -p openmobisim-transit --test run_time
 -- --ignored --nocapture`.

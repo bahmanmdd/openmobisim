@@ -47,17 +47,18 @@ ITERATIONS_SCHEMA = [
 # Every time of day is in seconds of the clock: the window starts at 07:00:00, S = 25 200 s, and
 # each instant is S plus the seconds after the start derived in `hand_run.rs`.
 # Trips in id order (bytewise): id, class, departure, mode, arrival, travel time, finished,
-# cost, alternatives. Departures S + 0, 1, 2 (cars), S + 3 000 = 28 200 (walk-late), S (the
-# rest). Arrivals: bike S + 360 = 25 560; cars, their st2 exits S + 244, 248, 252 = 25 444,
-# 25 448, 25 452; walk S + 1 125 = 26 325.
+# cost, alternatives. The cost is in minutes: the time-only run weighs each time column, in
+# minutes, at 1, so a cost is the door-to-door seconds over 60. Departures S + 0, 1, 2 (cars),
+# S + 3 000 = 28 200 (walk-late), S (the rest). Arrivals: bike S + 360 = 25 560; cars, their
+# st2 exits S + 244, 248, 252 = 25 444, 25 448, 25 452; walk S + 1 125 = 26 325.
 TRIPS = [
-    ("bike", "leisure", 25200, "bike", 25560.0, 360.0, True, 360.0, 1),
-    ("car1", "commute", 25200, "car", 25444.0, 244.0, True, 244.0, 1),
-    ("car2", "commute", 25201, "car", 25448.0, 247.0, True, 247.0, 1),
-    ("car3", "commute", 25202, "car", 25452.0, 250.0, True, 250.0, 1),
+    ("bike", "leisure", 25200, "bike", 25560.0, 360.0, True, 360.0 / 60, 1),
+    ("car1", "commute", 25200, "car", 25444.0, 244.0, True, 244.0 / 60, 1),
+    ("car2", "commute", 25201, "car", 25448.0, 247.0, True, 247.0 / 60, 1),
+    ("car3", "commute", 25202, "car", 25452.0, 250.0, True, 250.0 / 60, 1),
     ("lost", "leisure", 25200, N, N, N, False, N, 0),
-    ("walk", "leisure", 25200, "walk", 26325.0, 1125.0, True, 1125.0, 1),
-    ("walk-late", "leisure", 28200, "walk", N, N, False, 1125.0, 1),
+    ("walk", "leisure", 25200, "walk", 26325.0, 1125.0, True, 1125.0 / 60, 1),
+    ("walk-late", "leisure", 28200, "walk", N, N, False, 1125.0 / 60, 1),
 ]
 # Links in id order then bin: id, bin start, cars, their summed crossing time, exit less entry
 # (st1: 144 + 145 + 146 = 435; st2: 100 + 102 + 104 = 306), first exit, last exit, bikes,
