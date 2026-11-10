@@ -172,6 +172,36 @@ fn with_a_boarding_slack_of_600_s_the_run_at_600_s_cannot_be_boarded_from_a_stop
 }
 
 #[test]
+fn a_trip_1501_m_from_its_stop_is_offered_no_journey_and_is_counted_without_a_stop() {
+    // By hand: both ends one gap off their nodes, stops A and B on the nodes, one run A 2 000 →
+    // B 2 300. At a gap of 1 500 m the walk to A is 1 500 m, in (1 125 s, before the run); at
+    // 1 501 m it is out, and so is B's. The trip walks instead (transit and walk are open to
+    // it) and is counted in both columns.
+    let net = two_nodes();
+    let mut b = TimetableBuilder::new();
+    b.add_stop("A", (Metres(0.0), Metres(0.0)));
+    b.add_stop("B", (Metres(1_500.0), Metres(0.0)));
+    let call = |stop: &str, s: u32| Call {
+        stop: stop.to_string(),
+        arrival: Second(s),
+        departure: Second(s),
+    };
+    b.add_run("r1", vec![call("A", 2_000), call("B", 2_300)]);
+    let tt = b.build().expect("a timetable");
+    let counts = |gap: f64| {
+        let rows = [trip(gap, &[Mode::Walk, Mode::Transit])];
+        let dem = Demand::build(&rows, &["default".to_string()], &net, Some(&tt), Metres(1_500.0))
+            .expect("a demand");
+        let window = (Second(0), Second(7_200));
+        let r = run(&net, &dem, Some(&tt), window, &time_only(1)).expect("a run");
+        let it = &r.iterations[0];
+        (r.set(TripId::new(0)).len(), it.without_transit, it.without_stop, it.without_alternative)
+    };
+    assert_eq!(counts(1_500.0), (2, 0, 0, 0), "1 500 m: the walk and the journey");
+    assert_eq!(counts(1_501.0), (1, 1, 1, 0), "1 501 m: the walk alone, counted twice");
+}
+
+#[test]
 fn max_rides_1_refuses_a_two_ride_journey_that_max_rides_2_takes() {
     // Stops A (node a), B (node b) and C 2 000 m past b on a second path, beyond the 1 500 m
     // walk to a stop; runs A→B at 600 and B→C at 1 000, so A→C needs two rides.
@@ -198,9 +228,14 @@ fn max_rides_1_refuses_a_two_ride_journey_that_max_rides_2_takes() {
         .expect("a run");
     assert_eq!(one.trips.mode[0], None, "no journey with one ride");
     assert_eq!(one.iterations[0].without_alternative, 1);
+    let offer = |r: &openmobisim_loop::run::Run| {
+        (r.iterations[0].without_transit, r.iterations[0].without_stop)
+    };
+    assert_eq!(offer(&one), (1, 0), "stops at both ends, no journey with one ride");
     let two = run(&net, &dem, Some(&tt), WINDOW, &Parameters { max_rides: 2, ..time_only(1) })
         .expect("a run");
     assert_eq!(two.trips.mode[0], Some(Mode::Transit));
+    assert_eq!(offer(&two), (0, 0));
     assert!((two.trips.travel_time[0] - 1_300.0).abs() < 1e-9, "{}", two.trips.travel_time[0]);
 }
 
@@ -215,6 +250,8 @@ fn refusals_name_what_they_refuse() {
     assert_eq!(run(&net, &dem, None, WINDOW, &bad).err(), Some(RunError::IterationCapZero));
     let bad = Parameters { max_rides: 0, ..p.clone() };
     assert_eq!(run(&net, &dem, None, WINDOW, &bad).err(), Some(RunError::MaxRidesZero));
+    let bad = Parameters { nearby_stops: 0, ..p.clone() };
+    assert_eq!(run(&net, &dem, None, WINDOW, &bad).err(), Some(RunError::NearbyStopsZero));
     let bad = Parameters { coefficients: vec![], ..p.clone() };
     assert_eq!(
         run(&net, &dem, None, WINDOW, &bad).err(),
@@ -246,6 +283,8 @@ fn row(mean: f64, found: f64) -> Iteration {
         finished: 1,
         unfinished: 0,
         without_alternative: 0,
+        without_transit: 0,
+        without_stop: 0,
         switch_share: 0.0,
         found_share: found,
         gap: 0.0,

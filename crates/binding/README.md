@@ -49,7 +49,7 @@ result  = oms.run(network, demand, transit=None, window=(start_s, end_s), out=fo
   | `Network.from_osm` alone | `osm_class_defaults`: only `None`, the reader's one table (`crates/io-osm/README.md`) |
   | `Transit.from_gtfs` | `transfer_walk_max` (m) |
   | `Demand.from_table` | `stop_walk_max` (m) |
-  | `run` | `boarding_slack` (s), `max_rides`, `choice` (`"logit"` or `"deterministic"`), `coefficients` (a dict from every class id to its sixteen, in the order of the loop's choice row: cost per minute of car driving, bike riding, walking, transit in vehicle, access walk, egress walk, first wait, transfer wait, transfer walk; per transfer; per €; per unit of ln PS; the car, bike, walk and transit constants), `nest_scale`, `iteration_cap`, `iteration_floor`, `link_bin` (s), `seed` |
+  | `run` | `boarding_slack` (s), `max_rides`, `nearby_stops`, `choice` (`"logit"` or `"deterministic"`), `coefficients` (a dict from every class id to its sixteen, in the order of the loop's choice row: cost per minute of car driving, bike riding, walking, transit in vehicle, access walk, egress walk, first wait, transfer wait, transfer walk; per transfer; per €; per unit of ln PS; the car, bike, walk and transit constants), `nest_scale`, `iteration_cap`, `iteration_floor`, `link_bin` (s), `seed` |
 - **`run`**: `window=(start_s, end_s)`, two seconds of the clock, required, never defaulted;
   `out`, the folder the files go to (created if missing). The demand must have been built on
   the network and the transit given to `run`.
@@ -108,9 +108,8 @@ Each expected value comes from outside the simulator:
   `bike_speed=30` gives 180 s for the 1 500 m that take 360 s at 15 km/h.
 - `test_defaults.py`: the five defaults held in `src/lib.rs`, each by a hand case run with no
   keyword: a 1 500 m ride in 360 s (15 km/h); a 1 000 m walk in 750 s (4.8 km/h); three cars
-  through a two-lane link 1 s apart (1 800 veh/h per lane); a stop at 1 499 m reached, and one
-  at 1 501 m left out beside a stop at 500 m, the later arrival showing it (1 500 m); two lines
-  joined by a 399 m walk and not by a 401 m one (400 m).
+  through a two-lane link 1 s apart (1 800 veh/h per lane); a stop at 1 499 m reached and one at
+  1 501 m not (1 500 m); two lines joined by a 399 m walk and not by a 401 m one (400 m).
 - `test_delft.py`: Delft's extract and feed read through Python, the feed's counts against
   gtfs-kit's (`crates/io-gtfs/tests/fixtures/delft/expected.csv`), the read times printed.
 - `test_determinism.py`: a logit run of 400 trips twice and at `RAYON_NUM_THREADS` 1 and 8:

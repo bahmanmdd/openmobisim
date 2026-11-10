@@ -1,5 +1,6 @@
 //! Stage 5, assess: the iteration's measures, reported; and the stopping rule.
 
+use openmobisim_types::mode::Mode;
 use openmobisim_types::reduce::fixed_order_map_sum;
 
 use crate::alternative::Alternative;
@@ -20,6 +21,11 @@ pub struct Iteration {
     pub unfinished: u64,
     /// Trips with no alternative in any mode open to them.
     pub without_alternative: u64,
+    /// Trips with transit open to them and no journey in their set: transit is not offered.
+    pub without_transit: u64,
+    /// Of those, the trips with no stop within `stop_walk_max` of their origin or of their
+    /// destination; the rest have stops at both ends and no journey between them.
+    pub without_stop: u64,
     /// The share of trips with an alternative that changed alternative in this iteration's choice.
     pub switch_share: f64,
     /// The share of trips with an alternative for which this iteration's search found one
@@ -69,12 +75,20 @@ pub(crate) fn assess(
             .map(|a| ctx.parameters.cost(ctx.class[i], &a.attributes()))
             .fold(f64::INFINITY, f64::min)
     });
+    let without_transit = (0..ctx.trip_count())
+        .filter(|&i| {
+            ctx.demand.modes(ctx.trip(i)).contains(Mode::Transit)
+                && !sets[i].iter().any(|a| a.mode == Mode::Transit)
+        })
+        .count() as u64;
     Iteration {
         iteration,
         mean_trip_time: time_sum / share(finished, 1),
         finished,
         unfinished: counted - finished,
         without_alternative: n - counted,
+        without_transit,
+        without_stop: u64::from(ctx.demand.trips_without_transit()),
         switch_share: share(switches, counted),
         found_share: share(found, counted),
         gap: if least > 0.0 { (paid - least) / least } else { f64::NAN },

@@ -6,9 +6,6 @@
 //! is open to walkers one way only). The stops are searched in parallel (rayon, one scratch per
 //! thread); each search depends on its stop alone, and the results are filed node by node in
 //! stop order, so the tables are the same at any thread count.
-//!
-//! For a trip end with no stop within the bound, [`nearest_stops`] gives the one stop with the
-//! least whole walk, by an unbounded search from the end's node.
 
 use openmobisim_graph::network::Network;
 use openmobisim_loading::link_times::LinkTimes;
@@ -97,91 +94,6 @@ impl NearStops {
     pub fn stops_reaching(&self, node: NodeId) -> &[(StopId, f64)] {
         self.from_stop.of(node)
     }
-}
-
-/// The stop with the least whole walk from or to an end, with its walking seconds; `None` when
-/// no stop can be reached on foot.
-pub(crate) type Nearest = Option<(StopId, Duration)>;
-
-/// For each of `ends` (a walk node and its gap in metres), the stop with the least whole walk:
-/// the end's gap, the walk between the end's node and the stop's node, and the stop's gap
-/// (`stops[s]`, node and gap), at the network's walk speed; ties to the lower stop id. With its
-/// walking seconds; `None` when no stop can be reached on foot. `to_stop`: the walk from the end
-/// to the stop (an origin's, [`Search::reach`]), else from the stop to the end (a destination's,
-/// [`Search::reach_backward`]).
-///
-/// One search per distinct node, in parallel, bounded first at twice `from` seconds, the bound
-/// doubled while an end's least whole walk is not below its gap plus the bound, and dropped after
-/// 16 times `from`. A stop the bounded search does not reach is walked more than the bound, so its
-/// whole walk is at least the end's gap plus the bound: the least walk below that is the least of
-/// all, ties included. Each end's result depends on its node and gap alone, so it is the same at
-/// any thread count.
-pub(crate) fn nearest_stops(
-    network: &Network,
-    stops: &[(NodeId, f64)],
-    ends: &[(NodeId, f64)],
-    to_stop: bool,
-    from: Duration,
-) -> Vec<Nearest> {
-    let speed = network.walk_speed().get();
-    let mut by_node: Vec<(NodeId, usize)> =
-        ends.iter().enumerate().map(|(i, &(node, _))| (node, i)).collect();
-    by_node.sort_unstable();
-    let groups: Vec<&[(NodeId, usize)]> = by_node.chunk_by(|a, b| a.0 == b.0).collect();
-    let times = free_flow(network);
-    let first = Search::new(network, &times);
-    let found: Vec<Vec<(usize, Nearest)>> = groups
-        .par_iter()
-        .map_init(
-            || first.clone(),
-            |search, group| {
-                let node = group[0].0;
-                let mut bound = 2.0 * from.get();
-                loop {
-                    let walk = if to_stop {
-                        search.reach(node, Mode::Walk, Second::ZERO, Duration(bound))
-                    } else {
-                        search.reach_backward(node, Mode::Walk, Duration(bound))
-                    };
-                    let best: Vec<_> = group
-                        .iter()
-                        .map(|&(_, i)| (i, least_walk(&walk, stops, ends[i].1, speed)))
-                        .collect();
-                    let sure = |&(i, b): &(usize, Nearest)| {
-                        b.is_some_and(|(_, t)| t.get() < ends[i].1 / speed + bound)
-                    };
-                    if bound.is_infinite() || best.iter().all(sure) {
-                        return best;
-                    }
-                    bound = if bound >= 16.0 * from.get() { f64::INFINITY } else { 2.0 * bound };
-                }
-            },
-        )
-        .collect();
-    let mut out = vec![None; ends.len()];
-    for (i, best) in found.into_iter().flatten() {
-        out[i] = best;
-    }
-    out
-}
-
-/// Of the stops whose nodes `walk` reaches (by node, with the walking seconds), the one with the
-/// least whole walk from an end of `gap` metres, ties to the lower stop id; with its seconds.
-fn least_walk(
-    walk: &[(NodeId, Duration)],
-    stops: &[(NodeId, f64)],
-    gap: f64,
-    speed: f64,
-) -> Nearest {
-    let mut best: Nearest = None;
-    for (s, &(node, stop_gap)) in stops.iter().enumerate() {
-        let Ok(at) = walk.binary_search_by_key(&node, |w| w.0) else { continue };
-        let total = gap / speed + walk[at].1.get() + stop_gap / speed;
-        if best.is_none_or(|(_, b)| total < b.get()) {
-            best = Some((StopId::from_index(s), Duration(total)));
-        }
-    }
-    best
 }
 
 /// The link times of an empty loading over a window of one second from second 0: free flow on

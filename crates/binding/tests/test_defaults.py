@@ -12,23 +12,16 @@ Every trip leaves at 08:00:00 (28 800 s of the clock) in a window to 10:00:00 (d
    cars entering together at 0 s leave by the point queue's rule max(t + 100, previous exit + 1)
    at 100, 101 and 102 s (on the clock 28 900, 28 901, 28 902): travel times 100, 101, 102 s,
    the link's summed crossing time 303 s.
-4. stop_walk_max 1 500 m: two transit-only trips to the same door; "near" walks 1 499 m to stop
-   S1, "far" 1 501 m to S1 and 500 m to stop S3. The bus leaves S1 at 08:30:00 and reaches S2,
-   100 m from the door, at 08:40:00; a later bus leaves S3 at 08:50:00 and reaches S2 at
-   09:00:00. A stop beyond the limit is offered only to an end with no stop within it, so "far"
-   is offered S3 alone, and the later arrival shows that S1 was left out. Margin: 1 m, a part in
-   1 500, where the demand crate reads its limit to a part in a billion and the gaps are 0 m
-   exactly (a stop and its node, a door and its node, are the same longitude/latitude, projected
-   by the same projection), so rounding cannot decide the case; the stated link lengths are the
-   walking metres, never a projection. "near": at S1 when its walk of 1 499 / (4 800 / 3 600) =
-   1 124.25 s ends, on the whole second 28 800 + 1 125 = 29 925; boards the 08:30:00 bus
-   (30 600 s, after 29 925 + 60 s of the default boarding slack), off at 08:40:00 (31 200 s),
-   walks 100 m to the door in 75 s: arrives at 31 275 s, a travel time of 2 475 s, mode transit,
-   one alternative. "far": at S3 after 500 / (4 800 / 3 600) = 375 s, at 29 175 s; boards the
-   08:50:00 bus (31 800 s), off at 09:00:00 (32 400 s), walks 100 m in 75 s: arrives at
-   32 475 s, a travel time of 3 675 s. Had S1 been offered, its walk of 1 501 m (1 125.75 s, at
-   S1 on the whole second 29 926, before 30 600 s less the slack) would have caught the
-   08:30:00 bus and arrived at 31 275 s.
+4. stop_walk_max 1 500 m: two transit-only trips to the same destination; "near" walks 1 499 m to
+   the only stop it can reach, "far" 1 501 m. Margin: 1 m, a part in 1 500, where the demand crate
+   reads its limit to a part in a billion and the gaps are 0 m exactly (a stop and its node, a door
+   and its node, are the same longitude/latitude, projected by the same projection), so rounding
+   cannot decide the case; the stated link lengths are the walking metres, never a projection.
+   "near": at the stop when its walk of 1 499 / (4 800 / 3 600) = 1 124.25 s ends, on the whole
+   second 28 800 + 1 125 = 29 925; boards the 08:30:00 run (30 600 s, after 29 925 + 60 s of the
+   default boarding slack), off at 08:40:00 (31 200 s), walks 100 m to the door in 75 s: arrives
+   at 31 275 s, a travel time of 2 475 s, mode transit, one alternative. "far": no stop within
+   reach, so no alternative: mode null, alternatives 0, not finished.
 5. transfer_walk_max 400 m: two pairs of lines, each pair joined only by a walk between the first
    line's last stop and the second line's first stop: 399 m for the trip "near", 401 m for "far"
    (the same 1 m margin, the GTFS reader reading its limit to a part in a billion). Each door is
@@ -149,20 +142,17 @@ def transit_trips(tmp_path, network, positions, stops, runs, rows):
 
 def test_stop_walk_max_default_reaches_a_stop_at_1499_m_and_not_at_1501_m(tmp_path):
     nodes = {"near": (0.0, 0.0), "s1": (1_000.0, 0.0), "far": (2_000.0, 0.0),
-             "s3": (2_000.0, 300.0), "s2": (3_000.0, 0.0), "door": (3_050.0, 0.0)}
+             "s2": (3_000.0, 0.0), "door": (3_050.0, 0.0)}
     network, positions = walk_network(
-        nodes, [("near", "s1", 1_499.0), ("far", "s1", 1_501.0), ("far", "s3", 500.0),
-                ("s2", "door", 100.0)])
-    stops = {"S1": positions["s1"], "S2": positions["s2"], "S3": positions["s3"]}
-    runs = {"bus": [("S1", "08:30:00"), ("S2", "08:40:00")],
-            "later": [("S3", "08:50:00"), ("S2", "09:00:00")]}
+        nodes, [("near", "s1", 1_499.0), ("far", "s1", 1_501.0), ("s2", "door", 100.0)])
+    stops = {"S1": positions["s1"], "S2": positions["s2"]}
+    runs = {"bus": [("S1", "08:30:00"), ("S2", "08:40:00")]}
     trips = transit_trips(tmp_path, network, positions, stops, runs,
                           [("near", "near", "door"), ("far", "far", "door")])
     near, far = trips["near"], trips["far"]
     assert (near["mode"], near["alternatives"], near["finished"]) == ("transit", 1, True)
     assert near["travel_time_s"] == 2_475.0 and near["arrival_s"] == 31_275.0
-    assert (far["mode"], far["alternatives"], far["finished"]) == ("transit", 1, True)
-    assert far["travel_time_s"] == 3_675.0 and far["arrival_s"] == 32_475.0
+    assert (far["mode"], far["alternatives"], far["finished"]) == (None, 0, False)
 
 
 def test_transfer_walk_max_default_joins_two_lines_at_399_m_and_not_at_401_m(tmp_path):

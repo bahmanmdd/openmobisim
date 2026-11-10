@@ -10,7 +10,7 @@ stopping rule; and the three tables a run returns. Depends on `openmobisim-types
 - The window `(start, end)`, two seconds of the clock: the study period, the user's, never
   defaulted; a whole number of link bins long.
 - `Parameters` (`PARAMETERS.md`, the rulings): `link_bin` (s), `iteration_cap`, `iteration_floor`, `seed`,
-  `boarding_slack` (s), `max_rides`, `choice` (deterministic or logit), `nest_scale`, and per
+  `boarding_slack` (s), `max_rides`, `nearby_stops`, `choice` (deterministic or logit), `nest_scale`, and per
   user class the sixteen coefficients of the choice row (below).
 
 ## Outputs
@@ -23,7 +23,10 @@ stopping rule; and the three tables a run returns. Depends on `openmobisim-types
 - `links`, the last loading's table (`LinkBins`): per link and bin of entry, cars with their
   crossing times, bikes, walkers.
 - `iterations`, one row per iteration: the mean trip time of the finished trips, the finished,
-  unfinished and without-alternative counts, the switch share, the found share, the relative
+  unfinished and without-alternative counts, `without_transit` (trips with transit open to them
+  and no journey offered) and `without_stop` (of those, the trips with no stop within
+  `stop_walk_max` of their origin or destination, which a larger `stop_walk_max` can reach; the
+  rest have stops at both ends and no journey between them), the switch share, the found share, the relative
   gap, and the seconds of each stage. `stopped_by_rule` says whether the rule or the cap ended
   the run.
 
@@ -46,7 +49,13 @@ model's unit (minutes in a time-only run: 1 on each of the nine time columns, 0 
   `Raptor::by_rides`: for each number of rides that reaches the door earlier than every smaller
   number, the earliest journey with that many rides, fewest rides first (the last is the
   earliest journey). A journey comes from the demand's access and egress lists, the traveller
-  at each access stop on the whole second its walk ends.
+  at each access stop on the whole second its walk ends. `nearby_stops` counts the searches per trip end: at 1 that
+  search alone; above 1 the same is asked again from each of the `nearby_stops − 1` stops
+  nearest the origin alone (to any stop of the egress list), and to each of the
+  `nearby_stops − 1` stops nearest the destination alone (from any stop of the access list); nearest is the least walk, ties to the lower stop id; a list of one stop
+  is not asked again. A journey found twice is offered once, and of the journeys that ride the
+  same runs in the same order (they differ in the stop boarded or left at) only the cheapest
+  for the traveller is offered, the first found at equal cost.
 - **Choose:** one row per alternative of sixteen columns, a utility per mode, times in
   minutes: `car_drive_min`, `bike_ride_min`, `walk_min`, `transit_in_vehicle_min`,
   `transit_access_min`, `transit_egress_min`, `transit_first_wait_min`,
@@ -88,8 +97,8 @@ model's unit (minutes in a time-only run: 1 on each of the nine time columns, 0 
   over two runs.
 
 ## Errors
-`run` refuses, never repairs, with a `RunError`: `link_bin`, `iteration_cap` or `max_rides`
-zero; coefficient rows not one per class; a window that is not whole bins, is empty or runs
+`run` refuses, never repairs, with a `RunError`: `link_bin`, `iteration_cap`, `max_rides` or
+`nearby_stops` zero; coefficient rows not one per class; a window that is not whole bins, is empty or runs
 past the clock; a trip departing outside the window, or reaching the network by some mode at or
 after its end (named by external id); the choice model's and the loading's refusals.
 
@@ -110,7 +119,8 @@ Nguyen–Dupuis and Sioux Falls against the same linear program solved by scipy
 (`tests/equilibrium_lp.py`, Larsson and Patriksson 1995) at a demand where its total time is
 unique: the mean trip, `Σ τ x`, the OD times, and every link with a standing queue at its
 capacity; by hand, the bike's 360 s and 405.5 s, the walker's 1 125 s, a journey at 922.5 s,
-the cheaper mode taken, an empty route, an unfinished walker, the boarding slack and the most
+the cheaper mode taken, the nearest stop tried alone and two journeys on one run
+(`tests/nearby_stops.rs`), an empty route, an unfinished walker, the boarding slack and the most
 rides, the refusals, the stopping rule on hand-made rows; the choice row of each mode by hand
 (`tests/choice_row.rs`: a car and a bike with gap walks, a walk, a journey with one transfer,
 every part in minutes; the path size of two overlapping car routes, 0 for bike and walk

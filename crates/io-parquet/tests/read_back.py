@@ -41,6 +41,7 @@ STAGES = ["search_s", "choose_s", "load_s", "measure_s", "assess_s"]
 ITERATIONS_SCHEMA = [
     ("iteration", U32, False), ("mean_trip_time_s", F64, True), ("finished", U64, False),
     ("unfinished", U64, False), ("without_alternative", U64, False),
+    ("without_transit", U64, False), ("without_stop", U64, False),
     ("switch_share", F64, True), ("found_share", F64, True), ("gap", F64, True),
 ] + [(s, F64, False) for s in STAGES]
 
@@ -78,8 +79,9 @@ FINISHED = ["bike", "car1", "car2", "car3", "walk"]
 # Iterations: mean over the five finished (360 + 244 + 247 + 250 + 1 125) / 5 = 445.2 s;
 # 5 finished, 1 unfinished, 1 without an alternative; nobody switches; at iteration 0 all six
 # with an alternative found their first, after it nothing new; each takes its set's least: gap 0.
+# `lost` is the one trip with transit open to it: no journey offered (1), no stop in reach (1).
 ITERATIONS = [
-    (k, 445.2, 5, 1, 1, 0.0, found, 0.0) for k, found in [(0, 1.0), (1, 0.0), (2, 0.0)]
+    (k, 445.2, 5, 1, 1, 1, 1, 0.0, found, 0.0) for k, found in [(0, 1.0), (1, 0.0), (2, 0.0)]
 ]
 
 

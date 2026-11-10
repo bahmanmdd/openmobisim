@@ -24,8 +24,8 @@ clock, null where there is no value:
   then bin: `link_id` (Utf8), `bin_start_s` (UInt32), `cars` (UInt32), `car_time_s`,
   `first_exit_s`, `last_exit_s` (Float64, nullable), `bikes`, `walkers` (UInt32).
 - `iterations.parquet`, one row per iteration in order: `iteration` (UInt32),
-  `mean_trip_time_s` (Float64, nullable), `finished`, `unfinished`, `without_alternative`
-  (UInt64), `switch_share`, `found_share`, `gap` (Float64, nullable), `search_s`, `choose_s`,
+  `mean_trip_time_s` (Float64, nullable), `finished`, `unfinished`, `without_alternative`,
+  `without_transit`, `without_stop` (UInt64), `switch_share`, `found_share`, `gap` (Float64, nullable), `search_s`, `choose_s`,
   `load_s`, `measure_s`, `assess_s` (Float64).
 
 Each column's meaning is the loop's (`crates/loop/README.md`) and is written beside its schema

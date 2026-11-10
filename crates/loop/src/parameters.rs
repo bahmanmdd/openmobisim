@@ -53,6 +53,9 @@ pub struct Parameters {
     pub boarding_slack: u32,
     /// The most rides a transit journey may take.
     pub max_rides: u8,
+    /// How many transit searches a trip end gets, at least 1: the first is between any stops
+    /// in reach of both ends; each further one tries the next nearest stop of the end alone.
+    pub nearby_stops: u8,
     /// The choice model.
     pub choice: ChoiceModel,
     /// The nest scale of the logit, in (0, 1]; read by [`ChoiceModel::Logit`] only.
@@ -86,6 +89,7 @@ impl Parameters {
             seed: 0,
             boarding_slack: 60,
             max_rides: 4,
+            nearby_stops: 3,
             choice: ChoiceModel::Logit,
             nest_scale: 0.5,
             coefficients: vec![Self::DEFAULT_COEFFICIENTS; classes as usize],

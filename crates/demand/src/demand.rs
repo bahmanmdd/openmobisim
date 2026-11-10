@@ -16,13 +16,9 @@
 //! node, with the walking seconds: the origin's gap, the walk from its node to the stop's node
 //! ([`crate::reach`]), and the stop's gap. A stop is kept when that whole walk, in metres at
 //! walking speed, is at most `stop_walk_max`, read to a part in a billion (1.5 µm at 1 500 m)
-//! so that the rounding of a sum of link times cannot drop a walk of exactly the limit. At an
-//! end with no stop within the limit, the list holds the one stop with the least whole walk,
-//! ties to the lower stop id, with its walking seconds ([`crate::reach::nearest_stops`]). The
-//! egress list is the same from each stop to the destination (the walk from the stop to the
-//! end, on a network that may be one-way for walkers). A list is empty only at an end from which
-//! no stop can be reached on foot; that is not an error: the trip has no transit alternative,
-//! and the ends are counted.
+//! so that the rounding of a sum of link times cannot drop a walk of exactly the limit. The
+//! egress list is the same from each stop to the destination. An empty list on either end is
+//! not an error: the trip has no transit alternative, and the ends are counted.
 //!
 //! # Identity
 //!
@@ -40,7 +36,7 @@ use rayon::prelude::*;
 
 use crate::index::NodeIndex;
 use crate::input::{DemandError, TripRow, Trips, check};
-use crate::reach::{NearStops, nearest_stops};
+use crate::reach::NearStops;
 
 /// Where a trip end or a stop joins the network: its node, and the straight line to it.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -169,13 +165,13 @@ fn link_stops(network: &Network, timetable: &Timetable) -> Result<Vec<End>, Dema
 
 /// The access and egress lists of every trip, in parallel: for a trip with transit in its set,
 /// each stop within the limit (`limit` walking seconds, `speed` m/s), by stop; empty otherwise.
-fn within_limit(
+fn lists(
     trips: &Trips,
     [origin, destination]: &[Side; 2],
     stops: &[End],
     near: &NearStops,
     (speed, limit): (f64, f64),
-) -> [Vec<Vec<(StopId, Duration)>>; 2] {
+) -> [Lists; 2] {
     let walk = |gap: f64, list: &[(StopId, f64)]| -> Vec<(StopId, Duration)> {
         list.iter()
             .filter_map(|&(stop, seconds)| {
@@ -200,44 +196,13 @@ fn within_limit(
         })
         .collect();
     let (access, egress): (Vec<_>, Vec<_>) = per_trip.into_iter().unzip();
-    [access, egress]
-}
-
-/// Give each transit end of `side` whose list is empty (no stop within `limit` walking seconds)
-/// the one stop with the least whole walk (`to_stop`: the walk from the end to the stop, an
-/// origin's; else from the stop to the end, a destination's); an end from which no stop can be
-/// reached keeps its empty list.
-fn add_nearest_beyond_limit(
-    network: &Network,
-    (side, to_stop): (&Side, bool),
-    stops: &[End],
-    lists: &mut [Vec<(StopId, Duration)>],
-    limit: f64,
-) {
-    let (mut empty, mut ends) = (Vec::new(), Vec::new());
-    for (t, list) in lists.iter().enumerate() {
-        if !list.is_empty() {
-            continue;
-        }
-        if let Some(end) = side.end(TripId::from_index(t), Mode::Transit) {
-            empty.push(t);
-            ends.push((end.node, end.gap.get()));
-        }
-    }
-    if ends.is_empty() {
-        return;
-    }
-    let stops: Vec<(NodeId, f64)> = stops.iter().map(|s| (s.node, s.gap.get())).collect();
-    let nearest = nearest_stops(network, &stops, &ends, to_stop, Duration(limit));
-    for (t, nearest) in empty.into_iter().zip(nearest) {
-        lists[t].extend(nearest);
-    }
+    [Lists::new(access), Lists::new(egress)]
 }
 
 impl Demand {
     /// The demand of `rows` over `classes` (external ids) on `network`, with the transit access
-    /// and egress lists of `timetable` (none: every transit trip is without a stop), each stop
-    /// within `stop_walk_max` metres of walk, or the nearest stop when none is.
+    /// and egress lists of `timetable` (none: every transit trip is without a stop in reach),
+    /// a walk to a stop being at most `stop_walk_max` metres.
     ///
     /// # Errors
     ///
@@ -270,11 +235,7 @@ impl Demand {
             let limit = max / speed * (1.0 + 1e-9);
             let stop_nodes: Vec<NodeId> = stop_end.iter().map(|e| e.node).collect();
             let near = NearStops::new(network, &stop_nodes, Duration(limit));
-            let [mut access, mut egress] =
-                within_limit(&trips, &sides, &stop_end, &near, (speed, limit));
-            add_nearest_beyond_limit(network, (&sides[0], true), &stop_end, &mut access, limit);
-            add_nearest_beyond_limit(network, (&sides[1], false), &stop_end, &mut egress, limit);
-            [Lists::new(access), Lists::new(egress)]
+            lists(&trips, &sides, &stop_end, &near, (speed, limit))
         };
         let [origin, destination] = sides;
         let mut demand = Self {
@@ -292,8 +253,7 @@ impl Demand {
         Ok(demand)
     }
 
-    /// Count the transit trips' ends with an empty list (no stop reachable on foot), and the
-    /// trips with either.
+    /// Count the transit trips' ends with an empty list, and the trips with either.
     fn count_ends_without_stop(&mut self) {
         for t in TripId::iter_space(self.trip_count()) {
             if !self.modes(t).contains(Mode::Transit) {
@@ -373,17 +333,15 @@ impl Demand {
         self.destination.end(trip, mode)
     }
 
-    /// A trip's access list: each stop within `stop_walk_max` of its origin, by stop, with the
-    /// walking seconds from the origin to the stop; with none within it, the one stop with the
-    /// least walk; empty without transit in its set or when no stop can be reached on foot.
+    /// A trip's access list: each stop within walking reach of its origin, by stop, with the
+    /// walking seconds from the origin to the stop; empty without transit in its set.
     #[must_use]
     pub fn access(&self, trip: TripId) -> &[(StopId, Duration)] {
         self.access.of(trip)
     }
 
-    /// A trip's egress list: each stop from which its destination is within `stop_walk_max`, by
-    /// stop, with the walking seconds from the stop to the destination; with none within it, the
-    /// one stop with the least walk; empty as [`Self::access`].
+    /// A trip's egress list: each stop from which its destination is within walking reach, by
+    /// stop, with the walking seconds from the stop to the destination.
     #[must_use]
     pub fn egress(&self, trip: TripId) -> &[(StopId, Duration)] {
         self.egress.of(trip)
@@ -403,15 +361,13 @@ impl Demand {
         self.stop_end[stop.index()]
     }
 
-    /// How many trips with transit in their set have an origin from which no stop can be
-    /// reached on foot (an empty access list).
+    /// How many trips with transit in their set have no stop in reach of their origin.
     #[must_use]
     pub fn origins_without_stop(&self) -> u32 {
         self.origins_without_stop
     }
 
-    /// How many trips with transit in their set have a destination no stop can be reached from
-    /// on foot (an empty egress list).
+    /// How many trips with transit in their set have no stop in reach of their destination.
     #[must_use]
     pub fn destinations_without_stop(&self) -> u32 {
         self.destinations_without_stop

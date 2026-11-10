@@ -7,6 +7,8 @@
 //! | `finished` | UInt64 | no | trips that arrived before the window's end |
 //! | `unfinished` | UInt64 | no | trips with an alternative still travelling at the window's end |
 //! | `without_alternative` | UInt64 | no | trips with no alternative in any mode open to them |
+//! | `without_transit` | UInt64 | no | trips with transit open to them and no journey offered |
+//! | `without_stop` | UInt64 | no | of those, trips with no stop within `stop_walk_max` of their origin or of their destination (a larger `stop_walk_max` reaches more of them) |
 //! | `switch_share` | Float64 | yes | the share of trips with an alternative that changed it in this iteration's choice; null when no trip has one |
 //! | `found_share` | Float64 | yes | the share of trips with an alternative whose search found one cheaper than their set's cheapest; null likewise |
 //! | `gap` | Float64 | yes | the relative duality gap, Σ (chosen − least) / Σ least; null when no trip has an alternative or the least costs sum to 0 |
@@ -36,6 +38,8 @@ pub(crate) fn batch(rows: &[Iteration]) -> Result<RecordBatch, WriteError> {
         Field::new("finished", DataType::UInt64, false),
         Field::new("unfinished", DataType::UInt64, false),
         Field::new("without_alternative", DataType::UInt64, false),
+        Field::new("without_transit", DataType::UInt64, false),
+        Field::new("without_stop", DataType::UInt64, false),
         Field::new("switch_share", DataType::Float64, true),
         Field::new("found_share", DataType::Float64, true),
         Field::new("gap", DataType::Float64, true),
@@ -46,6 +50,8 @@ pub(crate) fn batch(rows: &[Iteration]) -> Result<RecordBatch, WriteError> {
         count(|r| r.finished),
         count(|r| r.unfinished),
         count(|r| r.without_alternative),
+        count(|r| r.without_transit),
+        count(|r| r.without_stop),
         nullable(|r| r.switch_share),
         nullable(|r| r.found_share),
         nullable(|r| r.gap),

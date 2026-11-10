@@ -1,4 +1,4 @@
-"""Test 2's expected access and egress lists, from networkx: Dijkstra plus the gaps.
+"""Test 2's expected access and egress lists, from networkx: bounded Dijkstra plus the gaps.
 
 Kept for reproducibility; it does not run in CI. Standard library and networkx only:
 
@@ -12,11 +12,8 @@ nearest walk node by a scan of every node (ties to the lower name, which is the 
 gap is the straight line to it. A trip's access list: each stop whose walk, origin gap plus
 networkx's shortest walk by length from the origin's node to the stop's node
 (single_source_dijkstra with a cutoff) plus the stop's gap, is at most 600 m; the egress list
-the same from each stop's node to the destination's (on the reversed graph). An end with no
-stop within 600 m gets the one stop with the least whole walk (networkx's unbounded
-single_source_dijkstra), ties to the lower name; every stop can be reached from every end here,
-so no list is empty. No walk is within 0.01 m of 600 m, and no nearest stop beyond it within
-0.01 m of the next (checked), so the lists do not hang on rounding.
+the same from each stop's node to the destination's (on the reversed graph). No walk is within
+0.01 m of 600 m (checked), so the lists do not hang on rounding.
 Output, one record per line:
     node ID X Y                        (metres, repr)
     link ID FROM TO LENGTH MODES       (metres; MODES cbw or cb)
@@ -74,7 +71,7 @@ def main():
     lines = [f"node {k} {x!r} {y!r}" for k, (x, y) in sorted(pos.items())]
     lines += [f"link {i} {u} {v} {ln!r} {m}" for i, (u, v, ln, m) in enumerate(links)]
     lines += [f"stop {s} {p[0]!r} {p[1]!r} {node} {gap!r}" for s, p, node, gap in stops]
-    lists, beyond, one_way_matters = [], [], False
+    lists, one_way_matters = [], False
     for t in range(TRIPS):
         o, d = point(-50.0, 1950.0), point(-50.0, 1950.0)
         (og, on), (dg, dn) = nearest(pos, walk_nodes, o), nearest(pos, walk_nodes, d)
@@ -85,26 +82,20 @@ def main():
             near = nx.single_source_dijkstra_path_length(
                 graph, node, cutoff=MAX - gap, weight="length"
             )
-            kept, wholes = [], []
+            kept = []
             for s, _, s_node, s_gap in stops:
                 whole = gap + every[s_node] + s_gap
                 assert abs(whole - MAX) > MARGIN, f"{trip} {kind} {s}: {whole} m, near {MAX}"
-                wholes.append((whole, s))
                 if whole <= MAX:
                     assert s_node in near
                     kept.append(f"{s}:{gap + near[s_node] + s_gap!r}")
-            beyond.append(not kept)
-            if not kept:
-                (first, s), (second, _) = sorted(wholes)[:2]
-                assert second - first > MARGIN, f"{trip} {kind}: {first} m and {second} m"
-                kept.append(f"{s}:{first!r}")
             flipped = reverse if graph is g else g
             other = nx.single_source_dijkstra_path_length(flipped, node, weight="length")
             one_way_matters |= any(other[s_node] != every[s_node] for _, _, s_node, _ in stops)
             lists.append(len(kept))
             lines.append(f"{kind} {trip} " + " ".join(kept))
     assert one_way_matters, "the one-way walk links change no walk to a stop"
-    assert sum(beyond) >= 5 and sum(n >= 2 for n in lists) >= 5, f"lists of {lists} stops"
+    assert lists.count(0) >= 5 and sum(n >= 2 for n in lists) >= 5, f"lists of {lists} stops"
     print("\n".join(lines))
 
 

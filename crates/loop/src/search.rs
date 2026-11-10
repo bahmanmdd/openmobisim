@@ -1,10 +1,12 @@
 //! Stage 1, search: the best alternative per mode open to the traveller at the current costs
-//! (for transit, at iteration 0 only, the earliest journey per number of rides), appended to
-//! the traveller's set if new.
+//! (for transit, at iteration 0 only, the earliest journey per number of rides, between any
+//! stops in reach and from and to each of the nearest few alone), appended to the traveller's
+//! set if new.
 
 use openmobisim_loading::link_times::LinkTimes;
 use openmobisim_search::search::{Query, Route, fastest_many};
 use openmobisim_transit::raptor::{self, Journey, by_rides_many};
+use openmobisim_types::ids::{StopId, TransitRunId};
 use openmobisim_types::mode::Mode;
 use openmobisim_types::units::Duration;
 use rayon::prelude::*;
@@ -48,14 +50,29 @@ fn routes_by(ctx: &Context<'_>, times: &LinkTimes, mode: Mode) -> Vec<Option<Rou
     by_trip
 }
 
+/// The `n` stops of `list` with the least walk, nearest first, ties to the lower stop id; none
+/// for a list of one stop, which the whole list's query already starts from alone.
+fn nearest(list: &[(StopId, Duration)], n: usize) -> Vec<(StopId, Duration)> {
+    if list.len() < 2 {
+        return Vec::new();
+    }
+    let mut by_walk = list.to_vec();
+    by_walk.sort_by(|a, b| a.1.get().total_cmp(&b.1.get()));
+    by_walk.truncate(n);
+    by_walk
+}
+
 /// Per trip, the journeys on the timetable by number of rides (`by_rides`: for each count of
 /// rides that reaches the door earlier than every smaller count, its earliest journey, fewest
-/// rides first); empty for a trip without transit, without a stop in reach at either end, or
-/// without a journey.
+/// rides first): those between any stops of the trip's two lists, then those from each of the
+/// `nearby_stops − 1` nearest stops of the origin alone, then those to each of the
+/// `nearby_stops − 1` nearest stops of the destination alone; a journey found before is not repeated. Empty for a
+/// trip without transit, without a stop in reach at either end, or without a journey.
 fn journeys(ctx: &Context<'_>) -> Vec<Vec<Journey>> {
     let Some(timetable) = ctx.timetable else {
         return vec![Vec::new(); ctx.trip_count()];
     };
+    let (n, max_rides) = (usize::from(ctx.parameters.nearby_stops) - 1, ctx.parameters.max_rides);
     let mut who = Vec::new();
     let mut queries = Vec::new();
     for i in 0..ctx.trip_count() {
@@ -64,31 +81,72 @@ fn journeys(ctx: &Context<'_>) -> Vec<Vec<Journey>> {
         if access.is_empty() || egress.is_empty() {
             continue;
         }
-        who.push(i);
-        queries.push(raptor::Query {
-            access: access
-                .iter()
-                .map(|&(stop, walk)| {
-                    (stop, ctx.start().saturating_add(whole(ctx.departure[i] + walk.get())))
-                })
-                .collect(),
-            egress: egress.to_vec(),
-            max_rides: ctx.parameters.max_rides,
-        });
+        let at = |&(stop, walk): &(StopId, Duration)| {
+            (stop, ctx.start().saturating_add(whole(ctx.departure[i] + walk.get())))
+        };
+        let all: Vec<_> = access.iter().map(at).collect();
+        let mut ask = |access: Vec<_>, egress: Vec<_>| {
+            who.push(i);
+            queries.push(raptor::Query { access, egress, max_rides });
+        };
+        ask(all.clone(), egress.to_vec());
+        for stop in nearest(access, n) {
+            ask(vec![at(&stop)], egress.to_vec());
+        }
+        for stop in nearest(egress, n) {
+            ask(all.clone(), vec![stop]);
+        }
     }
     let slack = Duration(f64::from(ctx.parameters.boarding_slack));
     let answers = by_rides_many(timetable, slack, &queries);
     let mut by_trip = vec![Vec::new(); ctx.trip_count()];
     for (i, answer) in who.into_iter().zip(answers) {
-        by_trip[i] = answer;
+        for journey in answer {
+            if !by_trip[i].contains(&journey) {
+                by_trip[i].push(journey);
+            }
+        }
     }
     by_trip
+}
+
+/// The legs of each journey offered to trip `i`: of the journeys that ride the same runs in the
+/// same order (they differ in the stop boarded or left at), only the cheapest for the
+/// traveller, the first found at equal cost; in the order found.
+fn journey_legs(
+    ctx: &Context<'_>,
+    times: &LinkTimes,
+    i: usize,
+    found: &[Journey],
+) -> Vec<Vec<Leg>> {
+    let access = ctx.demand.access(ctx.trip(i));
+    let mut kept: Vec<(Vec<TransitRunId>, f64, Vec<Leg>)> = Vec::new();
+    for journey in found {
+        let walk_in =
+            access.iter().find(|(s, _)| *s == journey.access.0).map_or(0.0, |w| w.1.get());
+        let legs = vec![
+            Leg::Walk(Duration(walk_in)),
+            Leg::Journey(journey.clone()),
+            Leg::Walk(journey.egress.1),
+        ];
+        let time = price(times, ctx.start(), ctx.departure[i], &legs);
+        let priced = Alternative { mode: Mode::Transit, legs, time, ln_path_size: 0.0 };
+        let cost = ctx.parameters.cost(ctx.class[i], &priced.attributes());
+        let runs: Vec<TransitRunId> = journey.rides.iter().map(|r| r.run).collect();
+        match kept.iter_mut().find(|k| k.0 == runs) {
+            Some(k) if cost < k.1 => *k = (runs, cost, priced.legs),
+            Some(_) => {}
+            None => kept.push((runs, cost, priced.legs)),
+        }
+    }
+    kept.into_iter().map(|k| k.2).collect()
 }
 
 /// What the search offers trip `i` that its `set` does not hold, in mode order: a route's
 /// three legs, or each journey's (only to a set without transit).
 fn candidates(
     ctx: &Context<'_>,
+    times: &LinkTimes,
     i: usize,
     set: &[Alternative],
     routes: &[(Mode, Vec<Option<Route>>)],
@@ -114,17 +172,8 @@ fn candidates(
         out.push((*mode, legs));
     }
     if !set.iter().any(|a| a.mode == Mode::Transit) {
-        let access = ctx.demand.access(trip);
-        for journey in &journeys[i] {
-            let walk_in =
-                access.iter().find(|(s, _)| *s == journey.access.0).map_or(0.0, |w| w.1.get());
-            let legs = vec![
-                Leg::Walk(Duration(walk_in)),
-                Leg::Journey(journey.clone()),
-                Leg::Walk(journey.egress.1),
-            ];
-            out.push((Mode::Transit, legs));
-        }
+        let legs = journey_legs(ctx, times, i, &journeys[i]);
+        out.extend(legs.into_iter().map(|legs| (Mode::Transit, legs)));
     }
     out
 }
@@ -170,7 +219,7 @@ pub(crate) fn search(
     sets.par_iter_mut()
         .enumerate()
         .map(|(i, set)| {
-            let found = candidates(ctx, i, set, &routes, &journeys);
+            let found = candidates(ctx, times, i, set, &routes, &journeys);
             offer(ctx, times, i, set, found)
         })
         .sum()

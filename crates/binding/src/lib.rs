@@ -253,6 +253,7 @@ fn parameters(given: &Given<'_>, demand: &RustDemand) -> PyResult<Parameters> {
         seed: given.get("seed", d.seed)?,
         boarding_slack: given.get("boarding_slack", d.boarding_slack)?,
         max_rides: given.get("max_rides", d.max_rides)?,
+        nearby_stops: given.get("nearby_stops", d.nearby_stops)?,
         choice,
         nest_scale: given.get("nest_scale", d.nest_scale)?,
         coefficients,

@@ -10,8 +10,8 @@
 //! and the sums of the assessment. Each case those stages branch on is asserted to occur at
 //! least once, or the comparison would compare little: every mode taken, a car slowed by a
 //! queue, a trip offered two journeys by number of rides, a journey with a footpath between two
-//! rides, and stop-list entries within `stop_walk_max` and beyond it (the nearest stop of an end
-//! with none within).
+//! rides, stop-list entries within `stop_walk_max`, a trip with no stop within it, and a trip
+//! offered journeys from two first stops (`nearby_stops` is 3).
 //!
 //! For bikes: bike routes are searched, chosen, loaded and counted on links like the other modes,
 //! and compared to the bit with them.
@@ -38,8 +38,8 @@ use openmobisim_types::mode::{Mode, ModeSet};
 use openmobisim_types::time::Second;
 use openmobisim_types::units::{Duration, Metres};
 
-/// The longest walk to or from a stop the lists hold beside others, metres: short against the
-/// grid's 2 700 m, so that ends far from both lines get their nearest stop beyond it.
+/// The longest walk to or from a stop, metres: short against the grid's 2 700 m, so that ends
+/// far from the lines have no stop and their trips are counted as without one.
 const STOP_WALK_MAX_M: f64 = 600.0;
 
 /// A 10 × 10 grid of two-way streets 300 m apart, one lane at 30 km/h and 600 veh/h, open to
@@ -182,6 +182,7 @@ fn one_run(network: &Network, demand: &Demand, timetable: &Timetable) -> Run {
         seed: 0,
         nest_scale: 0.5,
         coefficients: vec![a, b],
+        nearby_stops: 3,
         ..Parameters::defaults(2)
     };
     let window = (Second(0), Second(2 * 3_600));
@@ -240,6 +241,7 @@ fn table_bits(r: &Run) -> Vec<u64> {
     }
     for it in &r.iterations {
         out.extend([u64::from(it.iteration), it.finished, it.unfinished, it.without_alternative]);
+        out.extend([it.without_transit, it.without_stop]);
         out.extend([it.mean_trip_time, it.switch_share, it.found_share, it.gap].map(f64::to_bits));
     }
     out.push(u64::from(r.stopped_by_rule));
@@ -285,8 +287,10 @@ struct Cases {
     footpath: usize,
     /// Stop-list entries (access and egress) within `stop_walk_max`.
     within: usize,
-    /// Stop-list entries beyond it: the nearest stop of an end with none within.
-    beyond: usize,
+    /// Trips with transit open to them and no stop within it at one end, as the run counts them.
+    without_stop: u64,
+    /// Trips offered journeys that start at two stops or more.
+    first_stops: usize,
 }
 
 fn cases(network: &Network, demand: &Demand, r: &Run) -> Cases {
@@ -305,10 +309,21 @@ fn cases(network: &Network, demand: &Demand, r: &Run) -> Cases {
     let walked =
         |leg: &Leg| matches!(leg, Leg::Journey(j) if j.footpaths.iter().any(Option::is_some));
     let footpath = trips().filter(|&t| transit(t).any(|a| a.legs.iter().any(walked))).count();
-    let limit = (Metres(STOP_WALK_MAX_M) / network.walk_speed()).get();
-    let entries = || trips().flat_map(|t| [demand.access(t), demand.egress(t)]).flatten();
-    let beyond = entries().filter(|e| e.1.get() > limit).count();
-    Cases { modes, queued, by_rides, footpath, within: entries().count() - beyond, beyond }
+    let within = trips().map(|t| demand.access(t).len() + demand.egress(t).len()).sum();
+    let without_stop = r.iterations[0].without_stop;
+    let boards = |a: &openmobisim_loop::alternative::Alternative| {
+        a.legs.iter().find_map(|leg| match leg {
+            Leg::Journey(j) => Some(j.access.0),
+            _ => None,
+        })
+    };
+    let first_stops = trips()
+        .filter(|&t| {
+            let first = transit(t).next().and_then(boards);
+            transit(t).any(|a| boards(a) != first)
+        })
+        .count();
+    Cases { modes, queued, by_rides, footpath, within, without_stop, first_stops }
 }
 
 #[test]
@@ -323,7 +338,8 @@ fn the_same_tables_at_1_and_8_threads_and_over_two_runs() {
     assert!(c.queued > 0, "a car met a queue");
     assert!(c.by_rides > 0, "a trip was offered two journeys by number of rides");
     assert!(c.footpath > 0, "a trip was offered a journey with a footpath");
-    assert!(c.within > 0 && c.beyond > 0, "stop-list entries within and beyond the limit");
+    assert!(c.within > 0 && c.without_stop > 0, "stops within the limit, and a trip with none");
+    assert!(c.first_stops > 0, "a trip was offered journeys from two first stops");
     let first_difference = |a: &[u64], b: &[u64]| a.iter().zip(b).position(|(x, y)| x != y);
     for (other, what) in [(&eight, "1 and 8 threads"), (&again, "two runs")] {
         assert_eq!(one.demand.len(), other.demand.len(), "{what}: demand lengths");

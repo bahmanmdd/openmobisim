@@ -1,16 +1,15 @@
 //! Test 2, the reach and the lists against networkx (Hagberg, Schult and Swart 2008, networkx
 //! 3.7): every trip's access and egress stops and their walking seconds equal networkx's
-//! Dijkstra by length plus the two gaps, over walking speed.
+//! bounded Dijkstra by length plus the two gaps, over walking speed.
 //!
 //! The fixture `fixtures/networkx_access.txt` is written by `networkx_access.py` (beside this
 //! file, not run in CI): a 20 × 20 grid of nodes 100 m apart, each moved by up to 20 m, a link
 //! each way between neighbours whose length is the straight line rounded to 0.01 m, walking
 //! allowed one way only on 10 % of the streets; 6 stops and 25 trips (50 ends) at random points
 //! off the nodes, each linked to its nearest walk node by a full scan; per trip the stops whose
-//! whole walk (gap, network, gap) is at most 600 m, each way, with the walk's metres, or, at an
-//! end with no such stop, the one stop with the least whole walk (unbounded Dijkstra; 26 of the
-//! 50 ends). No walk is within 0.01 m of 600 m, and no nearest stop beyond it within 0.01 m of
-//! the next (checked by the script). A walker covers a metre in 1 / (4.8 / 3.6) seconds.
+//! whole walk (gap, network, gap) is at most 600 m, each way, with the walk's metres. No walk
+//! is within 0.01 m of 600 m (checked by the script). A walker covers a metre in 1 / (4.8 / 3.6)
+//! seconds.
 
 mod common;
 
@@ -100,7 +99,7 @@ fn walks(seconds: Duration, metres: f64) -> bool {
 }
 
 #[test]
-fn access_and_egress_lists_are_networkx_dijkstra_plus_the_gaps() {
+fn access_and_egress_lists_are_networkx_bounded_dijkstra_plus_the_gaps() {
     let f = read();
     assert_eq!((f.net.node_count(), f.stops.stop_count(), f.rows.len()), (400, 6, 25));
     let demand = Demand::build(&f.rows, &one_class(), &f.net, Some(&f.stops), Metres(600.0))
@@ -112,7 +111,7 @@ fn access_and_egress_lists_are_networkx_dijkstra_plus_the_gaps() {
         assert_eq!(&node(end.node), at_node, "stop {name}'s node");
         assert!((end.gap.get() - gap).abs() <= 1e-9 * gap, "stop {name}'s gap");
     }
-    let (mut empty, mut beyond, mut entries) = ([0, 0], 0, 0);
+    let (mut empty, mut entries) = ([0, 0], 0);
     for t in TripId::iter_space(demand.trip_count()) {
         let name = demand.trip_ids().external(t.raw());
         let e = &f.expected[name];
@@ -136,20 +135,16 @@ fn access_and_egress_lists_are_networkx_dijkstra_plus_the_gaps() {
                 assert!(walks(*seconds, *metres), "{what} {stop}: {seconds} s for {metres} m");
             }
             empty[side] += usize::from(lists[side].is_empty());
-            beyond += e.lists[side].iter().filter(|(_, metres)| *metres > 600.0).count();
             entries += lists[side].len();
         }
     }
     assert_eq!(
         (demand.origins_without_stop() as usize, demand.destinations_without_stop() as usize),
         (empty[0], empty[1]),
-        "the ends from which no stop can be reached, counted"
+        "the ends without a stop in reach, counted"
     );
-    // The ends with no stop within 600 m must be there, or the nearest stop beyond is untested.
-    assert!(beyond >= 5, "only {beyond} ends with no stop within 600 m");
     eprintln!(
-        "{entries} list entries equal, {beyond} of them a nearest stop beyond 600 m; ends \
-         without a stop: {} origins, {} destinations",
+        "{entries} list entries equal; ends without a stop: {} origins, {} destinations",
         empty[0], empty[1]
     );
 }

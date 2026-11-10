@@ -33,6 +33,8 @@ pub enum RunError {
     IterationCapZero,
     /// `max_rides` is zero.
     MaxRidesZero,
+    /// `nearby_stops` is zero.
+    NearbyStopsZero,
     /// The coefficients are not one row per user class.
     CoefficientRows {
         /// The demand's classes.
@@ -58,6 +60,7 @@ impl fmt::Display for RunError {
             Self::LinkBinZero => write!(f, "link_bin is zero"),
             Self::IterationCapZero => write!(f, "iteration_cap is zero"),
             Self::MaxRidesZero => write!(f, "max_rides is zero"),
+            Self::NearbyStopsZero => write!(f, "nearby_stops is zero"),
             Self::CoefficientRows { classes, rows } => {
                 write!(f, "{rows} coefficient rows for {classes} user classes")
             }
@@ -154,6 +157,9 @@ fn context<'a>(
     }
     if parameters.max_rides == 0 {
         return Err(RunError::MaxRidesZero);
+    }
+    if parameters.nearby_stops == 0 {
+        return Err(RunError::NearbyStopsZero);
     }
     if parameters.coefficients.len() != demand.class_count() as usize {
         let (classes, rows) = (demand.class_count(), parameters.coefficients.len());
