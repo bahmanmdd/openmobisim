@@ -11,4 +11,21 @@ authors.workspace = true
 [lints]
 workspace = true
 
+# The extension module `openmobisim`, built by maturin (`pyproject.toml`). Its tests are in Python
+# (`tests/`, pytest), so there is no Rust test harness to link against the interpreter.
+[lib]
+name = "openmobisim"
+crate-type = ["cdylib"]
+test = false
+doctest = false
+
 [dependencies]
+openmobisim-types = { workspace = true }
+openmobisim-graph = { workspace = true }
+openmobisim-transit = { workspace = true }
+openmobisim-demand = { workspace = true }
+openmobisim-loop = { workspace = true }
+openmobisim-io-osm = { workspace = true }
+openmobisim-io-gtfs = { workspace = true }
+openmobisim-io-parquet = { workspace = true }
+pyo3 = { workspace = true }
