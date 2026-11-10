@@ -1,6 +1,6 @@
 # The tools that build the manual, at the versions it was last built and checked with.
 sphinx==9.1.0
-pydata-sphinx-theme==0.23.0
+pydata-sphinx-theme==0.24.0
 myst-parser==5.1.0
 myst-nb==1.4.0
 sphinx-autoapi==3.8.1
