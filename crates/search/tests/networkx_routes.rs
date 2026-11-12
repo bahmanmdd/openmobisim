@@ -16,7 +16,7 @@ use openmobisim_graph::network::{LinkRow, Network, NetworkBuilder};
 use openmobisim_search::search::{Query, Route, Search};
 use openmobisim_types::ids::{EntityId, NodeId};
 use openmobisim_types::mode::Mode;
-use openmobisim_types::time::Second;
+use openmobisim_types::units::Duration;
 
 const FIXTURE: &str = include_str!("fixtures/networkx_routes.txt");
 
@@ -80,7 +80,8 @@ fn bike_walk_and_free_flow_car_routes_are_networkx_shortest_paths() {
     let id = |s: &str| net.node_ids().typed_id_of::<NodeId>(s).expect("a fixture node");
     for p in &pairs {
         let (origin, destination) = (id(&p.origin), id(&p.destination));
-        let ask = |mode| Query { origin, destination, mode, departure: Second(DEPARTURE) };
+        let departure = Duration(f64::from(DEPARTURE));
+        let ask = |mode| Query { origin, destination, mode, departure, trip: None };
         let bike = search.fastest(&ask(Mode::Bike)).expect("the grid is connected");
         let walk = search.fastest(&ask(Mode::Walk)).expect("the grid is connected");
         let car = search.fastest(&ask(Mode::Car)).expect("the grid is connected");

@@ -40,7 +40,8 @@ pub enum ChoiceModel {
 /// The loop's parameters. The defaults are the rulings's; see `PARAMETERS.md` for the sources.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Parameters {
-    /// The length of a bin of the links table and of the link-time reading, seconds.
+    /// The length of a bin of the links table, seconds. The link-time reading does not depend
+    /// on it.
     pub link_bin: u32,
     /// The most iterations a run does, counting iteration 0.
     pub iteration_cap: u32,

@@ -9,8 +9,9 @@
 //! | `without_alternative` | UInt64 | no | trips with no alternative in any mode open to them |
 //! | `without_transit` | UInt64 | no | trips with transit open to them and no journey offered |
 //! | `without_stop` | UInt64 | no | of those, trips with no stop within `stop_walk_max` of their origin or of their destination (a larger `stop_walk_max` reaches more of them) |
+//! | `offered_share` | Float64 | yes | the share of trips with an alternative that were offered a new choice in this iteration's choice (1 at iteration 0, where everyone chooses); null when no trip has one |
 //! | `switch_share` | Float64 | yes | the share of trips with an alternative that changed it in this iteration's choice; null when no trip has one |
-//! | `found_share` | Float64 | yes | the share of trips with an alternative whose search found one cheaper than their set's cheapest; null likewise |
+//! | `found_share` | Float64 | yes | the share of trips with an alternative whose search found one cheaper than every alternative of its mode in their set; null likewise |
 //! | `gap` | Float64 | yes | the relative duality gap, Σ (chosen − least) / Σ least; null when no trip has an alternative or the least costs sum to 0 |
 //! | `search_s`, `choose_s`, `load_s`, `measure_s`, `assess_s` | Float64 | no | the seconds each stage took, wall clock |
 
@@ -40,6 +41,7 @@ pub(crate) fn batch(rows: &[Iteration]) -> Result<RecordBatch, WriteError> {
         Field::new("without_alternative", DataType::UInt64, false),
         Field::new("without_transit", DataType::UInt64, false),
         Field::new("without_stop", DataType::UInt64, false),
+        Field::new("offered_share", DataType::Float64, true),
         Field::new("switch_share", DataType::Float64, true),
         Field::new("found_share", DataType::Float64, true),
         Field::new("gap", DataType::Float64, true),
@@ -52,6 +54,7 @@ pub(crate) fn batch(rows: &[Iteration]) -> Result<RecordBatch, WriteError> {
         count(|r| r.without_alternative),
         count(|r| r.without_transit),
         count(|r| r.without_stop),
+        nullable(|r| r.offered_share),
         nullable(|r| r.switch_share),
         nullable(|r| r.found_share),
         nullable(|r| r.gap),

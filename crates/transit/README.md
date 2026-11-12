@@ -1,7 +1,12 @@
 # openmobisim-transit
 
 The timetable of one service day and the earliest-arrival journey over it, by RAPTOR (Delling,
-Pajor and Werneck 2015), and the earliest journey per number of rides. Depends on `openmobisim-types` and `rayon`, nothing else. It knows
+Pajor and Werneck 2015), the earliest journey per number of rides, and the cheapest journey per
+number of rides for a cost linear in a journey's parts (`cheapest::Cheapest::by_rides`: the
+rounds of RAPTOR with a set of labels, arrival and cost, per stop; its module documentation
+gives the cost, when a label makes another useless and why every catchable run is boarded;
+tested against an exhaustive enumeration on 300 random timetables, 12 000 questions, and by
+hand). Depends on `openmobisim-types` and `rayon`, nothing else. It knows
 stops by position only: linking stops to the walk network, and choosing which stops are within
 reach of a trip's ends, is the caller's; the access and egress lists arrive already chosen.
 

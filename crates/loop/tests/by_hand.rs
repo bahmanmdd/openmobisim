@@ -76,13 +76,13 @@ fn a_bike_rides_1500_m_in_360_s_and_a_walker_walks_it_in_1125_s() {
 }
 
 #[test]
-fn gaps_of_30_m_are_walked_in_22_5_s_each_and_the_ride_starts_on_the_whole_second() {
-    // Door to node 22.5 s; the bike departs at 23 s, rides 360 s, walks 22.5 s: 405.5 s.
+fn gaps_of_30_m_are_walked_in_22_5_s_each_and_the_ride_starts_when_the_walk_ends() {
+    // Door to node 22.5 s; the bike departs at 22.5 s, rides 360 s, walks 22.5 s: 405 s.
     let net = two_nodes();
     let dem = demand(&net, &[trip(30.0, &[Mode::Bike])]);
     let r = run(&net, &dem, None, WINDOW, &time_only(1)).expect("a run");
-    assert!((r.trips.travel_time[0] - 405.5).abs() < 1e-9, "{}", r.trips.travel_time[0]);
-    assert!((r.trips.arrival[0] - 405.5).abs() < 1e-9);
+    assert!((r.trips.travel_time[0] - 405.0).abs() < 1e-9, "{}", r.trips.travel_time[0]);
+    assert!((r.trips.arrival[0] - 405.0).abs() < 1e-9);
 }
 
 #[test]
@@ -146,8 +146,8 @@ fn transit_by_hand_walk_22_5_s_wait_ride_to_900_walk_22_5_s_arrives_at_922_5_s()
     let r = run(&net, &dem, Some(&tt), WINDOW, &time_only(2)).expect("a run");
     let set = r.set(TripId::new(0));
     assert_eq!(set.iter().map(|a| a.mode).collect::<Vec<_>>(), [Mode::Walk, Mode::Transit]);
-    // The walk: 22.5 s, 1 125 s from second 23, 22.5 s: 1 170.5 s. Transit: 922.5 s.
-    assert!((set[0].time - 1_170.5).abs() < 1e-9, "walk {}", set[0].time);
+    // The walk: 22.5 s, 1 125 s from 22.5 s on, 22.5 s: 1 170 s. Transit: 922.5 s.
+    assert!((set[0].time - 1_170.0).abs() < 1e-9, "walk {}", set[0].time);
     assert!((set[1].time - 922.5).abs() < 1e-9, "transit {}", set[1].time);
     assert_eq!(r.trips.mode[0], Some(Mode::Transit));
     assert!((r.trips.travel_time[0] - 922.5).abs() < 1e-9);
@@ -285,6 +285,7 @@ fn row(mean: f64, found: f64) -> Iteration {
         without_alternative: 0,
         without_transit: 0,
         without_stop: 0,
+        offered_share: 1.0,
         switch_share: 0.0,
         found_share: found,
         gap: 0.0,

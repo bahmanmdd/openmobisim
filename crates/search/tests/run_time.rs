@@ -12,7 +12,7 @@ use std::time::Instant;
 use common::{Draws, grid, grid_node, l_route_cars, loaded, window};
 use openmobisim_search::search::{Query, fastest_many};
 use openmobisim_types::mode::Mode;
-use openmobisim_types::time::Second;
+use openmobisim_types::units::Duration;
 use rayon::ThreadPoolBuilder;
 
 #[test]
@@ -34,7 +34,8 @@ fn ten_thousand_queries_on_a_loaded_100_by_100_grid() {
             origin: grid_node(&net, draws.below(n), draws.below(n)),
             destination: grid_node(&net, draws.below(n), draws.below(n)),
             mode: Mode::Car,
-            departure: Second(draws.below(5_400)),
+            departure: Duration(f64::from(draws.below(5_400))),
+            trip: None,
         })
         .collect();
     let mut answers = Vec::new();

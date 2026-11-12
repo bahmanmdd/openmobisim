@@ -1,5 +1,7 @@
-//! Stage 2, choose: the choice model over each traveller's set; the method of successive
-//! averages decides who re-chooses.
+//! Stage 2, choose: the choice model over each traveller's set; who is offered a new choice is
+//! decided by the step of the method of successive averages, raised to the share of its cost a
+//! traveller would save on its best alternative of the same mode when that share is above a
+//! band.
 
 use openmobisim_choice::cost::{ChoiceError, Coefficients, Row, Traveller};
 use openmobisim_choice::model::{Choice, Deterministic, Logit};
@@ -71,9 +73,45 @@ fn choice(
     Ok(u32::try_from(j).unwrap_or(u32::MAX))
 }
 
-/// The choose stage: at iteration 0 every traveller chooses; after it a traveller re-chooses
-/// with probability `1 / (iteration + 1)`, drawn from [`Stream::MsaReselection`] at (trip,
-/// iteration), and the others keep their alternative. Returns how many changed alternative.
+/// The band of indifference: a traveller whose best alternative of the same mode would save a
+/// share of the cost of the one it holds at or below this is offered a new choice only with the
+/// plain step of the method of successive averages (Mahmassani and Chang 1987). A fixed
+/// constant of the rule, not a parameter of a run.
+const BAND: f64 = 0.2;
+
+/// The chance that trip `i`, holding the alternative at `held` of `set`, is offered a new choice
+/// at `iteration`: `max(1 / (iteration + 1), s)`. The first term is the step of the plain method
+/// of successive averages. The second is after Smith's proportional switching (1984), in its
+/// spirit rather than his process: `s = r` when `r > BAND`, else 0, with `r = (c - b) / c`, `c`
+/// the cost of the alternative it holds and `b` the least cost among the alternatives of its
+/// set of the same mode as the one it holds, as the choice that follows reads them (systematic
+/// costs: the times of the last measure, the path sizes of the set as it now is). `s` is 0 when
+/// `c` is not positive, and never above 1 (`r` passes 1 only when `b` is negative). No other
+/// traveller's costs enter. Only the mode held enters `b`, but an offered traveller chooses over
+/// its whole set, its mode included, so one above the band reconsiders its mode at the rate `r`
+/// too. Under the logit a traveller holding by taste an alternative more than the band dearer
+/// than the cheapest of its mode is offered at `r` at every iteration. `r` is the same in any
+/// unit of cost but shrinks when a constant is added to every cost.
+fn chance(ctx: &Context<'_>, i: usize, set: &[Alternative], held: u32, iteration: u32) -> f64 {
+    let cost = |a: &Alternative| ctx.parameters.cost(ctx.class[i], &a.attributes());
+    let taken = &set[held as usize];
+    let c = cost(taken);
+    let b = set.iter().filter(|a| a.mode == taken.mode).map(cost).fold(f64::INFINITY, f64::min);
+    let r = if c > 0.0 { (c - b) / c } else { 0.0 };
+    let s = if r > BAND { r.min(1.0) } else { 0.0 };
+    (1.0 / f64::from(iteration + 1)).max(s)
+}
+
+/// A trip's outcome of the choose stage: the alternative it holds after it, whether it was
+/// offered a new choice, whether it changed alternative.
+type Outcome = (Option<u32>, bool, bool);
+
+/// The choose stage: a traveller holding nothing (everyone at iteration 0) chooses. After it a
+/// traveller is offered a new choice with the probability of [`chance`], drawn from
+/// [`Stream::MsaReselection`] at (trip, iteration); one that is offered takes the model's
+/// choice over its whole set, its mode included, whatever it held; the others keep their
+/// alternative. Returns how many changed alternative and how many were offered a new choice
+/// (a traveller holding nothing counts as offered: everyone at iteration 0).
 ///
 /// # Errors
 ///
@@ -84,31 +122,36 @@ pub(crate) fn choose(
     sets: &[Vec<Alternative>],
     chosen: &mut [Option<u32>],
     iteration: u32,
-) -> Result<u64, ChoiceError> {
+) -> Result<(u64, u64), ChoiceError> {
     let msa = StreamRng::new(RngKey::new(ctx.parameters.seed), Stream::MsaReselection);
-    let p = 1.0 / f64::from(iteration + 1);
-    let outcome: Vec<Result<(Option<u32>, bool), ChoiceError>> = (0..sets.len())
+    let outcome: Vec<Result<Outcome, ChoiceError>> = (0..sets.len())
         .into_par_iter()
         .map(|i| {
             let (set, before) = (&sets[i], chosen[i]);
             if set.is_empty() {
-                return Ok((None, false));
+                return Ok((None, false, false));
             }
-            let again = iteration == 0
-                || before.is_none()
-                || msa.block(DrawAddress::from_pair(ctx.trip(i).raw(), iteration)).bernoulli(0, p);
+            let again = match before {
+                None => true,
+                Some(held) => {
+                    let p = chance(ctx, i, set, held, iteration);
+                    let address = DrawAddress::from_pair(ctx.trip(i).raw(), iteration);
+                    msa.block(address).bernoulli(0, p)
+                }
+            };
             if !again {
-                return Ok((before, false));
+                return Ok((before, false, false));
             }
             let now = choice(ctx, model, i, set)?;
-            Ok((Some(now), before.is_some_and(|b| b != now)))
+            Ok((Some(now), true, before.is_some_and(|b| b != now)))
         })
         .collect();
-    let mut switches = 0;
+    let (mut switches, mut offered) = (0, 0);
     for (slot, result) in chosen.iter_mut().zip(outcome) {
-        let (now, switched) = result?;
+        let (now, again, switched) = result?;
         *slot = now;
+        offered += u64::from(again);
         switches += u64::from(switched);
     }
-    Ok(switches)
+    Ok((switches, offered))
 }

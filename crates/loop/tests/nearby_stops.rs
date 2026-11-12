@@ -1,6 +1,8 @@
 //! `nearby_stops` by hand: the journeys from and to the nearest stops tried alone. At 1 a trip
-//! gets the one search between any stops in reach; at 2 the nearest stop of each end is also
-//! tried alone.
+//! gets the searches between any stops in reach, the earliest journey and the cheapest for its
+//! class; at 2 the nearest stop of each end is also tried alone for the earliest. With time as
+//! the only cost the cheapest is the earliest, so the parameter's own effect shows there; with
+//! the default coefficients the cheapest search already finds what the nearest stop offers.
 //!
 //! A walker covers a metre in 0.75 s (4.8 km/h). The boarding slack is the default 60 s. Costs
 //! with the default coefficients: 0.165 per minute walked, 0.145 per minute waited, 0.1 per
@@ -105,11 +107,14 @@ fn the_nearest_stop_tried_alone_offers_a_later_journey_with_675_s_less_walking()
         &[&[("B", 1_000), ("C", 1_300)], &[("A", 800), ("C", 1_400)]],
     );
     let ends = (0.0, 5_000.0);
-    // nearby_stops 1: the earliest journey alone, whatever the coefficients.
+    // nearby_stops 1, time alone: the earliest journey, which is also the cheapest.
     let none = one_trip(&net, &tt, ends, &Parameters { nearby_stops: 1, ..time_only(1) });
     assert_eq!(times(&none), [1_300.0]);
+    // nearby_stops 1, the default coefficients: the earliest, and the cheapest between any
+    // stops, which is r1 from A (3.20833 against 3.41667, derived below): taken.
     let none = one_trip(&net, &tt, ends, &Parameters { nearby_stops: 1, ..weighted() });
-    assert_eq!(times(&none), [1_300.0]);
+    assert_eq!(times(&none), [1_300.0, 1_400.0]);
+    assert!((none.trips.travel_time[0] - 1_400.0).abs() < 1e-9, "the cheaper is taken");
     // nearby_stops 2, time alone: both offered, the earlier taken.
     let timed = one_trip(&net, &tt, ends, &Parameters { nearby_stops: 2, ..time_only(1) });
     assert_eq!(times(&timed), [1_300.0, 1_400.0]);
@@ -148,7 +153,17 @@ fn of_two_journeys_on_the_same_run_only_the_cheaper_for_the_traveller_is_offered
     assert_eq!(times(&w), [1_625.0]);
     let by_hand = 1.45 + 950.0 * 0.1 / 60.0 + 0.206_25 + 0.25;
     assert!((w.trips.cost[0] - by_hand).abs() < 1e-9, "{} against {by_hand}", w.trips.cost[0]);
-    // nearby_stops 1: D alone is never asked, so the earliest, off at C, is the one offered.
-    let none = one_trip(&net, &tt, ends, &Parameters { nearby_stops: 1, ..weighted() });
+    // nearby_stops 1, time alone: D alone is never asked, and off at C is the earliest and the
+    // cheapest.
+    let none = one_trip(&net, &tt, ends, &Parameters { nearby_stops: 1, ..time_only(1) });
     assert_eq!(times(&none), [1_600.0]);
+    // nearby_stops 1, the default coefficients: the cheapest between any stops is off at D
+    // (3.48958 against 3.69167), on the same run as the earliest: the one offered.
+    let none = one_trip(&net, &tt, ends, &Parameters { nearby_stops: 1, ..weighted() });
+    assert_eq!(times(&none), [1_625.0]);
+    assert!(
+        (none.trips.cost[0] - by_hand).abs() < 1e-9,
+        "{} against {by_hand}",
+        none.trips.cost[0]
+    );
 }

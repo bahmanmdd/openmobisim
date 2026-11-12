@@ -135,7 +135,8 @@ fn reach_arrives_at_every_node_when_fastest_does_on_a_loaded_grid() {
         let reached = search.reach(origin, mode, departure, Duration(240.0));
         assert!(reached.iter().any(|&(node, _)| node == origin), "the origin is reached");
         for &(node, arrival) in &reached {
-            let q = Query { origin, destination: node, mode, departure };
+            let departure = Duration(f64::from(departure.get()));
+            let q = Query { origin, destination: node, mode, departure, trip: None };
             let route = search.fastest(&q).expect("reached, so reachable");
             assert_eq!(
                 arrival.get().to_bits(),

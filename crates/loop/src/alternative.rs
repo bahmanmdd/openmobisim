@@ -4,15 +4,14 @@
 use std::collections::HashMap;
 
 use openmobisim_graph::network::Network;
-use openmobisim_loading::link_times::LinkTimes;
+use openmobisim_loading::link_times::{LinkTimes, Reader};
 use openmobisim_transit::raptor::Journey;
-use openmobisim_types::ids::LinkId;
+use openmobisim_types::ids::{LinkId, TripId};
 use openmobisim_types::mode::Mode;
 use openmobisim_types::time::Second;
 use openmobisim_types::units::Duration;
 
 use crate::parameters::{LN_PS, N};
-use crate::whole;
 
 /// A leg: one mode between two places.
 #[derive(Clone, Debug, PartialEq)]
@@ -111,20 +110,18 @@ impl Alternative {
 }
 
 /// The door-to-door seconds of `legs` for a traveller leaving `departure` seconds after the
-/// window's `start`: a walk adds its seconds; a route leg is entered on the whole second it is
-/// reached (as the loading departs it) and takes the reading's time; a journey leg ends when
-/// its last ride arrives.
+/// window's `start`, read as the traveller of `trip`: a walk adds its seconds; a route leg is
+/// entered at the instant it is reached (as the loading departs it) and takes the reading's
+/// time for that traveller; a journey leg ends when its last ride arrives.
 #[must_use]
-pub fn price(times: &LinkTimes, start: Second, departure: f64, legs: &[Leg]) -> f64 {
+pub fn price(times: &LinkTimes, start: Second, departure: f64, legs: &[Leg], trip: TripId) -> f64 {
     let mut t = departure;
     for leg in legs {
         match leg {
             Leg::Walk(d) => t += d.get(),
             Leg::Route { links, .. } if links.is_empty() => {}
             Leg::Route { mode, links } => {
-                let at = whole(t);
-                let second = start.saturating_add(at);
-                t = f64::from(at) + times.route_time(links, *mode, second).get();
+                t += times.route_time(links, *mode, Duration(t), Reader::of(trip)).get();
             }
             Leg::Journey(j) => {
                 let alight = j.rides.last().map_or(start, |r| r.alight.1);

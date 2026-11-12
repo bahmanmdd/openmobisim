@@ -16,16 +16,22 @@
 //! # What a row holds
 //!
 //! - **Cars:** how many entered, the sum of their crossing times (exit minus entry), and the
-//!   first and the last car to enter (each its entry and exit), what the first-in-first-out
-//!   reading ([`crate::link_times::LinkTimes`]) draws its straight lines through. Of two cars
-//!   entering at the same instant, the one with the lower trip id entered first.
+//!   first and the last car to enter (each its entry and exit). Of two cars entering at the
+//!   same instant, the one with the lower trip id entered first.
 //! - **Bikes and walkers:** how many of each entered. Their time is their free-flow time by
 //!   definition, so it is not recorded.
 //!
 //! A row nobody entered by car has 0 cars, a time sum of 0 and NaN for the four entrant
 //! instants (there is no such car).
+//!
+//! # Every car's crossing, for the reading
+//!
+//! Beside the rows the table keeps, per link, every car that entered it: its entry, its exit
+//! and its trip, in the order they entered. The rows are a summary by bin for the reader of a
+//! run; the reading ([`crate::link_times::LinkTimes`]) reads the crossings, so what a link
+//! costs at an instant does not depend on where the bins fall. 20 bytes per crossing.
 
-use openmobisim_types::ids::{EntityId, LinkId};
+use openmobisim_types::ids::{EntityId, LinkId, TripId};
 use openmobisim_types::mode::Mode;
 use openmobisim_types::time::{StepGrid, StepIndex};
 use openmobisim_types::units::Duration;
@@ -46,9 +52,24 @@ pub struct LinkBins {
     last_exit: Vec<Duration>,
     bikes: Vec<u32>,
     walkers: Vec<u32>,
+    /// Per link, its car crossings are `crossing_entry[crossing_start[l]..crossing_start[l + 1]]`,
+    /// `crossing_exit[..]` and `crossing_trip[..]` alike, in the order the cars entered the link.
+    crossing_start: Vec<u32>,
+    crossing_entry: Vec<f64>,
+    crossing_exit: Vec<f64>,
+    crossing_trip: Vec<TripId>,
 }
 
 impl LinkBins {
+    /// Every car crossing: per link the offsets, then the entries and the exits, in seconds
+    /// since the window's start, and the trips, in the order the cars entered each link. Link
+    /// `l`'s crossings are `entries[offsets[l]..offsets[l + 1]]`, the exits and trips alike;
+    /// the offsets are empty in a table no loading filled.
+    #[must_use]
+    pub fn crossings(&self) -> (&[u32], &[f64], &[f64], &[TripId]) {
+        (&self.crossing_start, &self.crossing_entry, &self.crossing_exit, &self.crossing_trip)
+    }
+
     /// The window the bins divide: a bin is one of its steps.
     #[must_use]
     pub fn window(&self) -> StepGrid {
@@ -143,6 +164,10 @@ impl LinkBins {
             last_exit: Vec::new(),
             bikes: Vec::new(),
             walkers: Vec::new(),
+            crossing_start: Vec::new(),
+            crossing_entry: Vec::new(),
+            crossing_exit: Vec::new(),
+            crossing_trip: Vec::new(),
         }
     }
 
@@ -187,6 +212,8 @@ pub(crate) struct Recorder {
     /// Per link, the place of its latest car row in `car_rows` ([`NO_ROW`]: none yet).
     current: Vec<u32>,
     car_rows: Vec<CarRow>,
+    /// One `(link, entry, exit, trip)` per car crossing, in the order fed.
+    crossings: Vec<(u32, f64, f64, TripId)>,
     /// One `(link, bin, walker?)` per bike or walker crossing, counted when finished.
     active: Vec<(u32, u32, bool)>,
 }
@@ -199,6 +226,7 @@ impl Recorder {
             step: f64::from(window.step_seconds()),
             current: vec![NO_ROW; link_count as usize],
             car_rows: Vec::new(),
+            crossings: Vec::new(),
             active: Vec::new(),
         }
     }
@@ -216,11 +244,12 @@ impl Recorder {
         bin
     }
 
-    /// A car entered `link` at `entry` and leaves it at `exit` (seconds since the window's
-    /// start). Calls for one link come in the order the cars enter it.
-    pub(crate) fn car(&mut self, link: LinkId, entry: f64, exit: f64) {
+    /// The car of `trip` entered `link` at `entry` and leaves it at `exit` (seconds since the
+    /// window's start). Calls for one link come in the order the cars enter it.
+    pub(crate) fn car(&mut self, link: LinkId, entry: f64, exit: f64, trip: TripId) {
         let bin = self.bin_of(entry);
         let l = link.index();
+        self.crossings.push((link.raw(), entry, exit, trip));
         let at = self.current[l];
         if at != NO_ROW && self.car_rows[at as usize].bin == bin {
             let row = &mut self.car_rows[at as usize];
@@ -303,6 +332,25 @@ impl Recorder {
             }
             out.push(key.0, key.1, car, bikes, walkers);
         }
+        // The crossings by link in one counting pass, each link's in the order they were fed.
+        let mut start = vec![0_u32; self.current.len() + 1];
+        for &(l, ..) in &self.crossings {
+            start[l as usize + 1] += 1;
+        }
+        for l in 0..self.current.len() {
+            start[l + 1] = start[l].checked_add(start[l + 1]).expect("fewer than 2^32 crossings");
+        }
+        let mut next = start.clone();
+        out.crossing_entry = vec![0.0; self.crossings.len()];
+        out.crossing_exit = vec![0.0; self.crossings.len()];
+        out.crossing_trip = vec![TripId::NULL; self.crossings.len()];
+        for &(l, entry, exit, trip) in &self.crossings {
+            let at = next[l as usize] as usize;
+            next[l as usize] += 1;
+            (out.crossing_entry[at], out.crossing_exit[at]) = (entry, exit);
+            out.crossing_trip[at] = trip;
+        }
+        out.crossing_start = start;
         out
     }
 }

@@ -354,6 +354,10 @@ impl Timetable {
         });
         self.pattern_stops.extend_from_slice(stops);
         self.pattern_runs.extend(list.iter().map(|&r| TransitRunId::from_index(r)));
+        #[allow(
+            clippy::needless_range_loop,
+            reason = "the position indexes every run of the list in turn, not one slice"
+        )]
         for pos in 0..stops.len() {
             for &r in list {
                 let (a, d) = runs[r].1[pos];

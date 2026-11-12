@@ -13,7 +13,8 @@ pub mod parameters;
 pub mod run;
 pub mod search;
 
-/// The whole second at or after `t`, a count of seconds at or above zero.
+/// The whole second at or after `t`, a count of seconds at or above zero: the second of the
+/// timetable a traveller is at a stop on. Route legs are entered at their exact instant.
 #[allow(
     clippy::cast_possible_truncation,
     clippy::cast_sign_loss,

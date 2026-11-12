@@ -9,11 +9,11 @@ use common::{
     VALUES, car_link, close, cycle_path, line, link, row, two_nodes, vehicle, whole_line, window,
 };
 use openmobisim_graph::network::LinkRow;
-use openmobisim_loading::link_times::LinkTimes;
+use openmobisim_loading::link_times::{LinkTimes, Reader};
 use openmobisim_loading::point_queue::{Loading, load};
 use openmobisim_types::ids::EntityId;
 use openmobisim_types::mode::Mode;
-use openmobisim_types::time::Second;
+use openmobisim_types::units::Duration;
 
 /// A row for every link mode, `length_m` long.
 fn street(length_m: f64) -> LinkRow {
@@ -28,7 +28,12 @@ fn a_bike_rides_1500_m_at_15_km_h_in_360_s() {
     let run = load(&net, &[vehicle(0, Mode::Bike, &[link(0)], 30)], window(300, 3_600)).unwrap();
     let loaded = run.finished.travel_time(0).get();
     assert!(close(loaded, 360.0), "{loaded} s");
-    let read = LinkTimes::new(&net, &run.links).route_time(&[link(0)], Mode::Bike, Second(30));
+    let read = LinkTimes::new(&net, &run.links).route_time(
+        &[link(0)],
+        Mode::Bike,
+        Duration(30.0),
+        Reader::stranger(),
+    );
     assert_eq!(read.get().to_bits(), loaded.to_bits());
 }
 

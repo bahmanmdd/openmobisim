@@ -3,8 +3,10 @@
 //!
 //! # How
 //!
-//! [`NodeIndex::new`] keeps the nodes with an out-link or an in-link that allows the mode and
-//! files them by cell: the cells are squares sized for about two nodes each over the nodes'
+//! [`NodeIndex::new`] keeps the nodes with a link that allows the mode in the direction its
+//! [`Joins`] asks for: either (out or in), out (a trip can leave the node) or in (a trip can
+//! arrive at it). It files them by cell: the cells are squares sized for about two nodes each
+//! over the nodes'
 //! bounding box (at most about four million cells), the nodes of a cell in id order. A query
 //! looks at the point's cell (the nearest cell of the grid when the point is outside it), then
 //! at the ring of cells around those already seen, ring after ring, and stops as soon as the
@@ -29,6 +31,18 @@ use openmobisim_graph::network::Network;
 use openmobisim_types::ids::{EntityId, LinkId, NodeId};
 use openmobisim_types::mode::Mode;
 
+/// Which nodes an index keeps: the direction in which a node must have a link that allows the
+/// mode.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Joins {
+    /// An out-link or an in-link: the node is on the mode's network.
+    Either,
+    /// An out-link: something can leave the node.
+    Out,
+    /// An in-link: something can arrive at the node.
+    In,
+}
+
 /// The nodes a mode may use, filed by cell (see the module documentation).
 #[derive(Clone, Debug)]
 pub struct NodeIndex {
@@ -47,12 +61,20 @@ pub struct NodeIndex {
 }
 
 impl NodeIndex {
-    /// The index of the nodes of `network` with an out-link or an in-link that allows `mode`.
+    /// The index of the nodes of `network` with a link that allows `mode` in the direction
+    /// `joins` asks for.
     #[must_use]
-    pub fn new(network: &Network, mode: Mode) -> Self {
+    pub fn new(network: &Network, mode: Mode, joins: Joins) -> Self {
         let allows = |links: &[LinkId]| links.iter().any(|&l| network.modes(l).contains(mode));
         let kept: Vec<NodeId> = NodeId::iter_space(network.node_count())
-            .filter(|&n| allows(network.out_links(n)) || allows(network.in_links(n)))
+            .filter(|&n| {
+                let (out, into) = (allows(network.out_links(n)), allows(network.in_links(n)));
+                match joins {
+                    Joins::Either => out || into,
+                    Joins::Out => out,
+                    Joins::In => into,
+                }
+            })
             .collect();
         let xy: Vec<Xy> = kept.iter().map(|&n| network.node_position(n)).collect();
         Self::over(&kept, &xy)

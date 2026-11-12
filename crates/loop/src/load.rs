@@ -6,13 +6,13 @@ use openmobisim_loading::input::{LoadError, Vehicle};
 use openmobisim_loading::link_times::LinkTimes;
 use openmobisim_loading::point_queue::{self, Loading};
 use openmobisim_types::ids::EntityId;
+use openmobisim_types::units::Duration;
 use rayon::prelude::*;
 
 use crate::alternative::{Alternative, Leg, path_sizes, price};
 use crate::context::Context;
-use crate::whole;
 
-/// The vehicle of trip `i` on `alternative`: its route leg, entered on the whole second the walk
+/// The vehicle of trip `i` on `alternative`: its route leg, entered at the instant the walk
 /// before it ends; none for an empty route or a journey.
 fn vehicle(ctx: &Context<'_>, i: usize, alternative: &Alternative) -> Option<Vehicle> {
     let mut t = ctx.departure[i];
@@ -23,12 +23,11 @@ fn vehicle(ctx: &Context<'_>, i: usize, alternative: &Alternative) -> Option<Veh
                 if links.is_empty() {
                     return None;
                 }
-                let departure = ctx.start().saturating_add(whole(t));
                 return Some(Vehicle {
                     trip: ctx.trip(i),
                     mode: *mode,
                     route: links.clone(),
-                    departure,
+                    departure: Duration(t),
                 });
             }
             Leg::Journey(_) => return None,
@@ -59,7 +58,8 @@ pub(crate) fn load(
 pub(crate) fn measure(ctx: &Context<'_>, times: &LinkTimes, sets: &mut [Vec<Alternative>]) {
     sets.par_iter_mut().enumerate().for_each(|(i, set)| {
         for alternative in set.iter_mut() {
-            alternative.time = price(times, ctx.start(), ctx.departure[i], &alternative.legs);
+            alternative.time =
+                price(times, ctx.start(), ctx.departure[i], &alternative.legs, ctx.trip(i));
         }
         path_sizes(ctx.network, set);
     });

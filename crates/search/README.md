@@ -8,10 +8,11 @@ at the instant the route enters it; and its tree form, every node within a bound
 ## Inputs
 - The `Network` (`openmobisim-graph`): per link its upstream and downstream node, length,
   free-flow time per mode and modes allowed; per node its position in metres.
-- The link times, `LinkTimes` (`openmobisim-loading`), the first-in-first-out reading of a
-  loading on that network; an empty loading reads free flow everywhere.
-- A `Query` per route wanted: origin node, destination node, mode (car, bike or walk) and
-  departure (a whole second of the clock).
+- The link times, `LinkTimes` (`openmobisim-loading`), the reading of a loading on that
+  network; an empty loading reads free flow everywhere.
+- A `Query` per route wanted: origin node, destination node, mode (car, bike or walk),
+  departure (seconds since the window's start: any instant, not only a whole second) and the
+  traveller's trip, or none for a traveller the loading did not have.
 
 ## Outputs
 - `Search::new(&network, &times)` is the search with its scratch, reusable across queries.
@@ -34,15 +35,16 @@ at the instant the route enters it; and its tree form, every node within a bound
   instead of the straight line. The routes are the same as `fastest`'s, query by query.
 
 ## Units
-Seconds and metres. The departure is a whole second of the clock (`Second`); the arrival is
-`f64` seconds since the window's start (a `Duration`), never floored, on the clock of
-`LinkTimes::time`. The search's bound is in seconds per metre of straight line.
+Seconds and metres. The departure and the arrival are `f64` seconds since the window's start
+(a `Duration`), never rounded, on the clock of `LinkTimes::exit`. The search's bound is in seconds per metre of straight line.
 
 ## Meanings and assumptions
 - A route's time is walked link by link: each link entered when the one before it ends, its
-  time `LinkTimes::time(link, mode, t)` at that entry `t`. Nothing else costs time: no turn,
-  no node delay, no waiting at a node (on first-in-first-out times waiting never helps). The
-  arrival is `LinkTimes::route_time` of the route added to the departure, to the bit.
+  exit `LinkTimes::exit(link, mode, t, reader)` at that entry `t` for the query's traveller,
+  the reader carried from link to link (the recorded car whose place the traveller took).
+  Nothing else costs time: no turn, no node delay, no waiting at a node (on first-in-first-out
+  times waiting never helps). The arrival is `LinkTimes::route_time` of the route added to the
+  departure, to the bit. A traveller's own car in the last loading is not in its way.
 - Fastest means earliest arrival. The search is label-setting Dijkstra over nodes on the
   arrival, exact on first-in-first-out link times (Kaufman and Smith 1993), which the reading
   is by construction. It is goal-directed (A\*, Hart, Nilsson and Raphael 1968) by a lower bound

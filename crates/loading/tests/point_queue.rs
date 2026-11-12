@@ -17,6 +17,7 @@ use openmobisim_loading::point_queue::{Loading, load};
 use openmobisim_types::ids::{EntityId, LinkId, TripId};
 use openmobisim_types::mode::Mode;
 use openmobisim_types::time::{Second, StepGrid};
+use openmobisim_types::units::Duration;
 
 /// 1 000 m at 50 km/h: 1 000 / (50 000 / 3 600) = 72 s.
 const TAU_1KM: f64 = 72.0;
@@ -91,7 +92,7 @@ fn with_unlimited_capacity_every_exit_is_exactly_entry_plus_free_flow() {
     let run = load(&net, &cars, window(300, 3_600)).unwrap();
     assert_eq!(run.finished.len(), 302);
     for (i, v) in cars.iter().enumerate() {
-        let t = f64::from(v.departure.get());
+        let t = v.departure.get();
         assert_eq!(run.finished.arrivals()[i].get().to_bits(), (t + free.get()).to_bits());
         assert_eq!(run.finished.travel_time(i).get().to_bits(), free.get().to_bits());
     }
@@ -104,7 +105,7 @@ fn tandem(first: f64, second: f64) -> (Loading, f64) {
     let net = line(&[car_link(2_000.0, first), car_link(2_000.0, second)]);
     let cars: Vec<Vehicle> =
         (0..1_000).map(|k| vehicle(k, Mode::Car, &whole_line(2), 18 * k / 10)).collect();
-    let departures = cars.iter().map(|v| f64::from(v.departure.get())).sum();
+    let departures = cars.iter().map(|v| v.departure.get()).sum();
     let run = load(&net, &cars, window(300, 7_200)).unwrap();
     assert!(run.unfinished.is_empty(), "every car arrives within two hours");
     (run, departures)
@@ -295,7 +296,7 @@ fn fingerprint(run: &Loading) -> Vec<u64> {
     let mut out = Vec::new();
     out.extend(f.trips().iter().map(|x| u64::from(x.raw())));
     out.extend(f.modes().iter().map(|m| u64::from(m.as_u8())));
-    out.extend(f.departures().iter().map(|s| u64::from(s.get())));
+    out.extend(f.departures().iter().map(|s| s.get().to_bits()));
     out.extend(f.arrivals().iter().map(|a| a.get().to_bits()));
     out.extend(u.trips().iter().map(|x| u64::from(x.raw())));
     out.extend(u.links().iter().map(|x| u64::from(x.raw())));
@@ -354,23 +355,22 @@ fn each_refused_vehicle_names_its_trip() {
         car_link(1_000.0, 1_200.0),
         LinkRow { length_m: Some(10.0), ..cycle_path() },
     ]);
+    // A window of 1 000 s from second 100 of the clock; departures are counted from its start.
     let w = StepGrid::new(Second(100), 100, 1_000).unwrap();
-    let ok = vehicle(1, Mode::Car, &whole_line(2), 100);
+    let ok = vehicle(1, Mode::Car, &whole_line(2), 0);
     let refuse = |bad: Vehicle| load(&net, &[ok.clone(), bad], w).unwrap_err();
     let trip = TripId::new(9);
+    let departing =
+        |at: f64| Vehicle { departure: Duration(at), ..vehicle(9, Mode::Car, &[link(0)], 0) };
     assert_eq!(
-        refuse(vehicle(9, Mode::Car, &[link(0)], 99)),
+        refuse(departing(-1.0)),
         LoadError::DepartureOutsideWindow {
             trip,
-            departure: Second(99),
-            start: Second(100),
-            end: Second(1_100)
+            departure: Duration(-1.0),
+            length: Duration(1_000.0)
         }
     );
-    assert!(matches!(
-        refuse(vehicle(9, Mode::Car, &[link(0)], 1_100)),
-        LoadError::DepartureOutsideWindow { .. }
-    ));
+    assert!(matches!(refuse(departing(1_000.0)), LoadError::DepartureOutsideWindow { .. }));
     assert_eq!(refuse(vehicle(9, Mode::Bike, &[], 100)), LoadError::EmptyRoute(trip));
     assert_eq!(refuse(vehicle(9, Mode::Transit, &[link(0)], 100)), LoadError::Transit(trip));
     assert_eq!(
@@ -394,5 +394,5 @@ fn each_refused_vehicle_names_its_trip() {
     let named = LoadError::ModeNotAllowed { trip: TripId::new(3), link: link(2), mode: Mode::Car };
     assert_eq!(load(&net, &[a.clone(), b.clone()], w).unwrap_err(), named);
     assert_eq!(load(&net, &[b, a], w).unwrap_err(), named);
-    assert!(refuse(vehicle(9, Mode::Car, &[link(0)], 99)).to_string().contains("trip 9"));
+    assert!(refuse(departing(-1.0)).to_string().contains("trip 9"));
 }

@@ -20,9 +20,8 @@ use crate::assess::{Iteration, assess, stops};
 use crate::choose::{Model, choose};
 use crate::context::Context;
 use crate::load::{load, measure, realise};
-use crate::parameters::Parameters;
+use crate::parameters::{COLUMNS, Parameters};
 use crate::search::search;
-use crate::whole;
 
 /// Why a run was refused. Each names what it refuses.
 #[derive(Clone, Debug, PartialEq)]
@@ -41,6 +40,14 @@ pub enum RunError {
         classes: u32,
         /// The rows given.
         rows: usize,
+    },
+    /// A class's cost of a transit part (in vehicle, a walk, a wait, a transfer) is negative or
+    /// not finite: the cheapest journey would not exist.
+    TransitWeight {
+        /// The class, by its place in the coefficients.
+        class: usize,
+        /// The column.
+        column: &'static str,
     },
     /// The window is not a whole number of bins, is empty, or runs past the clock.
     Window(StepGridError),
@@ -63,6 +70,9 @@ impl fmt::Display for RunError {
             Self::NearbyStopsZero => write!(f, "nearby_stops is zero"),
             Self::CoefficientRows { classes, rows } => {
                 write!(f, "{rows} coefficient rows for {classes} user classes")
+            }
+            Self::TransitWeight { class, column } => {
+                write!(f, "class {class}: the coefficient of {column} is negative or not finite")
             }
             Self::Window(e) => write!(f, "the window: {e}"),
             Self::DepartureOutsideWindow(t) => write!(f, "trip {t} departs outside the window"),
@@ -165,6 +175,13 @@ fn context<'a>(
         let (classes, rows) = (demand.class_count(), parameters.coefficients.len());
         return Err(RunError::CoefficientRows { classes, rows });
     }
+    if timetable.is_some() {
+        for (class, b) in parameters.coefficients.iter().enumerate() {
+            if let Some(c) = (3..=9).find(|&c| !(b[c].is_finite() && b[c] >= 0.0)) {
+                return Err(RunError::TransitWeight { class, column: COLUMNS[c] });
+            }
+        }
+    }
     let (start, end) = window;
     let length = end.saturating_sub(start);
     let grid = StepGrid::new(start, parameters.link_bin, length).map_err(RunError::Window)?;
@@ -180,7 +197,7 @@ fn context<'a>(
         let since = f64::from(demand.departure(trip).saturating_sub(start));
         for mode in [Mode::Car, Mode::Bike, Mode::Walk] {
             let Some(o) = demand.origin_end(trip, mode) else { continue };
-            if whole(since + (o.gap / network.walk_speed()).get()) >= length {
+            if since + (o.gap / network.walk_speed()).get() >= f64::from(length) {
                 return Err(RunError::StartsAfterWindow(name(), mode));
             }
         }
@@ -254,7 +271,7 @@ pub fn run(
         let t0 = Instant::now();
         let found = search(&ctx, &times, &mut sets, k);
         let t1 = Instant::now();
-        let switches = choose(&ctx, &model, &sets, &mut chosen, k)?;
+        let (switches, offered) = choose(&ctx, &model, &sets, &mut chosen, k)?;
         let t2 = Instant::now();
         loading = load(&ctx, &sets, &chosen)?;
         let t3 = Instant::now();
@@ -262,7 +279,7 @@ pub fn run(
         measure(&ctx, &times, &mut sets);
         let outcome = realise(&ctx, &loading, &sets, &chosen);
         let t4 = Instant::now();
-        let mut row = assess(&ctx, &sets, &chosen, &outcome, k, found, switches);
+        let mut row = assess(&ctx, &sets, &chosen, &outcome, k, found, (offered, switches));
         realised = Some(outcome);
         let t5 = Instant::now();
         row.stage_seconds = [t1 - t0, t2 - t1, t3 - t2, t4 - t3, t5 - t4].map(|d| d.as_secs_f64());

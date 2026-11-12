@@ -6,7 +6,9 @@
 //! its downstream end; a path O→D for bikes, 1 500 m (360 s at 15 km/h), never congested.
 //! Travellers leave O at a constant rate `q = 3 c` for three hours, each open to car and bike,
 //! choosing by the default model (the nested logit; one alternative per mode, so the nest scale
-//! plays no part).
+//! plays no part). With one alternative per mode, who is offered a new choice at iteration `k`
+//! is the plain method of successive averages, `1 / (k + 1)`: the loop's added chance reads
+//! only alternatives of the mode a traveller holds, and here there is no other.
 //!
 //! The default utilities here. Every trip starts and ends at a node, so no walk between door
 //! and node (`walk_min` 0); the street is the one car route, so its path size is 1 and
@@ -45,12 +47,13 @@
 
 mod common;
 
-use common::{at, car_link, network};
+use common::{PART_1_S, QueueReplay, at, car_link, larger, link, network, replay_queues};
 use openmobisim_demand::demand::Demand;
 use openmobisim_demand::input::TripRow;
-use openmobisim_graph::network::LinkRow;
+use openmobisim_graph::network::{LinkRow, Network};
 use openmobisim_loop::parameters::{COLUMNS, Parameters};
 use openmobisim_loop::run::{Run, run};
+use openmobisim_types::ids::{EntityId, TripId};
 use openmobisim_types::mode::{Mode, ModeSet};
 use openmobisim_types::time::Second;
 use openmobisim_types::units::Metres;
@@ -94,9 +97,15 @@ fn reference() -> Vec<(f64, f64)> {
     rows
 }
 
-/// What a run says, per group of departures: travellers, cars, the cars' mean trip time.
+/// What a run says, per group of departures: travellers, cars, the cars' mean trip time; per
+/// group the sum over its travellers of the logit car share at the times each met (part 3);
+/// part 1 on the street, and the network to judge it on.
 struct Outcome {
     groups: Vec<(f64, f64, f64)>,
+    logit: Vec<f64>,
+    queue: QueueReplay,
+    queue_text: String,
+    net: Network,
     iterations: usize,
     stopped_by_rule: bool,
     seconds: f64,
@@ -152,10 +161,14 @@ fn bottleneck(scale: usize, parameters: &Parameters) -> Outcome {
     let result: Run =
         run(&net, &dem, None, (Second(0), Second(6 * 3_600)), parameters).expect("a run");
     let seconds = started.elapsed().as_secs_f64();
+    let queue = replay_queues(&net, &result, &[link(&net, "street")]);
     let mut groups = vec![(0.0, 0.0, 0.0); (DEMAND_S / GROUP_S) as usize];
+    let mut logit = vec![0.0; groups.len()];
     for i in 0..rows.len() {
         assert!(result.trips.finished[i], "trip {i} did not finish");
-        let g = &mut groups[(result.trips.departure[i].get() / GROUP_S) as usize];
+        let k = (result.trips.departure[i].get() / GROUP_S) as usize;
+        logit[k] += logit_car_share(&result, i);
+        let g = &mut groups[k];
         g.0 += 1.0;
         match result.trips.mode[i] {
             Some(Mode::Car) => {
@@ -173,10 +186,60 @@ fn bottleneck(scale: usize, parameters: &Parameters) -> Outcome {
     }
     Outcome {
         groups,
+        logit,
+        queue,
+        queue_text: queue.describe(&net),
+        net,
         iterations: result.iterations.len(),
         stopped_by_rule: result.stopped_by_rule,
         seconds,
     }
+}
+
+/// Part 3's model share: the logit car share of traveller `i` at the times it met, its set's
+/// car and bike times as the last measure reads them (the car's at the delay it met or would
+/// have met), `1 / (1 + exp((car − bike) / 600))`.
+fn logit_car_share(result: &Run, i: usize) -> f64 {
+    let time = |mode| {
+        let set = result.set(TripId::from_index(i));
+        set.iter().find(|a| a.mode == mode).expect("a car and a bike in every set").time
+    };
+    1.0 / (1.0 + ((time(Mode::Car) - time(Mode::Bike)) / 600.0).exp())
+}
+
+/// Print the four parts of a run, in order: part 1, the queue and the record; part 2, the third
+/// hour's car share against the steady state's, capacity over demand; part 3, the car share
+/// against the logit share at the times met; mixed, the car share of each group against the
+/// fixture (it depends on the delay met in the build-up), and the car trip per group and in the
+/// third hour against the fixture.
+fn print_parts(o: &Outcome) {
+    let want = reference();
+    println!("part 1, queue and record: {}", o.queue_text);
+    let (share3, time3) = o.over(24, 36);
+    println!("part 2, flows: third hour, car share {share3:.4} against {STEADY_SHARE:.4}");
+    let (mut worst, mut third_n, mut third_logit) = (0.0_f64, 0.0, 0.0);
+    for (k, (&(n, cars, _), &logit)) in o.groups.iter().zip(&o.logit).enumerate() {
+        worst = worst.max((cars / n - logit / n).abs());
+        if (24..36).contains(&k) {
+            (third_n, third_logit) = (third_n + n, third_logit + logit);
+        }
+    }
+    println!(
+        "part 3, choices (printed, not judged): third hour, car share {share3:.4} against the logit share at the times met {:.4}; the largest group difference {worst:.4}",
+        third_logit / third_n
+    );
+    for (k, (&(n, cars, _), &(share, _))) in o.groups.iter().zip(&want).enumerate() {
+        let from = k as u32 * GROUP_S;
+        println!(
+            "mixed: departures from {from:>5} s, car share {:.4} against {share:.4}",
+            cars / n
+        );
+    }
+    for (k, (&(_, _, time), &(_, car_s))) in o.groups.iter().zip(&want).enumerate() {
+        let from = k as u32 * GROUP_S;
+        println!("mixed: departures from {from:>5} s, car trip {time:7.1} s against {car_s:7.1} s");
+    }
+    println!("mixed: third hour, car trip {time3:.1} s against {STEADY_CAR_S} s");
 }
 
 /// Print a run against the fixture and return its residuals: the largest share difference over
@@ -327,20 +390,25 @@ const Z_999_OVER_36: f64 = 4.0;
 /// alone; the third is wider than the 3.29 of sampling theory to leave room for the scatter
 /// of the iteration itself, which the hand value does not cover.
 #[test]
-#[ignore = "release only: 27 s in debug, 2.3 s in release; CI runs it by name with --ignored"]
+#[ignore = "release only: 27 s in debug, 2.6 s in release; CI runs it by name with --ignored"]
 fn one_run_follows_the_trajectory_and_reaches_the_steady_state_within_sampling_error() {
     const TIME_SDS: f64 = 4.0;
     let o = bottleneck(SCALE, &fifty(0));
-    residuals("x16, 50 iterations, seed 0", &o, true);
+    residuals("x16, 50 iterations, seed 0", &o, false);
+    print_parts(&o);
+    o.queue.judge(&o.net, true);
     for (k, (&(n, cars, _), &(share, _))) in o.groups.iter().zip(&reference()).enumerate() {
         let sd = (share * (1.0 - share) / n).sqrt();
-        assert!(((cars / n) - share).abs() <= Z_999_OVER_36 * sd, "group {k}: {}", cars / n);
+        let got = cars / n;
+        assert!((got - share).abs() <= Z_999_OVER_36 * sd, "mixed: group {k}'s car share: {got}");
     }
     let (share, time) = o.over(24, 36);
     let share_sd = (STEADY_SHARE * (1.0 - STEADY_SHARE) / (3_600.0 * SCALE as f64)).sqrt();
-    assert!((share - STEADY_SHARE).abs() <= Z_999 * share_sd, "third hour's car share {share}");
+    let share_off = (share - STEADY_SHARE).abs();
+    assert!(share_off <= Z_999 * share_sd, "part 2, flows: third hour's car share {share}");
     let time_sd = third_hour_time_sd(SCALE);
-    assert!((time - STEADY_CAR_S).abs() <= TIME_SDS * time_sd, "third hour's car trip {time}");
+    let time_off = (time - STEADY_CAR_S).abs();
+    assert!(time_off <= TIME_SDS * time_sd, "mixed: third hour's car trip {time}");
 }
 
 /// The bias test: over 20 seeds the mean residual of every quantity is zero within its own
@@ -348,7 +416,7 @@ fn one_run_follows_the_trajectory_and_reaches_the_steady_state_within_sampling_e
 /// of the loop shows as a mean many standard errors from zero. Judged: the third hour's car
 /// share and car trip at 3.29 standard errors, each group's at 4.0 (0.999 over the 36 groups).
 #[test]
-#[ignore = "the convergence tier: 20 runs, about 45 s in release"]
+#[ignore = "the convergence tier: 20 runs, about 50 s in release"]
 fn over_twenty_seeds_no_quantity_is_biased() {
     let seeds = 20;
     let want = reference();
@@ -360,31 +428,66 @@ fn over_twenty_seeds_no_quantity_is_biased() {
         let var = v.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / (v.len() as f64 - 1.0);
         (mean, (var / v.len() as f64).sqrt())
     };
-    let mut failures = Vec::new();
-    for (k, &(share, car_s)) in want.iter().enumerate() {
-        let (ds, es) = judge(&|o| o.groups[k].1 / o.groups[k].0 - share);
-        let (dt, et) = judge(&|o| o.groups[k].2 - car_s);
-        println!(
-            "  departures from {:>5} s: car share {ds:+.4} ± {es:.4} ({:+.1}), car trip {dt:+6.2} ± {et:.2} s ({:+.1})",
-            k as u32 * GROUP_S,
-            ds / es,
-            dt / et
-        );
-        if (ds / es).abs() > Z_999_OVER_36 || (dt / et).abs() > Z_999_OVER_36 {
-            failures.push(format!("group {k}: share {:+.1}, car trip {:+.1}", ds / es, dt / et));
+    let replay = runs.iter().map(|o| o.queue.largest_s).fold(0.0, larger);
+    let gap = runs.iter().map(|o| o.queue.gap_s).fold(0.0, larger);
+    let misrecorded = runs.iter().map(|o| o.queue.misrecorded).sum::<usize>();
+    println!(
+        "part 1, queue and record over the seeds: largest difference from the replayed point queue {replay:.2e} s; largest gap along the routes {gap:.2e} s; {misrecorded} records missing, twice or off every route"
+    );
+    // Each group's car share and car trip (mixed: they depend on the delay met in the
+    // build-up), and the third hour's (the share part 2, flows: capacity over demand; the car
+    // trip mixed).
+    let (mut shares_off, mut trips_off) = (Vec::new(), Vec::new());
+    for share in [true, false] {
+        let (part, third_part, off) = if share {
+            ("mixed: car share", "part 2, flows: car share", &mut shares_off)
+        } else {
+            ("mixed: car trip", "mixed: car trip", &mut trips_off)
+        };
+        let residual = |o: &Outcome, k: usize| {
+            if share {
+                o.groups[k].1 / o.groups[k].0 - want[k].0
+            } else {
+                o.groups[k].2 - want[k].1
+            }
+        };
+        for k in 0..want.len() {
+            let (d, e) = judge(&|o| residual(o, k));
+            println!(
+                "{part}, departures from {:>5} s: {d:+.4} ± {e:.4} ({:+.1})",
+                k as u32 * GROUP_S,
+                d / e
+            );
+            if (d / e).abs() > Z_999_OVER_36 {
+                off.push(format!("group {k}: {:+.1}", d / e));
+            }
+        }
+        let steady = if share { STEADY_SHARE } else { STEADY_CAR_S };
+        let third = |o: &Outcome| if share { o.over(24, 36).0 } else { o.over(24, 36).1 };
+        let (d, e) = judge(&|o| third(o) - steady);
+        println!("{third_part}, third hour: {d:+.5} ± {e:.5} ({:+.1} standard errors)", d / e);
+        if (d / e).abs() > Z_999 {
+            off.push(format!("third hour: {:+.1}", d / e));
         }
     }
-    let (ds, es) = judge(&|o| o.over(24, 36).0 - STEADY_SHARE);
-    let (dt, et) = judge(&|o| o.over(24, 36).1 - STEADY_CAR_S);
+    // Part 3, choices: the third hour's car share less the logit share at the times met.
+    let (d, e) = judge(&|o| {
+        let (n, logit) = (24..36).fold((0.0, 0.0), |(n, l), k| (n + o.groups[k].0, l + o.logit[k]));
+        o.over(24, 36).0 - logit / n
+    });
     println!(
-        "third hour: car share {ds:+.5} ± {es:.5} ({:+.1} standard errors), car trip {dt:+.2} ± {et:.2} s ({:+.1})",
-        ds / es,
-        dt / et
+        "part 3, choices (printed, not judged): third hour, car share less the logit share at the times met {d:+.5} ± {e:.5}"
     );
-    if (ds / es).abs() > Z_999 || (dt / et).abs() > Z_999 {
-        failures.push(format!("third hour: share {:+.1}, car trip {:+.1}", ds / es, dt / et));
+    for o in &runs {
+        o.queue.judge(&o.net, true);
     }
-    assert!(failures.is_empty(), "biased, in standard errors: {failures:#?}");
+    assert!(replay <= PART_1_S, "part 1, queue: largest difference {replay} s");
+    assert!(gap <= PART_1_S, "part 1, record: largest gap {gap} s");
+    assert!(
+        shares_off.is_empty(),
+        "car share (each group mixed, the third hour part 2, flows): biased, in standard errors: {shares_off:#?}"
+    );
+    assert!(trips_off.is_empty(), "mixed: biased, in standard errors: {trips_off:#?}");
 }
 
 /// A measurement, not a test: the mean car-trip residual over 20 seeds in the build-up (the

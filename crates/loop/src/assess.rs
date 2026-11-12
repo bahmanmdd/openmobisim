@@ -26,10 +26,13 @@ pub struct Iteration {
     /// Of those, the trips with no stop within `stop_walk_max` of their origin or of their
     /// destination; the rest have stops at both ends and no journey between them.
     pub without_stop: u64,
+    /// The share of trips with an alternative that were offered a new choice in this iteration's
+    /// choice (a trip holding nothing chooses: 1 at iteration 0).
+    pub offered_share: f64,
     /// The share of trips with an alternative that changed alternative in this iteration's choice.
     pub switch_share: f64,
     /// The share of trips with an alternative for which this iteration's search found one
-    /// cheaper, without the path-size term, than their set's cheapest.
+    /// cheaper, without the path-size term, than every alternative of its mode in their set.
     pub found_share: f64,
     /// The relative duality gap at this iteration's measured costs: over trips with an
     /// alternative, the sum of the chosen alternative's cost less the set's least cost, over
@@ -44,8 +47,8 @@ fn with_alternative(sets: &[Vec<Alternative>]) -> u64 {
     sets.iter().filter(|s| !s.is_empty()).count() as u64
 }
 
-/// The assess stage's measures, from the counts of the search and the choice and the loading's
-/// outcome. The stage seconds are the caller's.
+/// The assess stage's measures, from the counts of the search and the choice (offered, switched)
+/// and the loading's outcome. The stage seconds are the caller's.
 pub(crate) fn assess(
     ctx: &Context<'_>,
     sets: &[Vec<Alternative>],
@@ -53,7 +56,7 @@ pub(crate) fn assess(
     realised: &Realised,
     iteration: u32,
     found: u64,
-    switches: u64,
+    (offered, switches): (u64, u64),
 ) -> Iteration {
     let n = ctx.trip_count() as u64;
     let counted = with_alternative(sets);
@@ -89,6 +92,7 @@ pub(crate) fn assess(
         without_alternative: n - counted,
         without_transit,
         without_stop: u64::from(ctx.demand.trips_without_transit()),
+        offered_share: share(offered, counted),
         switch_share: share(switches, counted),
         found_share: share(found, counted),
         gap: if least > 0.0 { (paid - least) / least } else { f64::NAN },

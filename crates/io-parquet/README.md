@@ -25,8 +25,9 @@ clock, null where there is no value:
   `first_exit_s`, `last_exit_s` (Float64, nullable), `bikes`, `walkers` (UInt32).
 - `iterations.parquet`, one row per iteration in order: `iteration` (UInt32),
   `mean_trip_time_s` (Float64, nullable), `finished`, `unfinished`, `without_alternative`,
-  `without_transit`, `without_stop` (UInt64), `switch_share`, `found_share`, `gap` (Float64, nullable), `search_s`, `choose_s`,
-  `load_s`, `measure_s`, `assess_s` (Float64).
+  `without_transit`, `without_stop` (UInt64), `offered_share`, `switch_share`, `found_share`,
+  `gap` (Float64, nullable), `search_s`, `choose_s`, `load_s`, `measure_s`, `assess_s`
+  (Float64).
 
 Each column's meaning is the loop's (`crates/loop/README.md`) and is written beside its schema
 in `src/trips.rs`, `src/links.rs` and `src/iterations.rs`. A column that cannot be null is
@@ -44,8 +45,8 @@ fractions.
 ## Meanings and assumptions
 - **Null, never `NaN`.** The loop's `NaN` means "no value" in exactly these places, written as
   null: `arrival_s` and `travel_time_s` of a trip unfinished or without an alternative; `cost`
-  of a trip without an alternative; `mean_trip_time_s` when no trip finished; `switch_share`,
-  `found_share` and `gap` when no trip has an alternative, and `gap` when the least costs sum
+  of a trip without an alternative; `mean_trip_time_s` when no trip finished; `offered_share`,
+  `switch_share`, `found_share` and `gap` when no trip has an alternative, and `gap` when the least costs sum
   to 0. In the links table `car_time_s`, `first_exit_s` and `last_exit_s` are null where `cars`
   is 0 (the loading holds 0 for the time and `NaN` for the exits there).
 - `mode` is null exactly for a trip without an alternative.

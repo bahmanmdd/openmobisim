@@ -11,6 +11,7 @@ use openmobisim_loading::point_queue::load;
 use openmobisim_types::ids::{EntityId, LinkId, NodeId, TripId};
 use openmobisim_types::mode::{Mode, ModeSet};
 use openmobisim_types::time::{Second, StepGrid};
+use openmobisim_types::units::Duration;
 
 /// Test values for the three build values (not defaults: the tests' hand derivations use them).
 pub const VALUES: BuildValues =
@@ -129,10 +130,11 @@ pub fn l_route(net: &Network, a: (u32, u32), z: (u32, u32)) -> Vec<LinkId> {
     grid_route(net, &nodes)
 }
 
-/// A vehicle of trip `trip`.
+/// A vehicle of trip `trip`, departing `departure` whole seconds after the window's start.
 #[must_use]
 pub fn vehicle(trip: u32, mode: Mode, route: &[LinkId], departure: u32) -> Vehicle {
-    Vehicle { trip: TripId::new(trip), mode, route: route.to_vec(), departure: Second(departure) }
+    let departure = Duration(f64::from(departure));
+    Vehicle { trip: TripId::new(trip), mode, route: route.to_vec(), departure }
 }
 
 /// A window from second 0 of `length` seconds in steps of `step` seconds.

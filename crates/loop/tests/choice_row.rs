@@ -97,9 +97,9 @@ fn the_car_bike_and_walk_rows_hold_their_minutes_and_their_gap_walks() {
     let set = r.set(TripId::new(0));
     assert_eq!(set.iter().map(|a| a.mode).collect::<Vec<_>>(), [Mode::Car, Mode::Bike, Mode::Walk]);
     let want = [
-        (189.5, row(&[("car_drive_min", 144.5 / 60.0), ("walk_min", 0.75), ("is_car", 1.0)])),
-        (405.5, row(&[("bike_ride_min", 360.5 / 60.0), ("walk_min", 0.75), ("is_bike", 1.0)])),
-        (1_170.5, row(&[("walk_min", 1_170.5 / 60.0), ("is_walk", 1.0)])),
+        (189.0, row(&[("car_drive_min", 144.0 / 60.0), ("walk_min", 0.75), ("is_car", 1.0)])),
+        (405.0, row(&[("bike_ride_min", 360.0 / 60.0), ("walk_min", 0.75), ("is_bike", 1.0)])),
+        (1_170.0, row(&[("walk_min", 1_170.0 / 60.0), ("is_walk", 1.0)])),
     ];
     for (a, (time, x)) in set.iter().zip(&want) {
         assert!((a.time - time).abs() < 1e-9, "{}: {} s against {time} s", a.mode, a.time);

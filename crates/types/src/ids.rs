@@ -220,24 +220,51 @@ macro_rules! define_id {
     };
 }
 
-define_id!(/// Identifies a network node.
-    NodeId, Node);
-define_id!(/// Identifies a link.
-    LinkId, Link);
-define_id!(/// Identifies a zone.
-    ZoneId, Zone);
-define_id!(/// Identifies a path.
-    PathId, Path);
-define_id!(/// Identifies a trip, which is also its traveller.
-    TripId, Trip);
-define_id!(/// Identifies an individual vehicle.
-    VehicleId, Vehicle);
-define_id!(/// Identifies one run of a transit trip on the service date.
-    TransitRunId, TransitRun);
-define_id!(/// Identifies a user class.
-    UserClassId, UserClass);
-define_id!(/// Identifies a transit stop (not a node: see [`EntityKind::Stop`]).
-    StopId, Stop);
+define_id!(
+    /// Identifies a network node.
+    NodeId,
+    Node
+);
+define_id!(
+    /// Identifies a link.
+    LinkId,
+    Link
+);
+define_id!(
+    /// Identifies a zone.
+    ZoneId,
+    Zone
+);
+define_id!(
+    /// Identifies a path.
+    PathId,
+    Path
+);
+define_id!(
+    /// Identifies a trip, which is also its traveller.
+    TripId,
+    Trip
+);
+define_id!(
+    /// Identifies an individual vehicle.
+    VehicleId,
+    Vehicle
+);
+define_id!(
+    /// Identifies one run of a transit trip on the service date.
+    TransitRunId,
+    TransitRun
+);
+define_id!(
+    /// Identifies a user class.
+    UserClassId,
+    UserClass
+);
+define_id!(
+    /// Identifies a transit stop (not a node: see [`EntityKind::Stop`]).
+    StopId,
+    Stop
+);
 
 /// Builds an [`ExternalIdTable`], assigning internal identifiers by sorted external id.
 ///

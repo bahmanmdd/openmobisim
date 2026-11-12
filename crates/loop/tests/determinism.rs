@@ -242,7 +242,10 @@ fn table_bits(r: &Run) -> Vec<u64> {
     for it in &r.iterations {
         out.extend([u64::from(it.iteration), it.finished, it.unfinished, it.without_alternative]);
         out.extend([it.without_transit, it.without_stop]);
-        out.extend([it.mean_trip_time, it.switch_share, it.found_share, it.gap].map(f64::to_bits));
+        out.extend(
+            [it.mean_trip_time, it.offered_share, it.switch_share, it.found_share, it.gap]
+                .map(f64::to_bits),
+        );
     }
     out.push(u64::from(r.stopped_by_rule));
     out

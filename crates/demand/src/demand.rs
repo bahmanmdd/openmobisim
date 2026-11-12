@@ -3,11 +3,15 @@
 //!
 //! # Linking
 //!
-//! Each end of a trip is linked, for each mode of its set, to the node nearest to it by
-//! straight line among the nodes with an out-link or an in-link that allows the mode (ties to
-//! the lower node id; [`crate::index`]); transit's ends are linked by walking, to the walk
-//! node. The straight line from the end to its node, the gap, is kept in metres. Each stop of
-//! the timetable is linked to its nearest walk node the same way.
+//! Each end of a trip is linked, for each mode of its set, to a node by straight line (ties to
+//! the lower node id; [`crate::index`]). Where both ends are nearest the same node of the
+//! mode's network, both join it: the trip travels no link. Otherwise the origin joins the
+//! nearest node with an out-link that allows the mode (a trip can leave it) and the destination
+//! the nearest with an in-link (a trip can arrive at it). Transit's ends are linked by walking,
+//! to the walk node. The straight line from the end to its node, the gap, is kept in metres.
+//! Each stop of the timetable is linked to its nearest node of the walk network, one node for
+//! the walk to it and the walk from it: the reach is searched both ways from that node, so a
+//! stop on a node walkers can only leave is walked to from that node alone.
 //!
 //! # Access and egress
 //!
@@ -34,7 +38,7 @@ use openmobisim_types::time::Second;
 use openmobisim_types::units::{Duration, Metres};
 use rayon::prelude::*;
 
-use crate::index::NodeIndex;
+use crate::index::{Joins, NodeIndex};
 use crate::input::{DemandError, TripRow, Trips, check};
 use crate::reach::NearStops;
 
@@ -111,23 +115,36 @@ pub struct Demand {
 /// NaN for a mode not in its set.
 type TripEnds = [[(NodeId, f64); 4]; 2];
 
-/// Link both ends of a trip for every mode of its set; the mode for which no node is kept when
-/// there is one.
-fn link_trip(indices: &[NodeIndex; 3], modes: ModeSet, ends: [Xy; 2]) -> Result<TripEnds, Mode> {
+/// Link both ends of a trip for every mode of its set (`indices[mode]` holds the mode's nodes
+/// by [`Joins::Either`], [`Joins::Out`] and [`Joins::In`]): where both ends are nearest the
+/// same node of the mode's network, both join it (no link is travelled); otherwise the origin
+/// joins the nearest node it can leave and the destination the nearest it can arrive at. The
+/// mode for which no node is kept when there is one.
+fn link_trip(
+    indices: &[[NodeIndex; 3]; 3],
+    modes: ModeSet,
+    ends: [Xy; 2],
+) -> Result<TripEnds, Mode> {
     let mut out = [[(NodeId::NULL, f64::NAN); 4]; 2];
     for mode in modes.iter() {
-        let index = &indices[column(if mode == Mode::Transit { Mode::Walk } else { mode })];
-        for (side, &p) in ends.iter().enumerate() {
-            let (node, gap) = index.nearest(p).ok_or(mode)?;
-            out[side][column(mode)] = (node, gap);
-        }
+        let [either, leave, arrive] =
+            &indices[column(if mode == Mode::Transit { Mode::Walk } else { mode })];
+        let (o, d) = (either.nearest(ends[0]).ok_or(mode)?, either.nearest(ends[1]).ok_or(mode)?);
+        let (o, d) = if o.0 == d.0 {
+            (o, d)
+        } else {
+            (leave.nearest(ends[0]).ok_or(mode)?, arrive.nearest(ends[1]).ok_or(mode)?)
+        };
+        (out[0][column(mode)], out[1][column(mode)]) = (o, d);
     }
     Ok(out)
 }
 
 /// Link every trip, in parallel; the first trip that cannot be linked, in id order, refused.
 fn link_trips(network: &Network, trips: &Trips) -> Result<[Side; 2], DemandError> {
-    let indices = [Mode::Car, Mode::Bike, Mode::Walk].map(|m| NodeIndex::new(network, m));
+    let indices = [Mode::Car, Mode::Bike, Mode::Walk].map(|m| {
+        [Joins::Either, Joins::Out, Joins::In].map(|joins| NodeIndex::new(network, m, joins))
+    });
     let linked: Vec<Result<TripEnds, Mode>> = (0..trips.modes.len())
         .into_par_iter()
         .map(|t| link_trip(&indices, trips.modes[t], [trips.origin[t], trips.destination[t]]))
@@ -150,7 +167,7 @@ fn link_trips(network: &Network, trips: &Trips) -> Result<[Side; 2], DemandError
 
 /// Link every stop of `timetable` to its nearest walk node.
 fn link_stops(network: &Network, timetable: &Timetable) -> Result<Vec<End>, DemandError> {
-    let walk = NodeIndex::new(network, Mode::Walk);
+    let walk = NodeIndex::new(network, Mode::Walk, Joins::Either);
     StopId::iter_space(timetable.stop_count())
         .map(|stop| {
             let (x, y) = timetable.stop_position(stop);

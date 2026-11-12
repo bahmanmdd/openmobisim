@@ -10,11 +10,12 @@ use core::fmt;
 use openmobisim_graph::network::Network;
 use openmobisim_types::ids::{EntityId, LinkId, TripId};
 use openmobisim_types::mode::Mode;
-use openmobisim_types::time::{Second, StepGrid};
+use openmobisim_types::time::StepGrid;
+use openmobisim_types::units::Duration;
 
 /// One traveller's movement through the network: a car, a bike or a walker (a walker counts as
 /// its own vehicle here).
-#[derive(Clone, PartialEq, Eq, Debug)]
+#[derive(Clone, PartialEq, Debug)]
 pub struct Vehicle {
     /// The trip, which is also its traveller. Unique among the vehicles of one loading.
     pub trip: TripId,
@@ -23,12 +24,13 @@ pub struct Vehicle {
     /// The links in the order travelled, at least one: the downstream node of each is the
     /// upstream node of the next, and every link allows the mode.
     pub route: Vec<LinkId>,
-    /// When the vehicle enters the upstream end of its first link: a second inside the window.
-    pub departure: Second,
+    /// When the vehicle enters the upstream end of its first link, in seconds since the window's
+    /// start: any instant inside the window, not only a whole second.
+    pub departure: Duration,
 }
 
 /// Why a loading refused its vehicles. Each names the trip it refuses.
-#[derive(Clone, PartialEq, Eq, Debug)]
+#[derive(Clone, PartialEq, Debug)]
 pub enum LoadError {
     /// Two vehicles carry the same trip.
     DuplicateTrip(TripId),
@@ -40,12 +42,10 @@ pub enum LoadError {
     DepartureOutsideWindow {
         /// The trip.
         trip: TripId,
-        /// Its departure.
-        departure: Second,
-        /// The window's first second.
-        start: Second,
-        /// The first second after the window.
-        end: Second,
+        /// Its departure, in seconds since the window's start.
+        departure: Duration,
+        /// The window's length, in seconds.
+        length: Duration,
     },
     /// A route names a link the network does not have.
     UnknownLink {
@@ -83,9 +83,11 @@ impl fmt::Display for LoadError {
                 write!(f, "trip {trip} is by transit, which runs on its timetable, not on links")
             }
             Self::EmptyRoute(trip) => write!(f, "trip {trip} has an empty route"),
-            Self::DepartureOutsideWindow { trip, departure, start, end } => write!(
+            Self::DepartureOutsideWindow { trip, departure, length } => write!(
                 f,
-                "trip {trip} departs at {departure}, outside the window from {start} to {end}"
+                "trip {trip} departs {} s after the window's start, outside its {} s",
+                departure.get(),
+                length.get()
             ),
             Self::UnknownLink { trip, link } => {
                 write!(f, "trip {trip} names link {link}, which the network does not have")
@@ -138,12 +140,12 @@ fn check_one(network: &Network, v: &Vehicle, window: StepGrid) -> Result<(), Loa
     if v.route.is_empty() {
         return Err(LoadError::EmptyRoute(trip));
     }
-    if !window.contains(v.departure) {
+    let length = f64::from(window.end().get() - window.origin().get());
+    if !(v.departure.get() >= 0.0 && v.departure.get() < length) {
         return Err(LoadError::DepartureOutsideWindow {
             trip,
             departure: v.departure,
-            start: window.origin(),
-            end: window.end(),
+            length: Duration(length),
         });
     }
     for (k, &link) in v.route.iter().enumerate() {

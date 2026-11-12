@@ -21,13 +21,16 @@ stopping rule; and the three tables a run returns. Depends on `openmobisim-types
   the cost of the alternative taken, the size of its set. `set(trip)` and `taken(trip)` give the
   alternatives themselves (mode, legs, time, `ln PS`).
 - `links`, the last loading's table (`LinkBins`): per link and bin of entry, cars with their
-  crossing times, bikes, walkers.
+  crossing times, bikes, walkers; and `links.crossings()`, per link every car of the last
+  loading in the order it entered, its entry and exit instants (seconds after the window's
+  start) and its trip.
 - `iterations`, one row per iteration: the mean trip time of the finished trips, the finished,
   unfinished and without-alternative counts, `without_transit` (trips with transit open to them
   and no journey offered) and `without_stop` (of those, the trips with no stop within
   `stop_walk_max` of their origin or destination, which a larger `stop_walk_max` can reach; the
-  rest have stops at both ends and no journey between them), the switch share, the found share, the relative
-  gap, and the seconds of each stage. `stopped_by_rule` says whether the rule or the cap ended
+  rest have stops at both ends and no journey between them), the offered share (trips offered a
+  new choice; 1 at iteration 0, where everyone chooses), the switch share, the found share, the
+  relative gap, and the seconds of each stage. `stopped_by_rule` says whether the rule or the cap ended
   the run.
 
 ## Units
@@ -44,16 +47,24 @@ model's unit (minutes in a time-only run: 1 on each of the nine time columns, 0 
 - **Search:** cars every iteration (`fastest_many` on the last loading's reading, free flow at
   iteration 0); bikes, walkers and transit at iteration 0 only, since their costs never change
   in 2.0, a property, not an option. A route not yet in the set is appended; it is *found* when
-  its cost without the path-size term is strictly below the set's cheapest (a trip offered its
-  first alternative counts as found). Transit offers, to a set without transit, every journey of
+  its cost without the path-size term is strictly below that of every alternative of its mode
+  in the set (the first alternative of a mode counts as found): a faster car route counts
+  for a traveller whose bike is cheaper still. A set that grew has its path sizes rewritten at once, so
+  the choice of the same iteration reads the path sizes of the set it chooses from. Transit offers, to a set without transit, every journey of
   `Raptor::by_rides`: for each number of rides that reaches the door earlier than every smaller
   number, the earliest journey with that many rides, fewest rides first (the last is the
   earliest journey). A journey comes from the demand's access and egress lists, the traveller
-  at each access stop on the whole second its walk ends. `nearby_stops` counts the searches per trip end: at 1 that
+  at each access stop on the whole second its walk ends. `nearby_stops` counts the searches for the earliest journeys per trip end: at 1 that
   search alone; above 1 the same is asked again from each of the `nearby_stops − 1` stops
   nearest the origin alone (to any stop of the egress list), and to each of the
   `nearby_stops − 1` stops nearest the destination alone (from any stop of the access list); nearest is the least walk, ties to the lower stop id; a list of one stop
-  is not asked again. A journey found twice is offered once, and of the journeys that ride the
+  is not asked again. The earliest journey is not always the cheapest (a slow run boarded at
+  once against a fast one waited for; a nearer stop with a later run), so transit also offers
+  every journey of `Cheapest::by_rides` between any stops of the two lists: for each number of
+  rides that makes a journey cheaper than every smaller number, the cheapest for the
+  traveller's class, by its coefficients of the walks to and from the stops, the waits, the
+  rides, the walks between rides and the transfers (each at or above zero, or the run is
+  refused). A journey found twice is offered once, and of the journeys that ride the
   same runs in the same order (they differ in the stop boarded or left at) only the cheapest
   for the traveller is offered, the first found at equal cost.
 - **Choose:** one row per alternative of sixteen columns, a utility per mode, times in
@@ -62,33 +73,88 @@ model's unit (minutes in a time-only run: 1 on each of the nine time columns, 0 
   `transit_transfer_wait_min`, `transit_transfer_walk_min`, `transit_transfers`, `money_eur`,
   `car_ln_path_size`, `is_car`, `is_bike`, `is_walk`, `is_transit`. An alternative fills only
   its mode's columns: a car or bike its time on the network (door to door less its two gap
-  walks, so the wait for the whole second it enters on) and its gap walks in `walk_min`; a walk
+  walks; the route is entered at the instant the first walk ends) and its gap walks in
+  `walk_min`; a walk
   its whole time in `walk_min`; a journey its parts, the first wait from the end of the access
   walk to the first boarding (the slack included), so the nine times of any alternative add up
   to its door-to-door time; its own mode's constant 1. The default coefficients (cost, positive
   is worse) are 0.1, 0.1, 0.165, 0.1, 0.165, 0.165, 0.145, 0.145, 0.165, 0.5, 0.6, −1, 0, 0,
-  0.5, 0.25 (`PARAMETERS.md`). The nest is the mode; at iteration 0 everyone chooses; at `k ≥ 1` a traveller re-chooses with probability `1 / (k + 1)` (the method of
-  successive averages, Sheffi 1985), drawn from `Stream::MsaReselection` at (trip, k); the
-  others keep their alternative.
+  0.5, 0.25 (`PARAMETERS.md`). The nest is the mode; at iteration 0 everyone chooses. At `k ≥ 1` a
+  traveller is offered a new choice with probability `max(1 / (k + 1), s)`: the step of the
+  method of successive averages (Sheffi 1985), or `s = r = (c − b) / c` when `r` is above 0.2
+  (else `s = 0`; never above 1), with `c` the cost of the alternative it holds and `b` the
+  least cost among the alternatives of the same mode in its own set, as the choice reads them
+  (systematic costs, the path-size term included, at the times of the last measure); `s = 0`
+  when `c` is not positive. Drawn from `Stream::MsaReselection` at (trip, k). A traveller that
+  is offered takes the model's choice over its whole set, its mode included, whatever it held;
+  the others keep their alternative.
 - **Load:** the chosen route legs as vehicles on the point queue, each entered on the whole
   second its walk ends; an empty route and a journey load nothing.
 - **Measure:** every alternative of every set, taken or not, priced again by walking its legs
-  on the new reading, then the path sizes (Ben-Akiva and Bierlaire 1999) over each set's car
+  on the new reading as its traveller (a route leg entered at the instant it is reached), so
+  the alternative taken costs the time its trip took (`tests/taken_is_the_trip.rs`); then the path sizes (Ben-Akiva and Bierlaire 1999) over each set's car
   routes (a bike or walk route's `ln PS` is 0: their sets hold one route each, found at
   iteration 0); a journey ends when its last ride arrives, so the transit crate's rounded
   `Journey::arrival` is never read.
 - **Assess:** the mean door-to-door time over the finished trips; unfinished = finished before
   the window's end is false (a loaded trip by the loading, plus its last walk; an unloaded one by
-  its departure plus its measured time); the switch share and the found share over the trips
-  with an alternative; the gap `Σ (c_taken − c_least) / Σ c_least` over the sets at the measured
+  its departure plus its measured time); the offered share, the switch share and the found share
+  over the trips with an alternative; the gap `Σ (c_taken − c_least) / Σ c_least` over the sets at the measured
   costs, reported, never judged.
 - **Stop** after an iteration when its found share is at most 0.5 % and the range of the last
   five mean trip times, greatest less least, is at most 0.3 % of the latest (never while one of
   the five has no finished trip); not before `iteration_floor` iterations have run; always at
   the cap. The rule reads the slope of the mean, which the method of successive averages makes
   about the residual over the iteration count, so a run it stops early can still be short of
-  equilibrium; the floor lets a test run to a fixed count. The three shares and the gap are `NaN`
+  equilibrium; the floor lets a test run to a fixed count. The offered, switch and found shares and the gap are `NaN`
   when no trip has an alternative.
+- **What the choice is over.** A traveller chooses among the alternatives in its set, and the
+  set holds what the search found: per mode the fastest route at iteration 0, for cars also
+  every route that was the fastest at a later iteration's reading, and the transit journeys
+  above. It is not every route of the network: a car route that is never the fastest at any
+  reading is never offered, and of two routes of exactly equal time the search's tie rule
+  (`openmobisim-search`) finds one. Shares and the costs of modes are those of a choice over
+  these sets, and a logit share between two routes exists only once both were found.
+- **The window and the mean.** The loading stops at the window's end; a trip not at its door
+  by then is unfinished and has no travel time. The mean trip time, which the stopping rule
+  reads, is over the finished trips of each iteration: when the unfinished count differs
+  between two iterations their means are over different trips, and a queue that pushes trips
+  past the end removes the longest of them from the mean. The iterations table gives the
+  finished and unfinished counts beside every mean; the gap is over every trip with an
+  alternative, at measured costs. A window long enough for every trip to finish (the
+  unfinished count 0) makes the means comparable.
+- **Who chooses again.** Everyone is offered a new choice at least at the plain method's rate
+  `1 / (k + 1)` (under the deterministic model a traveller holding its cheapest keeps it; under
+  the logit its taste decides). A traveller whose best alternative of the same mode would save
+  more than 20 % of the cost of the one it holds (one more than 25 % dearer than that best) is
+  offered at the larger rate of the share it would save, after Smith's proportional switching
+  (1984; his flows move between pairs of routes in proportion to their cost difference, by a
+  small step), outside a band of indifference (Mahmassani and Chang 1987). When cost is
+  proportional to time, one whose car route reads 30 min where its best car route reads 20 min
+  would save a third: it is offered with probability 1/2 at `k = 1` and 1/3 from `k = 2` on;
+  one reading 22 min there would save 9 % and is offered at the plain rate. The chance depends
+  only on the traveller's own two costs, for its origin, destination and departure time, from
+  the last iteration. Only alternatives of the mode held enter `b`, but a traveller that is
+  offered chooses over its whole set: one above the band also reconsiders its mode, at the
+  rate `r`, and travellers of a mode with several alternatives (car routes) are asked more
+  often than those of a mode with one. With one alternative per mode the rule is the plain
+  method. The band 0.2 is a fixed constant of the rule, not a parameter: within it only the
+  plain step acts, so travellers do not keep moving between near-equal routes at a rate that
+  does not fall with `k`. Measured without a band (Braess below, 4 500 travellers, 20 seeds,
+  the mean trip less 1 140 s, mean ± standard error): −8.5 ± 2.1 s under the plain method;
+  −13.9 ± 2.5, −17.5 ± 2.7 and −24.3 ± 3.3 s at constant rates 0.25, 0.5 and 0.75. Near
+  equilibrium only the plain step acts for the least-cost choice; under the logit a traveller
+  may hold, by its taste, an alternative more than the band dearer than the cheapest of its
+  mode, and is then offered at the rate `r` every iteration and, at unchanged costs, repeats
+  its choice. Limits: `r` is the same in any unit of cost but not after a constant is added to
+  every cost (a long shared leg, a mode constant or a fare shrinks it, and below the band the
+  rule is the plain method); it favours short trips (5 min lost beside a 10 min best is
+  `r = 0.33`, beside a 60 min best 0.077); above the band the rate does not fall with `k`, so
+  travellers behind one queue who read the same cost can move together (an early swing on
+  heavily oversaturated small networks); and the chance jumps at the band. Within the band the
+  plain method's limit stays: after `K` iterations about one such traveller in `K` still holds
+  the choice it made at each earlier iteration, on that iteration's costs. The gap reports what
+  is left.
 - Money is 0 for every alternative until a source of money comes through the door; gaps are
   walked at the walking speed by every mode. Transit's walking legs are not on links: the
   links table counts the walkers of walk alternatives only.
@@ -99,15 +165,16 @@ model's unit (minutes in a time-only run: 1 on each of the nine time columns, 0 
 ## Errors
 `run` refuses, never repairs, with a `RunError`: `link_bin`, `iteration_cap`, `max_rides` or
 `nearby_stops` zero; coefficient rows not one per class; a window that is not whole bins, is empty or runs
-past the clock; a trip departing outside the window, or reaching the network by some mode at or
+past the clock; with a timetable, a class whose coefficient of a transit time or of the transfers is
+negative or not finite; a trip departing outside the window, or reaching the network by some mode at or
 after its end (named by external id); the choice model's and the loading's refusals.
 
 ## Bikes
 A bike alternative is a route on the links a bike may use at the bike's speed, in the same set
 and the same rows as the car's and transit's, its nest its mode; it is loaded as a vehicle that
 interacts with nothing and is counted per bin; its gaps are walked. A bike rides 1 500 m in
-360 s through the loop, 405.5 s with 30 m gaps at each end (22.5 s walked, the ride from the
-whole second 23).
+360 s through the loop, 405 s with 30 m gaps at each end (22.5 s walked, the ride from then
+on).
 
 ## Tests
 `cargo test -p openmobisim-loop`. Each expected value comes from outside the crate: test 3,
@@ -118,7 +185,15 @@ thirds with 8 min queues, 11 min without the link, 3 min at 900 veh/h); tests 5 
 Nguyen–Dupuis and Sioux Falls against the same linear program solved by scipy
 (`tests/equilibrium_lp.py`, Larsson and Patriksson 1995) at a demand where its total time is
 unique: the mean trip, `Σ τ x`, the OD times, and every link with a standing queue at its
-capacity; by hand, the bike's 360 s and 405.5 s, the walker's 1 125 s, a journey at 922.5 s,
+capacity (for test 5 the mean over seeds 0 to 19, release only; CI runs it by name). Each of
+tests 3 to 6 and the bottleneck below reports in order: part 1, the queue and the record (each
+car's exit against the point queue replayed in the test on the recorded entries,
+`links.crossings()`; each car's entries along its route, the first at its departure plus the
+walk before its route, each next at its exit from the link before, each link once; both at
+1e-6 s, with cars recorded and queued: a pass means each link's queue and the hand-over between
+links are right for the cars recorded); part 2, the flows; part 3, the choices (each traveller against the best of its own set,
+or the car share against the logit share at the times met; printed, not judged); then the
+mixed numbers that follow from the three (the mean trip, a queue's delay); by hand, the bike's 360 s and 405 s, the walker's 1 125 s, a journey at 922.5 s,
 the cheaper mode taken, the nearest stop tried alone and two journeys on one run
 (`tests/nearby_stops.rs`), an empty route, an unfinished walker, the boarding slack and the most
 rides, the refusals, the stopping rule on hand-made rows; the choice row of each mode by hand
@@ -127,9 +202,11 @@ every part in minutes; the path size of two overlapping car routes, 0 for bike a
 routes); the default run against outside answers: without congestion, the closed-form logit
 shares of car, bike, walk and transit (`tests/no_congestion.rs`), and car against bike behind
 a bottleneck, a hand-derived trajectory solved by scipy (`tests/bottleneck_mode_choice.rs`,
-`tests/fixtures/bottleneck/`; release only, about 27 s in debug, skipped by `cargo test`; CI
-runs it: `cargo test --release -p openmobisim-loop --test bottleneck_mode_choice -- --ignored
---exact one_run_follows_the_trajectory_and_reaches_the_steady_state_within_sampling_error`);
+`tests/fixtures/bottleneck/`; release only, skipped by `cargo test`; CI
+runs it: `cargo test --release -p openmobisim-loop --test bottleneck_mode_choice --test
+nguyen_dupuis -- --ignored --exact
+one_run_follows_the_trajectory_and_reaches_the_steady_state_within_sampling_error
+over_twenty_seeds_each_queued_link_enters_at_its_capacity_within_3_percent`);
 determinism of the whole chain over 1 and 8 threads and two runs (`tests/determinism.rs`: 3 000
 trips, four modes, three transit lines, the nested logit; the demand, the sets and the three
 tables compared to the bit), the one thread-count comparison of the search, the demand and

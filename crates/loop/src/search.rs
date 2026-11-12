@@ -5,13 +5,14 @@
 
 use openmobisim_loading::link_times::LinkTimes;
 use openmobisim_search::search::{Query, Route, fastest_many};
+use openmobisim_transit::cheapest::{CostQuery, Weights, cheapest_by_rides_many};
 use openmobisim_transit::raptor::{self, Journey, by_rides_many};
 use openmobisim_types::ids::{StopId, TransitRunId};
 use openmobisim_types::mode::Mode;
 use openmobisim_types::units::Duration;
 use rayon::prelude::*;
 
-use crate::alternative::{Alternative, Leg, price};
+use crate::alternative::{Alternative, Leg, path_sizes, price};
 use crate::context::Context;
 use crate::whole;
 
@@ -33,13 +34,13 @@ fn routes_by(ctx: &Context<'_>, times: &LinkTimes, mode: Mode) -> Vec<Option<Rou
         else {
             continue;
         };
-        let at = whole(ctx.departure[i] + ctx.gap_walk(o.gap).get());
         who.push(i);
         queries.push(Query {
             origin: o.node,
             destination: d.node,
             mode,
-            departure: ctx.start().saturating_add(at),
+            departure: Duration(ctx.departure[i] + ctx.gap_walk(o.gap).get()),
+            trip: Some(trip),
         });
     }
     let answers = fastest_many(ctx.network, times, &queries);
@@ -62,27 +63,44 @@ fn nearest(list: &[(StopId, Duration)], n: usize) -> Vec<(StopId, Duration)> {
     by_walk
 }
 
-/// Per trip, the journeys on the timetable by number of rides (`by_rides`: for each count of
-/// rides that reaches the door earlier than every smaller count, its earliest journey, fewest
-/// rides first): those between any stops of the trip's two lists, then those from each of the
+/// What a second of each part of a journey costs class `class`, and a transfer: the class's
+/// coefficients per minute over 60.
+fn weights(ctx: &Context<'_>, class: usize) -> Weights {
+    let b = &ctx.parameters.coefficients[class];
+    Weights {
+        first_wait: b[6] / 60.0,
+        in_vehicle: b[3] / 60.0,
+        transfer_wait: b[7] / 60.0,
+        transfer_walk: b[8] / 60.0,
+        transfer: b[9],
+    }
+}
+
+/// Per trip, the journeys on the timetable by number of rides. The earliest (`by_rides`: for
+/// each count of rides that reaches the door earlier than every smaller count, its earliest
+/// journey): those between any stops of the trip's two lists, then those from each of the
 /// `nearby_stops − 1` nearest stops of the origin alone, then those to each of the
-/// `nearby_stops − 1` nearest stops of the destination alone; a journey found before is not repeated. Empty for a
-/// trip without transit, without a stop in reach at either end, or without a journey.
+/// `nearby_stops − 1` nearest stops of the destination alone. Then the cheapest for the
+/// traveller's class between any stops of the two lists (`Cheapest::by_rides`: for each count
+/// that makes a journey cheaper than every smaller count, its cheapest, the walks to and from
+/// the stops priced with it). A journey found before is not repeated. Empty for a trip without
+/// transit, without a stop in reach at either end, or without a journey.
 fn journeys(ctx: &Context<'_>) -> Vec<Vec<Journey>> {
     let Some(timetable) = ctx.timetable else {
         return vec![Vec::new(); ctx.trip_count()];
     };
     let (n, max_rides) = (usize::from(ctx.parameters.nearby_stops) - 1, ctx.parameters.max_rides);
-    let mut who = Vec::new();
-    let mut queries = Vec::new();
+    let (mut who, mut queries) = (Vec::new(), Vec::new());
+    let (mut who_cost, mut cost_queries) = (Vec::new(), Vec::new());
     for i in 0..ctx.trip_count() {
         let trip = ctx.trip(i);
         let (access, egress) = (ctx.demand.access(trip), ctx.demand.egress(trip));
         if access.is_empty() || egress.is_empty() {
             continue;
         }
+        let there = |walk: Duration| ctx.departure[i] + walk.get();
         let at = |&(stop, walk): &(StopId, Duration)| {
-            (stop, ctx.start().saturating_add(whole(ctx.departure[i] + walk.get())))
+            (stop, ctx.start().saturating_add(whole(there(walk))))
         };
         let all: Vec<_> = access.iter().map(at).collect();
         let mut ask = |access: Vec<_>, egress: Vec<_>| {
@@ -96,11 +114,26 @@ fn journeys(ctx: &Context<'_>) -> Vec<Vec<Journey>> {
         for stop in nearest(egress, n) {
             ask(all.clone(), vec![stop]);
         }
+        // The cost of being at a stop of the origin's list: the walk to it, and the wait for
+        // the whole second the traveller is there on.
+        let (b, w) = (&ctx.parameters.coefficients[ctx.class[i]], weights(ctx, ctx.class[i]));
+        let reach = |&(_, walk): &(StopId, Duration)| {
+            let wait = f64::from(whole(there(walk))) - there(walk);
+            b[4] / 60.0 * walk.get() + w.first_wait * wait
+        };
+        who_cost.push(i);
+        cost_queries.push(CostQuery {
+            query: raptor::Query { access: all, egress: egress.to_vec(), max_rides },
+            weights: w,
+            access_cost: access.iter().map(reach).collect(),
+            egress_cost: egress.iter().map(|e| b[5] / 60.0 * e.1.get()).collect(),
+        });
     }
     let slack = Duration(f64::from(ctx.parameters.boarding_slack));
-    let answers = by_rides_many(timetable, slack, &queries);
+    let earliest = by_rides_many(timetable, slack, &queries);
+    let cheapest = cheapest_by_rides_many(timetable, slack, &cost_queries);
     let mut by_trip = vec![Vec::new(); ctx.trip_count()];
-    for (i, answer) in who.into_iter().zip(answers) {
+    for (i, answer) in who.into_iter().zip(earliest).chain(who_cost.into_iter().zip(cheapest)) {
         for journey in answer {
             if !by_trip[i].contains(&journey) {
                 by_trip[i].push(journey);
@@ -129,7 +162,7 @@ fn journey_legs(
             Leg::Journey(journey.clone()),
             Leg::Walk(journey.egress.1),
         ];
-        let time = price(times, ctx.start(), ctx.departure[i], &legs);
+        let time = price(times, ctx.start(), ctx.departure[i], &legs, ctx.trip(i));
         let priced = Alternative { mode: Mode::Transit, legs, time, ln_path_size: 0.0 };
         let cost = ctx.parameters.cost(ctx.class[i], &priced.attributes());
         let runs: Vec<TransitRunId> = journey.rides.iter().map(|r| r.run).collect();
@@ -179,7 +212,7 @@ fn candidates(
 }
 
 /// Append the candidates to `set`; count 1 when one of them is cheaper, without the path-size
-/// term, than everything the set held before.
+/// term, than every alternative of its mode the set held before (the first of a mode counts).
 fn offer(
     ctx: &Context<'_>,
     times: &LinkTimes,
@@ -188,15 +221,17 @@ fn offer(
     candidates: Vec<(Mode, Vec<Leg>)>,
 ) -> u64 {
     let class = ctx.class[i];
-    let cheapest = set
-        .iter()
-        .map(|a| ctx.parameters.time_money_cost(class, &a.attributes()))
-        .fold(f64::INFINITY, f64::min);
+    let cost = |a: &Alternative| ctx.parameters.time_money_cost(class, &a.attributes());
+    let mut cheapest = [f64::INFINITY; 4];
+    for a in set.iter() {
+        let of_mode = &mut cheapest[usize::from(a.mode.as_u8())];
+        *of_mode = of_mode.min(cost(a));
+    }
     let mut found = false;
     for (mode, legs) in candidates {
-        let time = price(times, ctx.start(), ctx.departure[i], &legs);
+        let time = price(times, ctx.start(), ctx.departure[i], &legs, ctx.trip(i));
         let alternative = Alternative { mode, legs, time, ln_path_size: 0.0 };
-        if ctx.parameters.time_money_cost(class, &alternative.attributes()) < cheapest {
+        if cost(&alternative) < cheapest[usize::from(mode.as_u8())] {
             found = true;
         }
         set.push(alternative);
@@ -204,9 +239,12 @@ fn offer(
     u64::from(found)
 }
 
-/// The search stage: every trip's sets grown by what the search found at `times`; the count of
-/// trips for which it found an alternative cheaper, without the path-size term, than their
-/// set's cheapest (a trip with an empty set counts when it is offered anything).
+/// The search stage: every trip's sets grown by what the search found at `times`, the path
+/// sizes of a set that grew rewritten over its new members (the choice that follows reads them;
+/// a path size depends on who is in the set, not on the reading); the count of trips for which
+/// it found an alternative cheaper, without the path-size term, than every alternative of its
+/// mode in their set (the first alternative of a mode counts): a route that beats the routes
+/// of its mode changes what the traveller can do, whatever the other modes cost.
 pub(crate) fn search(
     ctx: &Context<'_>,
     times: &LinkTimes,
@@ -220,7 +258,12 @@ pub(crate) fn search(
         .enumerate()
         .map(|(i, set)| {
             let found = candidates(ctx, times, i, set, &routes, &journeys);
-            offer(ctx, times, i, set, found)
+            let grew = !found.is_empty();
+            let cheaper = offer(ctx, times, i, set, found);
+            if grew {
+                path_sizes(ctx.network, set);
+            }
+            cheaper
         })
         .sum()
 }

@@ -44,9 +44,13 @@ built in metres they are metres in its plane, taken as given. The walk speed is 
 - Trips and classes get dense ids by sorted external id (`ExternalIdTableBuilder`), whatever
   the order of the rows.
 - Linking: each end, for each mode of its set (car, bike, walk; transit by walking), goes to
-  the nearest node by straight line among the nodes with an out-link or an in-link that allows
-  the mode, ties to the lower node id; the gap is that straight line. Each stop goes to its
-  nearest walk node the same way. The nearest node is found on a grid of cells over the nodes,
+a node by straight line, ties to the lower node id; the gap is that straight line. Where
+  both ends are nearest the same node of the mode's network, both join it (no link is
+  travelled); otherwise the origin joins the nearest node with an out-link that allows the mode
+  and the destination the nearest with an in-link. Each stop goes to its nearest node
+  of the walk network, one node for the walk to it and from it (the reach is searched both
+  ways from it). Whether two nodes are
+  connected is the search's to find, not the linking's. The nearest node is found on a grid of cells over the nodes,
   searched in rings until no unseen cell can hold a node as near (equal to a full scan).
 - Reach: once per stop, in parallel by stop, the walk network is searched from the stop's
   node both ways (`Search::reach_backward`, node to stop, and `Search::reach`, stop to node),

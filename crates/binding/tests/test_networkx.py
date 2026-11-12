@@ -1,18 +1,16 @@
 """Bike and walk trips on a jittered grid, built as tables, against networkx's shortest paths.
 
 The derivation of a trip's door-to-door time (the loop's README: a walk off the network, a route
-on it, a walk off it; the route entered on the whole second the first walk ends):
+on it, a walk off it; the route entered at the instant the first walk ends):
 
-    travel_time_s = ceil(g_o / w) + L / v + g_d / w
+    travel_time_s = g_o / w + L / v + g_d / w
 
 where g_o and g_d are the straight lines from the trip's origin and destination to their nodes
 (each end placed at most 8 m from a node, and every other node at least 60 m from that one, so
 the nearest node is that node), w = 4.8 km/h = 4 800 / 3 600 m/s the walking speed (gaps are
 walked by every mode), L networkx's shortest length (Dijkstra by length) between the two nodes
 on the mode's graph, and v the mode's speed: 15 km/h = 15 000 / 3 600 m/s for a bike, w for a
-walker. The departure is a whole second, so the ceiling is taken of the first walk alone; no
-first walk lies within 1e-6 s of a whole second (checked), so the ceiling does not hang on
-rounding. Bikes and walkers ride and walk at free flow, so no one else changes these times.
+walker. Bikes and walkers ride and walk at free flow, so no one else changes these times.
 
 For bikes: 15 % of the streets are one-way for bikes and two-way for walkers, so a bike's route
 is its own (on the bike graph) and differs from a walker's on the same pair; the trips table is a
@@ -50,12 +48,11 @@ def test_bike_and_walk_times_equal_networkx_plus_the_walked_gaps(tmp_path):
             ends.append((x, y, math.hypot(x - pos[node][0], y - pos[node][1])))
         (ox, oy, g_o), (dx, dy, g_d) = ends
         first = g_o / W
-        assert abs(first - round(first)) > 1e-6, "a first walk on a whole second"
         length = nx.shortest_path_length(graphs[mode], o, d, weight="length")
         differ += length != nx.shortest_path_length(graphs["walk" if mode == "bike" else "bike"],
                                                     o, d, weight="length")
         trip = f"t{i:02d}"
-        want[trip] = (mode, math.ceil(first) + length / SPEED[mode] + g_d / W)
+        want[trip] = (mode, first + length / SPEED[mode] + g_d / W)
         rows.append((trip, ox, oy, dx, dy, START + rng.randrange(600), "all", mode))
     assert differ > 0, "the bike and walk graphs give the same length on every pair"
     columns = ["trip_id", "origin_x_m", "origin_y_m", "destination_x_m", "destination_y_m",

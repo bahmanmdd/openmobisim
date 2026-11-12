@@ -1,20 +1,22 @@
 //! The search's arrival against every route enumerated: on five nodes with a link each way
 //! between every pair, loaded with queues (300 cars in the first 600 s of a one-hour window,
-//! 200 queries in its first 1 200 s, where the queues are), the earliest arrival over every simple path, each
-//! walked link by link on the reading from the departure, is the search's arrival. Simple paths
-//! suffice: on first-in-first-out times a route that revisits a node never arrives earlier than
-//! the same route with the loop cut out (Kaufman and Smith 1993).
+//! 200 queries in its first 1 200 s, where the queues are), the earliest arrival over every
+//! simple path, each walked on the reading from the departure by the query's traveller
+//! ([`LinkTimes::route_time`]: link by link, carrying the car whose place the traveller took),
+//! is the search's arrival. Simple paths suffice: on first-in-first-out times a route that
+//! revisits a node never arrives earlier than the same route with the loop cut out (Kaufman
+//! and Smith 1993). Run for one loading, and again over 40 loadings with half the queries
+//! asked by a traveller of the loading, whose own car is then not in its way.
 
 mod common;
 
 use common::{Draws, VALUES, at, car_link, loaded, vehicle, window};
 use openmobisim_graph::network::{Network, NetworkBuilder};
 use openmobisim_loading::input::Vehicle;
-use openmobisim_loading::link_times::LinkTimes;
+use openmobisim_loading::link_times::{LinkTimes, Reader};
 use openmobisim_search::search::{Query, Search};
-use openmobisim_types::ids::{EntityId, LinkId, NodeId};
+use openmobisim_types::ids::{EntityId, LinkId, NodeId, TripId};
 use openmobisim_types::mode::Mode;
-use openmobisim_types::time::Second;
 use openmobisim_types::units::Duration;
 
 /// The five nodes, in metres.
@@ -116,34 +118,41 @@ fn simple_paths(net: &Network, from: NodeId, to: NodeId) -> Vec<Vec<LinkId>> {
     out
 }
 
-/// The arrival of a car on `path` departing at `departure` (seconds since the window's start),
-/// each link entered when the one before it ends.
-fn walk(times: &LinkTimes, path: &[LinkId], departure: f64) -> f64 {
-    path.iter().fold(departure, |t, &l| t + times.time(l, Mode::Car, Duration(t)).get())
+/// The arrival of `reader`'s car on `path` departing at `departure` (seconds since the window's
+/// start): the reading's own walk of the path.
+fn walk(times: &LinkTimes, path: &[LinkId], departure: f64, reader: Reader) -> f64 {
+    let start = Duration(departure);
+    (start + times.route_time(path, Mode::Car, start, reader)).get()
 }
 
-#[test]
-fn the_search_arrives_as_early_as_the_best_of_every_simple_path() {
-    let net = five_nodes();
-    let mut draws = Draws::new(4);
-    let times = loaded(&net, &cars(&net, &mut draws), window(300, 3_600));
-    let mut search = Search::new(&net, &times);
+/// Ask 200 queries of `search` in the first 1 200 s and hold each against every simple path;
+/// with `recorded`, every other query is by a traveller of the loading (a trip below 300).
+/// How many arrived over 1 s later than at free flow, and how many took two links or more.
+fn against_every_path(
+    net: &Network,
+    times: &LinkTimes,
+    draws: &mut Draws,
+    recorded: bool,
+) -> (usize, usize) {
+    let mut search = Search::new(net, times);
     let (mut delayed, mut detours) = (0, 0);
-    for _ in 0..200 {
+    for k in 0..200 {
         let (origin, destination) = (NodeId::new(draws.below(5)), NodeId::new(draws.below(5)));
         let departure = draws.below(1_200);
-        let query = Query { origin, destination, mode: Mode::Car, departure: Second(departure) };
-        let route = search.fastest(&query).expect("every pair is linked");
+        let trip = (recorded && k % 2 == 0).then(|| TripId::new(draws.below(300)));
+        let reader = trip.map_or_else(Reader::stranger, Reader::of);
         let t = f64::from(departure);
-        let paths = simple_paths(&net, origin, destination);
-        let best = paths.iter().map(|p| walk(&times, p, t)).fold(f64::INFINITY, f64::min);
+        let query = Query { origin, destination, mode: Mode::Car, departure: Duration(t), trip };
+        let route = search.fastest(&query).expect("every pair is linked");
+        let paths = simple_paths(net, origin, destination);
+        let best = paths.iter().map(|p| walk(times, p, t, reader)).fold(f64::INFINITY, f64::min);
         let got = route.arrival.get();
-        let q = format!("{origin} to {destination} at {departure} s");
+        let q = format!("{origin} to {destination} at {departure} s for {trip:?}");
         assert!(
             (got - best).abs() <= 1e-9 * best,
             "{q}: the search {got} s, the best path {best} s"
         );
-        let walked = walk(&times, &route.links, t);
+        let walked = walk(times, &route.links, t, reader);
         assert_eq!(got.to_bits(), walked.to_bits(), "{q}: reported {got} s, walked {walked} s");
         // How often the queues mattered: the arrival over 1 s later than at free flow, and the
         // routes of two links or more (on these lengths the direct link is always the fastest
@@ -155,10 +164,37 @@ fn the_search_arrives_as_early_as_the_best_of_every_simple_path() {
         delayed += usize::from(got > free + 1.0);
         detours += usize::from(route.links.len() > 1);
     }
+    (delayed, detours)
+}
+
+#[test]
+fn the_search_arrives_as_early_as_the_best_of_every_simple_path() {
+    let net = five_nodes();
+    let mut draws = Draws::new(4);
+    let times = loaded(&net, &cars(&net, &mut draws), window(300, 3_600));
+    let (delayed, detours) = against_every_path(&net, &times, &mut draws, false);
     // Without queues the test would not test the time dependence.
     assert!(delayed >= 20, "only {delayed} of 200 queries met a queue");
     assert!(detours >= 10, "only {detours} of 200 queries took two links or more");
     eprintln!(
         "{delayed} of 200 queries arrive over 1 s later than at free flow; {detours} take two links or more"
+    );
+}
+
+#[test]
+fn over_40_loadings_and_for_travellers_of_the_loading_too() {
+    let net = five_nodes();
+    let (mut delayed, mut detours) = (0, 0);
+    for seed in 100..140 {
+        let mut draws = Draws::new(seed);
+        let times = loaded(&net, &cars(&net, &mut draws), window(300, 3_600));
+        let (d, r) = against_every_path(&net, &times, &mut draws, true);
+        delayed += d;
+        detours += r;
+    }
+    assert!(delayed >= 800, "only {delayed} of 8 000 queries met a queue");
+    assert!(detours >= 400, "only {detours} of 8 000 queries took two links or more");
+    eprintln!(
+        "{delayed} of 8 000 queries arrive over 1 s later than at free flow; {detours} take two links or more"
     );
 }

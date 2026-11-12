@@ -145,25 +145,40 @@ macro_rules! define_unit {
     };
 }
 
-define_unit!(/// A length.
-    Metres, "m");
-define_unit!(/// A speed. For a bike or a walker, the free-flow speed.
-    Speed, "m/s");
-define_unit!(/// An elapsed time, fractional.
+define_unit!(
+    /// A length.
+    Metres,
+    "m"
+);
+define_unit!(
+    /// A speed. For a bike or a walker, the free-flow speed.
+    Speed,
+    "m/s"
+);
+define_unit!(
+    /// An elapsed time, fractional.
     ///
     /// The clock is whole seconds ([`crate::time::Second`]); this is the type of durations
     /// computed from lengths, speeds and readings, fractional until they are put on the clock.
-    Duration, "s");
-define_unit!(/// A flow rate, in vehicles per second.
+    Duration,
+    "s"
+);
+define_unit!(
+    /// A flow rate, in vehicles per second.
     ///
     /// A capacity is given in vehicles per hour; [`Flow::from_veh_per_hour`] converts it once.
-    Flow, "veh/s");
-define_unit!(/// The cost of an alternative: the systematic utility of the run's choice model, each
+    Flow,
+    "veh/s"
+);
+define_unit!(
+    /// The cost of an alternative: the systematic utility of the run's choice model, each
     /// attribute (time, money and the others) weighted by its coefficient.
     ///
     /// In a time-only run (time coefficient 1, the others 0) it equals the travel time in
     /// seconds. The choice module applies the coefficients; this type only carries the value.
-    Cost, "cost");
+    Cost,
+    "cost"
+);
 
 impl Speed {
     /// From kilometres per hour: a boundary constructor (36 km/h is 10 m/s).

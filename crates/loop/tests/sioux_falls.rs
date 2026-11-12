@@ -32,13 +32,16 @@
 mod benchmark;
 mod common;
 
-use benchmark::{equilibrium, fixtures, link_hours, steady, streams};
-use common::{at, car_link, demand, print_iterations, time_only};
+use benchmark::{Equilibrium, equilibrium, fixtures, link_hours, steady, streams};
+use common::{
+    all_links, at, car_link, demand, far_from_best, print_iterations, replay_queues, time_only,
+};
 use openmobisim_graph::geometry::{LonLat, Projection};
 use openmobisim_graph::network::{Network, NetworkBuilder};
 use openmobisim_loop::parameters::Parameters;
-use openmobisim_loop::run::run;
-use openmobisim_types::ids::EntityId;
+use openmobisim_loop::run::{Run, run};
+use openmobisim_types::ids::{EntityId, LinkId, TripId};
+use openmobisim_types::mode::Mode;
 use openmobisim_types::time::Second;
 
 /// The data rows of a TNTP file: those with at least `fields` fields starting with a number.
@@ -75,9 +78,72 @@ fn network(capacity_scale: f64) -> Network {
     b.build(common::VALUES).expect("a network")
 }
 
+/// Part 3's bearing on part 2, printed, not judged: the deviation of `Σ τ x` over the second
+/// hour's departures from `reference` (veh·s), as taken and as if every traveller more than
+/// 0.5 min from its best (`excess`, from `far_from_best`) had taken that best's route.
+fn tau_x_if_on_best(result: &Run, net: &Network, excess: &[f64], reference: f64) {
+    let free = |route: &[LinkId]| {
+        route.iter().map(|&l| net.free_flow_time(l, Mode::Car).get()).sum::<f64>()
+    };
+    let (mut taken_tau_x, mut best_tau_x) = (0.0, 0.0);
+    for (i, &over) in excess.iter().enumerate() {
+        if over.is_nan() || !(3_600..7_200).contains(&result.trips.departure[i].get()) {
+            continue;
+        }
+        let trip = TripId::from_index(i);
+        let best = result.set(trip).iter().min_by(|a, b| a.time.total_cmp(&b.time));
+        let best = best.expect("a finished trip has a set");
+        let on_taken = free(result.taken(trip).unwrap_or(best).route().expect("a route"));
+        taken_tau_x += on_taken;
+        best_tau_x += if over > 0.5 { free(best.route().expect("a route")) } else { on_taken };
+    }
+    println!(
+        "part 3, choices: Σ τ x of the second hour against the program {:+.3} % as taken, {:+.3} % with the travellers over 0.5 min on their best",
+        100.0 * (taken_tau_x / reference - 1.0),
+        100.0 * (best_tau_x / reference - 1.0)
+    );
+}
+
+/// Part 2 on the links, printed: per link with a standing queue over minutes 80 to 140 its
+/// entries and delay against the program; the cosine of all link flows against the program's.
+/// Returns how many links had a standing queue and those off their capacity by more than
+/// `tol_entries` or never queued by the program.
+fn queued_links(
+    net: &Network,
+    result: &Run,
+    e: &Equilibrium,
+    tol_entries: f64,
+) -> (usize, Vec<String>) {
+    let (mut standing_links, mut off) = (0, Vec::new());
+    let (mut sum_xy, mut sum_xx, mut sum_yy) = (0.0, 0.0, 0.0);
+    for (link, h) in &link_hours(net, result, 80 * 60, 140 * 60) {
+        let id = net.link_ids().external(link.raw()).to_string();
+        let (lp_flow, q_lo, q_hi, cap) = e.links[&id];
+        sum_xy += h.entries * lp_flow;
+        sum_xx += h.entries * h.entries;
+        sum_yy += lp_flow * lp_flow;
+        if h.standing {
+            standing_links += 1;
+            println!(
+                "  link {id:>5}: standing queue, entries {:6.1}, discharge {:6.1}, capacity {cap:6.1} veh/h, mean delay {:4.0} s (program: flow {lp_flow:6.1}, queue {q_lo:3.0} to {q_hi:3.0} s)",
+                h.entries, h.discharge, h.delay
+            );
+            if (h.entries / cap - 1.0).abs() > tol_entries || q_hi <= 0.0 {
+                off.push(id);
+            }
+        }
+    }
+    println!(
+        "part 2, flows: cosine of the link flows against the program's {:.4}",
+        sum_xy / (sum_xx * sum_yy).sqrt()
+    );
+    (standing_links, off)
+}
+
 /// The steady hour against the fixture `file`, solved at `scale`, run with `parameters`,
 /// judged at `tol_time` on the mean trip, `tol_taux` on `Σ τ x`, `tol_entries` of capacity on a
-/// queued link's entries.
+/// queued link's entries. Reported in order: part 1, the queue and the record; part 2, the flows; part 3, the
+/// choices; the mixed numbers that follow from them.
 fn steady_hour(
     file: &str,
     scale: (f64, f64),
@@ -102,40 +168,30 @@ fn steady_hour(
     );
     print_iterations(&result);
     let s = steady(&net, &dem, &result, 3_600, 7_200);
+
+    // Part 1, the queue and the record: every link replayed car by car, every car followed
+    // along its route.
+    let queue = replay_queues(&net, &result, &all_links(&net));
+    println!("part 1, queue: {}", queue.describe(&net));
+
+    // Part 2, flows: Σ τ x; the links with a standing queue at their capacity.
     println!(
-        "second hour: {} trips, mean {:.2} min against {:.2} min",
-        s.count,
-        s.mean / 60.0,
-        e.mean.0 / 60.0
-    );
-    println!(
-        "Σ τ x of the routes taken {:.0} veh·min/h against {:.0}",
+        "part 2, flows: Σ τ x of the routes taken {:.0} veh·min/h against {:.0}",
         s.tau_x / 60.0,
         e.tau_x.0 / 60.0
     );
-    let hours = link_hours(&net, &result, 80 * 60, 140 * 60);
-    let (mut standing_links, mut off) = (0, Vec::new());
-    let (mut sum_xy, mut sum_xx, mut sum_yy) = (0.0, 0.0, 0.0);
-    for (link, h) in &hours {
-        let id = net.link_ids().external(link.raw()).to_string();
-        let (lp_flow, q_lo, q_hi, cap) = e.links[&id];
-        sum_xy += h.entries * lp_flow;
-        sum_xx += h.entries * h.entries;
-        sum_yy += lp_flow * lp_flow;
-        if h.standing {
-            standing_links += 1;
-            println!(
-                "  link {id:>5}: standing queue, entries {:6.1}, discharge {:6.1}, capacity {cap:6.1} veh/h, mean delay {:4.0} s (program: flow {lp_flow:6.1}, queue {q_lo:3.0} to {q_hi:3.0} s)",
-                h.entries, h.discharge, h.delay
-            );
-            if (h.entries / cap - 1.0).abs() > tol_entries || q_hi <= 0.0 {
-                off.push(id);
-            }
-        }
-    }
+    let (standing_links, off) = queued_links(&net, &result, &e, tol_entries);
+
+    // Part 3, choices: each traveller against the best of its own set.
+    let excess = far_from_best(&result);
+    tau_x_if_on_best(&result, &net, &excess, e.tau_x.0);
+
+    // Mixed, following from parts 1 to 3: the mean trip; the OD times.
     println!(
-        "cosine of the link flows against the program's: {:.4}",
-        sum_xy / (sum_xx * sum_yy).sqrt()
+        "mixed: second hour {} trips, mean {:.2} min against {:.2} min",
+        s.count,
+        s.mean / 60.0,
+        e.mean.0 / 60.0
     );
     let (mut outside, mut weight) = (0.0, 0.0);
     for ((o, d), rate, lo, hi) in &e.od {
@@ -145,17 +201,23 @@ fn steady_hour(
         weight += rate;
     }
     println!(
-        "OD times: demand-weighted mean distance outside the program's ranges {:.1} s of a {:.1} s mean trip",
+        "mixed: OD times, demand-weighted mean distance outside the program's ranges {:.1} s of a {:.1} s mean trip",
         outside / weight,
         e.mean.0
     );
-    assert!((s.mean - e.mean.0).abs() <= tol_time * e.mean.0, "mean trip {}", s.mean);
-    assert!((s.tau_x - e.tau_x.0).abs() <= tol_taux * e.tau_x.0, "Σ τ x {}", s.tau_x);
-    assert!(standing_links > 0, "some link has a standing queue");
+
+    queue.judge(&net, true);
+    assert!(
+        (s.tau_x - e.tau_x.0).abs() <= tol_taux * e.tau_x.0,
+        "part 2, flows: Σ τ x {}",
+        s.tau_x
+    );
+    assert!(standing_links > 0, "part 2, flows: some link has a standing queue");
     assert!(
         off.is_empty(),
-        "links with a standing queue off their capacity or never queued by the program: {off:?}"
+        "part 2, flows: links with a standing queue off their capacity or never queued by the program: {off:?}"
     );
+    assert!((s.mean - e.mean.0).abs() <= tol_time * e.mean.0, "mixed: mean trip {}", s.mean);
 }
 
 #[test]

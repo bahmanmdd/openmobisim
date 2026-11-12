@@ -41,7 +41,8 @@ pub enum Stream {
     /// eight alternatives in its even words and eight nests in its odd words; the draw is the
     /// traveller's fixed taste for the run.
     Choice = 0,
-    /// Who re-chooses at an iteration under the method of successive averages. Addressed by
+    /// Who is offered a new choice at an iteration (the method of successive averages,
+    /// adjusted per traveller). Addressed by
     /// (trip, iteration).
     MsaReselection = 1,
 }

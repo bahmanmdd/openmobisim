@@ -12,30 +12,43 @@ use common::{
     VALUES, at, car_link, free_flow, grid_link, grid_node, grid_with, loaded, row, vehicle, window,
 };
 use openmobisim_graph::network::{LinkRow, Network, NetworkBuilder};
-use openmobisim_loading::link_times::LinkTimes;
+use openmobisim_loading::link_times::{LinkTimes, Reader};
 use openmobisim_search::search::{Query, Route, Search};
-use openmobisim_types::ids::{LinkId, NodeId};
+use openmobisim_types::ids::{EntityId, LinkId, NodeId, TripId};
 use openmobisim_types::mode::{Mode, ModeSet};
-use openmobisim_types::time::Second;
+use openmobisim_types::units::Duration;
 
 /// Whether `a` and `b` agree to a relative 1e-12 (a few sums of rounded link times).
 fn close(a: f64, b: f64) -> bool {
     (a - b).abs() <= 1e-12 * b.abs().max(1.0)
 }
 
-/// The fastest route by `mode` from `origin` to `destination` setting out at `departure`.
+/// The fastest route by `mode` from `origin` to `destination` setting out `departure` seconds
+/// after the window's start, for a traveller with no car in the loading.
 fn fastest(
+    net: &Network,
+    times: &LinkTimes,
+    ends: (NodeId, NodeId),
+    mode: Mode,
+    departure: u32,
+) -> Option<Route> {
+    fastest_for(net, times, ends, mode, (departure, None))
+}
+
+/// [`fastest`] for the traveller of trip `car` (`None`: one with no car in the loading).
+fn fastest_for(
     net: &Network,
     times: &LinkTimes,
     (origin, destination): (NodeId, NodeId),
     mode: Mode,
-    departure: u32,
+    (departure, car): (u32, Option<u32>),
 ) -> Option<Route> {
     Search::new(net, times).fastest(&Query {
         origin,
         destination,
         mode,
-        departure: Second(departure),
+        departure: Duration(f64::from(departure)),
+        trip: car.map(TripId::new),
     })
 }
 
@@ -105,20 +118,21 @@ fn two_routes() -> (Network, [LinkId; 3], [NodeId; 2]) {
 #[test]
 fn a_car_takes_the_short_link_until_its_queue_costs_more_than_the_long_way() {
     // Vickrey (1969), as in the loading's tests: 300 cars enter `s` every 2 s from second 0;
-    // car k enters at t = 2k and leaves at 72 + 3k (a 3 s headway), a time of 72 + t/2. Every
-    // recorded entrant lies on that line, so the reading, linear between entrants, is 72 + t/2
-    // on [0, 598], and at an entrant it is that entrant's own time. The long route takes
-    // 72 + 72 = 144 s at any instant. The switch: 72 + t/2 = 144 at t = 144 s. By hand:
-    //   departure   0: `s` (car 0's time, 72 s < 144 s), arrival 72 s;
-    //   departure 100: `s` (car 50's, 122 s < 144 s), arrival 222 s;
-    //   departure 300: `l1`, `l2` (car 150's time on `s` would be 222 s > 144 s), arrival 444 s.
+    // car k enters at t = 2k and leaves at 72 + 3k (a 3 s headway), a time of 72 + t/2. Each
+    // search below is by the car that entered `s` at that instant, which reads its own time
+    // there. The long route takes 72 + 72 = 144 s at any instant. The switch: 72 + t/2 = 144
+    // at t = 144 s. By hand:
+    //   car   0, departure   0: `s` (its own 72 s < 144 s), arrival 72 s;
+    //   car  50, departure 100: `s` (its own 122 s < 144 s), arrival 222 s;
+    //   car 150, departure 300: `l1`, `l2` (its own time on `s` is 222 s > 144 s), arrival 444 s.
     let (net, [s, l1, l2], [a, b]) = two_routes();
     let cars: Vec<_> = (0..300).map(|k| vehicle(k, Mode::Car, &[s], 2 * k)).collect();
     let times = loaded(&net, &cars, window(300, 3_600));
-    for (departure, route, arrival) in
-        [(0, vec![s], 72.0), (100, vec![s], 222.0), (300, vec![l1, l2], 444.0)]
+    for (departure, k, route, arrival) in
+        [(0, 0, vec![s], 72.0), (100, 50, vec![s], 222.0), (300, 150, vec![l1, l2], 444.0)]
     {
-        let car = fastest(&net, &times, (a, b), Mode::Car, departure).expect("connected");
+        let car =
+            fastest_for(&net, &times, (a, b), Mode::Car, (departure, Some(k))).expect("connected");
         assert_eq!(car.links, route, "departing at {departure} s");
         let got = car.arrival.get();
         assert!(
@@ -126,8 +140,9 @@ fn a_car_takes_the_short_link_until_its_queue_costs_more_than_the_long_way() {
             "departing at {departure} s: arrival {got} s, by hand {arrival} s"
         );
         // The arrival is the reading's own walk of the route, to the bit.
-        let walked =
-            f64::from(departure) + times.route_time(&car.links, Mode::Car, Second(departure)).get();
+        let start = Duration(f64::from(departure));
+        let reader = Reader::of(TripId::new(k));
+        let walked = (start + times.route_time(&car.links, Mode::Car, start, reader)).get();
         assert_eq!(
             got.to_bits(),
             walked.to_bits(),

@@ -32,7 +32,12 @@
 //! chi-square at the 0.999 quantile (a correct sampler fails once in a thousand seeds); and,
 //! since tastes are fixed and costs never change, nobody switches and nothing new is found
 //! after iteration 0, so the stopping rule of the specification ends the run at its first
-//! reading of five iterations.
+//! reading of five iterations. Without transit each mode holds one alternative, so the least
+//! cost of a traveller's mode is the cost it holds and nobody saves a share above the band: at
+//! iteration 0 everyone chooses (offered share exactly 1) and at `k >= 1` each traveller is
+//! offered with the plain step `1 / (k + 1)` by its own draw, so the offered share is a binomial
+//! share of mean `p = 1 / (k + 1)` and standard deviation `sqrt(p (1 - p) / n)` over the `n`
+//! trips; it is judged within 4 of those standard deviations.
 //!
 //! For bikes: the bike is one of the modes judged, at 360 s and its closed-form share (0.4027
 //! of the trips without transit).
@@ -185,6 +190,23 @@ fn settled_at_once(result: &Run) {
     assert_eq!(result.iterations.len(), 5, "at the first five iterations");
 }
 
+/// The offered share of a run where nobody is above the band: exactly 1 at iteration 0, then
+/// within 4 binomial standard deviations of the plain step `1 / (k + 1)` over `n` trips.
+fn offered_at_the_plain_step(result: &Run, n: usize) {
+    assert!(result.iterations[0].offered_share.to_bits() == 1.0_f64.to_bits(), "iteration 0");
+    for it in &result.iterations[1..] {
+        let p = 1.0 / f64::from(it.iteration + 1);
+        let sd = (p * (1.0 - p) / n as f64).sqrt();
+        let off = (it.offered_share - p).abs();
+        assert!(
+            off <= 4.0 * sd,
+            "iteration {}: offered {} against {p}",
+            it.iteration,
+            it.offered_share
+        );
+    }
+}
+
 /// Car, bike and walk at `seed`: the chi-square statistic of the counts (2 degrees of freedom).
 fn three_modes(seed: u64) -> f64 {
     let net = street_and_path();
@@ -196,6 +218,7 @@ fn three_modes(seed: u64) -> f64 {
     let parameters = Parameters { seed, ..Parameters::defaults(1) };
     let result = run(&net, &dem, None, (Second(0), Second(7_200)), &parameters).expect("a run");
     settled_at_once(&result);
+    offered_at_the_plain_step(&result, rows.len());
     let times = [CAR_S, BIKE_S, WALK_S];
     let mut counts = [0.0; 3];
     for i in 0..rows.len() {

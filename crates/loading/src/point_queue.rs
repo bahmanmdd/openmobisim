@@ -33,8 +33,8 @@
 //!
 //! # The clock
 //!
-//! Inside, an instant is `f64` seconds since the window's start. A departure is a whole
-//! [`Second`]; an arrival or an entry is fractional, a [`Duration`] since the window's start.
+//! An instant is `f64` seconds since the window's start, a [`Duration`]: a departure, an entry
+//! and an arrival alike, none of them rounded to a whole second.
 
 use core::cmp::{Ordering, Reverse};
 use std::collections::BinaryHeap;
@@ -43,7 +43,7 @@ use std::collections::binary_heap::PeekMut;
 use openmobisim_graph::network::Network;
 use openmobisim_types::ids::{EntityId, LinkId, TripId};
 use openmobisim_types::mode::Mode;
-use openmobisim_types::time::{Second, StepGrid};
+use openmobisim_types::time::StepGrid;
 use openmobisim_types::units::Duration;
 
 use crate::input::{LoadError, Vehicle, check};
@@ -64,10 +64,9 @@ pub struct Loading {
 /// The trips that arrived before the window's end, sorted by trip.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Finished {
-    window_start: Second,
     trip: Vec<TripId>,
     mode: Vec<Mode>,
-    departure: Vec<Second>,
+    departure: Vec<Duration>,
     arrival: Vec<Duration>,
 }
 
@@ -96,9 +95,9 @@ impl Finished {
         &self.mode
     }
 
-    /// Each trip's departure.
+    /// Each trip's departure, in seconds since the window's start.
     #[must_use]
-    pub fn departures(&self) -> &[Second] {
+    pub fn departures(&self) -> &[Duration] {
         &self.departure
     }
 
@@ -115,8 +114,7 @@ impl Finished {
     /// If `i` is out of range.
     #[must_use]
     pub fn travel_time(&self, i: usize) -> Duration {
-        let start = f64::from(self.departure[i].get() - self.window_start.get());
-        Duration(self.arrival[i].get() - start)
+        self.arrival[i] - self.departure[i]
     }
 }
 
@@ -125,7 +123,7 @@ impl Finished {
 pub struct Unfinished {
     trip: Vec<TripId>,
     mode: Vec<Mode>,
-    departure: Vec<Second>,
+    departure: Vec<Duration>,
     link: Vec<LinkId>,
     entered: Vec<Duration>,
 }
@@ -155,9 +153,9 @@ impl Unfinished {
         &self.mode
     }
 
-    /// Each trip's departure.
+    /// Each trip's departure, in seconds since the window's start.
     #[must_use]
-    pub fn departures(&self) -> &[Second] {
+    pub fn departures(&self) -> &[Duration] {
         &self.departure
     }
 
@@ -225,20 +223,18 @@ pub fn load(
     window: StepGrid,
 ) -> Result<Loading, LoadError> {
     let order = check(network, vehicles, window)?;
-    let start = window.origin().get();
-    let end = f64::from(window.end().get() - start);
-    let departs = |v: &Vehicle| f64::from(v.departure.get() - start);
+    let end = f64::from(window.end().get() - window.origin().get());
     let mut recorder = Recorder::new(network.link_count(), window);
     let mut outcome = vec![Outcome::Arrived(f64::NAN); order.len()];
-    run_cars(network, vehicles, &order, (start, end), &mut recorder, &mut outcome);
+    run_cars(network, vehicles, &order, end, &mut recorder, &mut outcome);
     for (rank, &i) in order.iter().enumerate() {
         let v = &vehicles[i as usize];
         if v.mode != Mode::Car {
-            outcome[rank] = free_flow(network, v, departs(v), end, &mut recorder);
+            outcome[rank] = free_flow(network, v, v.departure.get(), end, &mut recorder);
         }
     }
 
-    let mut finished = Finished { window_start: window.origin(), ..Finished::default() };
+    let mut finished = Finished::default();
     let mut unfinished = Unfinished::default();
     for (rank, &i) in order.iter().enumerate() {
         let v = &vehicles[i as usize];
@@ -305,13 +301,12 @@ struct Car {
 /// A car's place in its route before it departs.
 const NOT_DEPARTED: u32 = u32::MAX;
 
-/// Run the cars' events while they are due before `end`, `start` the window's first second;
-/// fill each car's outcome.
+/// Run the cars' events while they are due before `end`; fill each car's outcome.
 fn run_cars(
     network: &Network,
     vehicles: &[Vehicle],
     order: &[u32],
-    (start, end): (u32, f64),
+    end: f64,
     recorder: &mut Recorder,
     outcome: &mut [Outcome],
 ) {
@@ -322,7 +317,7 @@ fn run_cars(
         let v = &vehicles[i as usize];
         if v.mode == Mode::Car {
             let rank = u32::try_from(rank).expect("at most 2^32 vehicles");
-            heap.push(Reverse(Event { time: f64::from(v.departure.get() - start), rank }));
+            heap.push(Reverse(Event { time: v.departure.get(), rank }));
         }
     }
     // The earliest event is handled in place: replaced by the car's next one (one sift down),
@@ -333,7 +328,8 @@ fn run_cars(
             break;
         }
         let r = rank as usize;
-        let route = &vehicles[order[r] as usize].route;
+        let vehicle = &vehicles[order[r] as usize];
+        let route = &vehicle.route;
         let car = &mut cars[r];
         let next = if car.at == NOT_DEPARTED { 0 } else { car.at as usize + 1 };
         let Some(&link) = route.get(next) else {
@@ -342,7 +338,7 @@ fn run_cars(
             continue;
         };
         let exit = queues.enter(link, time);
-        recorder.car(link, time, exit);
+        recorder.car(link, time, exit, vehicle.trip);
         *car = Car {
             at: u32::try_from(next).expect("routes of fewer than 2^32 links"),
             entered: time,

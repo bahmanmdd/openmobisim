@@ -16,7 +16,7 @@
 
 use std::collections::HashMap;
 
-use openmobisim_demand::index::NodeIndex;
+use openmobisim_demand::index::{Joins, NodeIndex};
 use openmobisim_demand::reach::NearStops;
 use openmobisim_graph::network::Network;
 use openmobisim_types::ids::{EntityId, NodeId};
@@ -38,7 +38,7 @@ pub(crate) fn derive(
     transfer_walk_max: f64,
     report: &mut Report,
 ) -> Result<Vec<Footpath>, GtfsError> {
-    let walk = NodeIndex::new(network, Mode::Walk);
+    let walk = NodeIndex::new(network, Mode::Walk, Joins::Either);
     let mut ends: Vec<(NodeId, f64)> = Vec::with_capacity(stops.xy.len());
     for &p in &stops.xy {
         ends.push(walk.nearest(p).ok_or(GtfsError::NoWalkLinks)?);
