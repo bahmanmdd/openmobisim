@@ -37,7 +37,7 @@ pub enum ChoiceModel {
     Logit,
 }
 
-/// The loop's parameters. The defaults are the rulings's; see `PARAMETERS.md` for the sources.
+/// The loop's parameters. The defaults and their sources are listed in `PARAMETERS.md`.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Parameters {
     /// The length of a bin of the links table, seconds. The link-time reading does not depend
@@ -80,7 +80,7 @@ impl Parameters {
         0.25,
     ];
 
-    /// The defaults of the rulings for a run with `classes` user classes.
+    /// The defaults (`PARAMETERS.md`) for a run with `classes` user classes.
     #[must_use]
     pub fn defaults(classes: u32) -> Self {
         Self {

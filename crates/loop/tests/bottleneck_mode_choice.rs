@@ -386,7 +386,7 @@ const Z_999_OVER_36: f64 = 4.0;
 /// One run, judged at its sampling error by hand (`third_hour_time_sd`): each group's car share at the binomial error of its travellers, the third hour's
 /// car share at the binomial error of its travellers (an upper bound: the queue's feedback
 /// narrows it), the third hour's car trip at `TIME_SDS` standard deviations of the queue's
-/// sampling error. PROPOSED tolerances, the user's to set: the first two are sampling theory
+/// sampling error. Provisional tolerances: the first two are sampling theory
 /// alone; the third is wider than the 3.29 of sampling theory to leave room for the scatter
 /// of the iteration itself, which the hand value does not cover.
 #[test]

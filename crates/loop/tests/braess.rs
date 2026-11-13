@@ -15,15 +15,21 @@
 //! residual with the deterministic choice (measured over seeds, rule off, 300 iterations: the
 //! mean −1.4 % ± 0.7, the queues −2.5 % ± 3.8 and −2.9 % ± 3.9; under the present re-choice,
 //! at the rule over seeds 0 to 19, −1.31 % ± 0.25 and −2.7 % ± 1.1 and −2.6 % ± 1.2) gives 2 %
-//! on the mean trip, 0.03 on a route share, 8 % on each queue delay. The convergence tier
+//! on the mean trip, 0.03 on a route share, 8 % on each queue delay, judged on their mean over
+//! seeds 0 to 4 (one seed scatters about as much as the tolerances); part 1, the queue and the
+//! record, in every seed. The convergence tier
 //! (ignored in the debug suite; CI runs it in release), 72 000 travellers (demand and
 //! capacities scaled together, the equilibrium invariant) to a fixed 1 000 iterations: the
 //! residual vanishes with the population, not with iterations (18 000 travellers stay −0.5 %
 //! on the mean from 1 000 to 10 000 iterations; 72 000 reached −0.06 % and +0.02 % over two
 //! seeds, the queues within 0.31 %, under the plain method of successive averages; under the
 //! loop's present re-choice seed 0 gives −0.04 % and the queues within 0.69 %), so it is
-//! judged at 0.5 % on the mean, 0.005 on a share, 1 % on each queue. The cases without a
-//! binding bottleneck: 2 % of the trip and 5 % of a crossing time.
+//! judged on seed 0 at 0.5 % on the mean, 0.005 on a share, 1 % on each queue. Over seeds 0 to
+//! 5 the mean trip is −0.17 % ± 0.06 of 1 140 s, and two of the six seeds (1 and 2) exceed the
+//! 1 % limit on a queue delay (−5.6 s and −4.8 s of 480 s), so the test, judged at seed 0,
+//! depends on its seed. The cases
+//! without a binding bottleneck (4 500 and 2 700 travellers): 2 % of the trip and 5 % of a
+//! crossing time, and at least 0.97 on s-a-b-t at 900 veh/h, on their mean over seeds 0 to 4.
 
 #![allow(
     clippy::cast_precision_loss,
@@ -35,8 +41,8 @@
 mod common;
 
 use common::{
-    car_link, demand, departed_in, far_from_best, link, link_cars, mean_time, network,
-    print_iterations, replay_queues, share_via, stream, time_only,
+    SEEDS, car_link, demand, departed_in, far_from_best, link, link_cars, mean_se, mean_time,
+    network, print_iterations, replay_queues, seed_mean, share_via, stream, time_only,
 };
 use openmobisim_graph::network::Network;
 use openmobisim_loop::parameters::Parameters;
@@ -79,65 +85,70 @@ fn steady_with(net: &Network, rate_h: f64, parameters: &Parameters) -> Run {
     result
 }
 
-fn steady(net: &Network, rate_h: f64) -> Run {
-    let result = steady_with(net, rate_h, &time_only(200));
+/// `rate_h` veh/h at `seed`, the regular tier's parameters otherwise.
+fn steady(net: &Network, rate_h: f64, seed: u64) -> Run {
+    let result = steady_with(net, rate_h, &Parameters { seed, ..time_only(200) });
     print_iterations(&result);
     result
 }
 
-/// The 19-minute case at `scale` times the population run with `parameters`, judged at
-/// `mean_tol` of the trip, `share_tol` on a share and `queue_tol` of a queue.
-fn nineteen_minutes(
-    scale: f64,
-    parameters: &Parameters,
-    mean_tol: f64,
-    share_tol: f64,
-    queue_tol: f64,
-) {
+/// One run of the 19-minute case at `scale` times the population with `parameters`. Judged in
+/// the run: every second-hour trip finishes; part 1, the queue and the record. Returned, the
+/// quantities judged against theory: the shares of s-a-t, s-b-t and s-a-b-t, the second hour's
+/// mean trip, the queue delays at s→a and b→t.
+fn nineteen_minutes(scale: f64, parameters: &Parameters) -> [f64; 6] {
     let net = braess_at(true, scale);
     let result = steady_with(&net, 1_500.0 * scale, parameters);
     let hour2 = departed_in(&result, 3_600, 7_200);
     assert_eq!(hour2.len(), (1_500.0 * scale) as usize, "every second-hour trip finishes");
     let (ab, sb, at) = (link(&net, "ab"), link(&net, "sb"), link(&net, "at"));
     let (sa, bt) = (link(&net, "sa"), link(&net, "bt"));
-    println!("{} iterations at {scale} times the population", result.iterations.len());
+    let seed = parameters.seed;
+    println!("seed {seed}: {} iterations at {scale} times the population", result.iterations.len());
 
     // Part 1, the queue and the record: the two bottlenecks replayed car by car, every car
     // followed along its route.
     let queue = replay_queues(&net, &result, &[sa, bt]);
-    println!("part 1, queue: {}", queue.describe(&net));
-
-    // Part 2, flows: the three route shares, a third each.
-    let shares = [at, sb, ab].map(|l| share_via(&result, &hour2, l));
-    println!(
-        "part 2, flows: shares s-a-t {:.3}, s-b-t {:.3}, s-a-b-t {:.3} against 1/3 each",
-        shares[0], shares[1], shares[2]
-    );
+    println!("seed {seed}, part 1, queue: {}", queue.describe(&net));
 
     // Part 3, choices: each traveller against the best of its own set.
     let _ = far_from_best(&result);
 
-    // Mixed, following from parts 1 to 3: the mean trip, the route times, the queue delays.
-    let mean = mean_time(&result, &hour2);
+    // Mixed: the route times, printed.
     let by_route = [at, sb, ab].map(|l| {
         let on: Vec<usize> =
             hour2.iter().copied().filter(|&i| common::took(&result, i, l)).collect();
         mean_time(&result, &on)
     });
-    let (_, sa_time) = link_cars(&result, sa, 80 * 60, 140 * 60);
-    let (_, bt_time) = link_cars(&result, bt, 80 * 60, 140 * 60);
-    let (q_sa, q_bt) = (sa_time - 60.0, bt_time - 60.0);
     println!(
-        "mixed: mean trip {mean:.1} s against 1 140 s; route times s-a-t {:.1}, s-b-t {:.1}, s-a-b-t {:.1} s",
+        "seed {seed}, mixed: route times s-a-t {:.1}, s-b-t {:.1}, s-a-b-t {:.1} s against 1 140 s",
         by_route[0], by_route[1], by_route[2]
     );
+    queue.judge(&net, true);
+    let shares = [at, sb, ab].map(|l| share_via(&result, &hour2, l));
+    let (_, sa_time) = link_cars(&result, sa, 80 * 60, 140 * 60);
+    let (_, bt_time) = link_cars(&result, bt, 80 * 60, 140 * 60);
+    let mean = mean_time(&result, &hour2);
+    [shares[0], shares[1], shares[2], mean, sa_time - 60.0, bt_time - 60.0]
+}
+
+/// Judge the 19-minute case's quantities `m` (from [`nineteen_minutes`], over one run or the
+/// mean over seeds) at `mean_tol` of the trip, `share_tol` on a share and `queue_tol` of a
+/// queue.
+fn judge_nineteen_minutes(m: [f64; 6], mean_tol: f64, share_tol: f64, queue_tol: f64) {
+    // Part 2, flows: the three route shares, a third each.
+    println!(
+        "part 2, flows: shares s-a-t {:.3}, s-b-t {:.3}, s-a-b-t {:.3} against 1/3 each",
+        m[0], m[1], m[2]
+    );
+    // Mixed, following from parts 1 to 3: the mean trip, the queue delays.
+    let [mean, q_sa, q_bt] = [m[3], m[4], m[5]];
+    println!("mixed: mean trip {mean:.1} s against 1 140 s");
     println!(
         "mixed: queue delays s→a {q_sa:.1} s, b→t {q_bt:.1} s against 480 s each, {:.1} s against 960 s",
         q_sa + q_bt
     );
-
-    queue.judge(&net, true);
-    for share in shares {
+    for share in &m[..3] {
         assert!((share - 1.0 / 3.0).abs() <= share_tol, "part 2, flows: share {share}");
     }
     assert!((mean - 1_140.0).abs() <= mean_tol * 1_140.0, "mixed: mean trip {mean}");
@@ -145,49 +156,74 @@ fn nineteen_minutes(
     assert!((q_bt - 480.0).abs() <= queue_tol * 480.0, "mixed: queue at b→t {q_bt}");
 }
 
+/// The regular tier: part 1 in every seed; the shares, the mean trip and the queue delays on
+/// their mean over seeds 0 to 4.
 #[test]
+#[ignore = "release only: 22 s in debug, 2 s in release; CI runs it by name with --ignored"]
 fn with_the_added_link_every_trip_takes_19_min_split_in_thirds_with_8_min_queues() {
-    nineteen_minutes(1.0, &time_only(200), 0.02, 0.03, 0.08);
+    let runs: Vec<[f64; 6]> = (0..SEEDS)
+        .map(|seed| nineteen_minutes(1.0, &Parameters { seed, ..time_only(200) }))
+        .collect();
+    let labels = [
+        "part 2, flows: share s-a-t against 1/3",
+        "part 2, flows: share s-b-t against 1/3",
+        "part 2, flows: share s-a-b-t against 1/3",
+        "mixed: mean trip, s, against 1 140",
+        "mixed: queue delay s→a, s, against 480",
+        "mixed: queue delay b→t, s, against 480",
+    ];
+    let mut m = [0.0; 6];
+    for (k, label) in labels.iter().enumerate() {
+        m[k] = seed_mean(label, &runs.iter().map(|r| r[k]).collect::<Vec<_>>());
+    }
+    judge_nineteen_minutes(m, 0.02, 0.03, 0.08);
 }
 
-/// The convergence tier: 72 000 travellers to a fixed 1 000 iterations.
+/// The convergence tier: 72 000 travellers to a fixed 1 000 iterations, seed 0.
 #[test]
 #[ignore = "the convergence tier: about 45 s in release, run by CI's release step"]
 fn at_16_times_the_population_and_1000_iterations_within_0_5_percent_and_1_percent_on_a_queue() {
     let fixed = Parameters { iteration_floor: 1_000, ..time_only(1_000) };
-    nineteen_minutes(16.0, &fixed, 0.005, 0.005, 0.01);
+    judge_nineteen_minutes(nineteen_minutes(16.0, &fixed), 0.005, 0.005, 0.01);
 }
 
+/// The mean trip and the crossing time of s→a on their mean over seeds 0 to 4.
 #[test]
 fn without_the_added_link_every_trip_takes_11_min_with_no_queue() {
     let net = braess(false);
-    let result = steady(&net, 1_500.0);
-    let hour2 = departed_in(&result, 3_600, 7_200);
-    let mean = mean_time(&result, &hour2);
-    let (_, sa_time) = link_cars(&result, link(&net, "sa"), 80 * 60, 140 * 60);
-    println!("mean trip {mean:.1} s against 660 s; s→a crossing {sa_time:.1} s against 60 s");
+    let runs: Vec<[f64; 2]> = (0..SEEDS)
+        .map(|seed| {
+            let result = steady(&net, 1_500.0, seed);
+            let hour2 = departed_in(&result, 3_600, 7_200);
+            let (_, sa_time) = link_cars(&result, link(&net, "sa"), 80 * 60, 140 * 60);
+            [mean_time(&result, &hour2), sa_time]
+        })
+        .collect();
+    let mean =
+        seed_mean("mean trip, s, against 660", &runs.iter().map(|r| r[0]).collect::<Vec<_>>());
+    let sa_time =
+        seed_mean("s→a crossing, s, against 60", &runs.iter().map(|r| r[1]).collect::<Vec<_>>());
     assert!((mean - 660.0).abs() <= 0.02 * 660.0, "mean trip {mean}");
     assert!((sa_time - 60.0).abs() <= 0.05 * 60.0, "no queue at s→a: {sa_time}");
 }
 
+/// The mean trip and the share of s-a-b-t on their mean over seeds 0 to 4.
 #[test]
 fn at_900_veh_h_the_added_link_helps_everyone_3_min() {
     let net = braess(true);
-    let result = steady(&net, 900.0);
-    let hour2 = departed_in(&result, 3_600, 7_200);
-    let mean = mean_time(&result, &hour2);
-    let via_ab = share_via(&result, &hour2, link(&net, "ab"));
-    println!("mean trip {mean:.1} s against 180 s; share s-a-b-t {via_ab:.3}");
+    let runs: Vec<[f64; 2]> = (0..SEEDS)
+        .map(|seed| {
+            let result = steady(&net, 900.0, seed);
+            let hour2 = departed_in(&result, 3_600, 7_200);
+            [mean_time(&result, &hour2), share_via(&result, &hour2, link(&net, "ab"))]
+        })
+        .collect();
+    let mean =
+        seed_mean("mean trip, s, against 180", &runs.iter().map(|r| r[0]).collect::<Vec<_>>());
+    let via_ab =
+        seed_mean("share s-a-b-t, at least 0.97", &runs.iter().map(|r| r[1]).collect::<Vec<_>>());
     assert!((mean - 180.0).abs() <= 0.02 * 180.0, "mean trip {mean}");
     assert!(via_ab >= 0.97, "share {via_ab}");
-}
-
-/// The mean and its standard error (the standard deviation over `√n`) of `v`.
-fn mean_se(v: &[f64]) -> (f64, f64) {
-    let n = v.len() as f64;
-    let mean = v.iter().sum::<f64>() / n;
-    let var = v.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / (n - 1.0);
-    (mean, (var / n).sqrt())
 }
 
 /// The 19-minute case of 4 500 travellers at `seed`, its regular tier's parameters otherwise:

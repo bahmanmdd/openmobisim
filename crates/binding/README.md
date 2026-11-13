@@ -112,5 +112,7 @@ Each expected value comes from outside the simulator:
   1 501 m not (1 500 m); two lines joined by a 399 m walk and not by a 401 m one (400 m).
 - `test_delft.py`: Delft's extract and feed read through Python, the feed's counts against
   gtfs-kit's (`crates/io-gtfs/tests/fixtures/delft/expected.csv`), the read times printed.
+- `test_10_delft.py`: Delft with signals ignored, the whole run through Python; release only,
+  skipped unless `TEST_10=1` (about a minute; not in CI); the file's header says what it judges.
 - `test_determinism.py`: a logit run of 400 trips twice and at `RAYON_NUM_THREADS` 1 and 8:
   `trips.parquet` and `links.parquet` byte-identical.

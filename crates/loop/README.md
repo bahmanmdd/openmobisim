@@ -9,9 +9,10 @@ stopping rule; and the three tables a run returns. Depends on `openmobisim-types
   network and on the timetable), and the `Timetable` (`openmobisim-transit`) or none.
 - The window `(start, end)`, two seconds of the clock: the study period, the user's, never
   defaulted; a whole number of link bins long.
-- `Parameters` (`PARAMETERS.md`, the rulings): `link_bin` (s), `iteration_cap`, `iteration_floor`, `seed`,
-  `boarding_slack` (s), `max_rides`, `nearby_stops`, `choice` (deterministic or logit), `nest_scale`, and per
-  user class the sixteen coefficients of the choice row (below).
+- `Parameters` (defaults and their sources in `PARAMETERS.md`): `link_bin` (s), `iteration_cap`,
+  `iteration_floor`, `seed`, `boarding_slack` (s), `max_rides`, `nearby_stops`, `choice`
+  (deterministic or logit), `nest_scale`, and per user class the sixteen coefficients of the
+  choice row (below).
 
 ## Outputs
 `run::run` returns a `Run`:
@@ -43,10 +44,11 @@ model's unit (minutes in a time-only run: 1 on each of the nine time columns, 0 
   door and its node, or a transit access walk, priced by the demand's seconds and loaded
   nowhere), then a route on the network (car, bike or walk; empty when the origin's node is
   the destination's) or a journey on the timetable, then a walk. A set is append-only, so an
-  alternative keeps its position and the traveller's taste (the rulings).
+  alternative keeps its position and the traveller's taste (its random draw, fixed for the run:
+  `crates/choice/README.md`).
 - **Search:** cars every iteration (`fastest_many` on the last loading's reading, free flow at
   iteration 0); bikes, walkers and transit at iteration 0 only, since their costs never change
-  in 2.0, a property, not an option. A route not yet in the set is appended; it is *found* when
+  in release 0.2, a property, not an option. A route not yet in the set is appended; it is *found* when
   its cost without the path-size term is strictly below that of every alternative of its mode
   in the set (the first alternative of a mode counts as found): a faster car route counts
   for a traveller whose bike is cheaper still. A set that grew has its path sizes rewritten at once, so
@@ -185,7 +187,14 @@ thirds with 8 min queues, 11 min without the link, 3 min at 900 veh/h); tests 5 
 Nguyen–Dupuis and Sioux Falls against the same linear program solved by scipy
 (`tests/equilibrium_lp.py`, Larsson and Patriksson 1995) at a demand where its total time is
 unique: the mean trip, `Σ τ x`, the OD times, and every link with a standing queue at its
-capacity (for test 5 the mean over seeds 0 to 19, release only; CI runs it by name). Each of
+capacity (for test 5 the mean over seeds 0 to 19, release only; CI runs it by name). Tests 3
+and 4 at 4 500 travellers or fewer and test 5's steady hour are judged against theory on the
+mean over seeds 0 to 4, one seed scattering about as much as their tolerances, with each
+seed's values and the standard error printed; part 1 and the per-traveller checks (the long
+route at free flow, which links queue) in every seed. Of them, Braess's 19-minute case and
+Nguyen–Dupuis's steady hour are release only (about 20 s each in debug); CI runs them by name.
+Test 3's iteration-1 hand test, test 4's convergence tier (72 000 travellers) and test 6 are
+judged on seed 0. Each of
 tests 3 to 6 and the bottleneck below reports in order: part 1, the queue and the record (each
 car's exit against the point queue replayed in the test on the recorded entries,
 `links.crossings()`; each car's entries along its route, the first at its departure plus the
@@ -203,9 +212,11 @@ routes); the default run against outside answers: without congestion, the closed
 shares of car, bike, walk and transit (`tests/no_congestion.rs`), and car against bike behind
 a bottleneck, a hand-derived trajectory solved by scipy (`tests/bottleneck_mode_choice.rs`,
 `tests/fixtures/bottleneck/`; release only, skipped by `cargo test`; CI
-runs it: `cargo test --release -p openmobisim-loop --test bottleneck_mode_choice --test
-nguyen_dupuis -- --ignored --exact
+runs it: `cargo test --release -p openmobisim-loop --test bottleneck_mode_choice --test braess
+--test nguyen_dupuis -- --ignored --exact
 one_run_follows_the_trajectory_and_reaches_the_steady_state_within_sampling_error
+with_the_added_link_every_trip_takes_19_min_split_in_thirds_with_8_min_queues
+the_steady_hour_is_the_capacity_constrained_equilibrium
 over_twenty_seeds_each_queued_link_enters_at_its_capacity_within_3_percent`);
 determinism of the whole chain over 1 and 8 threads and two runs (`tests/determinism.rs`: 3 000
 trips, four modes, three transit lines, the nested logit; the demand, the sets and the three

@@ -49,7 +49,7 @@ use openmobisim_types::mode::{Mode, ModeSet};
 use openmobisim_types::time::Second;
 use openmobisim_types::units::Metres;
 
-/// The build values of the rulings.
+/// The default per-lane capacity (veh/h), bike speed and walking speed (km/h) of `PARAMETERS.md`.
 const VALUES: BuildValues =
     BuildValues { capacity_per_lane: 1_800.0, bike_speed: 15.0, walk_speed: 4.8 };
 

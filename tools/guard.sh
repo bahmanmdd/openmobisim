@@ -15,9 +15,11 @@
 set -uo pipefail
 
 # Built in: private paths (an agent's instruction files, an editor's folder, a private documents folder, a
-# numbered private document) and the names that go with them.
+# numbered private document) and the names that go with them, and a citation of a numbered private decision (the
+# word, in any case, then a number of three digits).
 PATHS='^docs/|(^|/)\.claude/|(^|/)\.idea/|(^|/)CLAUDE\.md$|(^|/)[0-9]{2}_[A-Z][A-Z_]+\.md$'
 NAMES='[0-9]{2}_[A-Z][A-Z_]+\.md'
+NAMES="$NAMES|(^|[^[:alnum:]])[Dd][Ee][Cc][Ii][Ss][Ii][Oo][Nn][Ss]?[[:space:]_/-]*[0-9]{3}([^0-9]|$)"
 if [ -n "${GUARD_NAMES:-}" ]; then
   if [ ! -r "$GUARD_NAMES" ]; then
     echo "guard: GUARD_NAMES=$GUARD_NAMES is not readable" >&2

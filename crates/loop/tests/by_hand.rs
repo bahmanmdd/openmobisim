@@ -329,7 +329,7 @@ fn the_stopping_rule_by_hand() {
 }
 
 #[test]
-fn the_build_values_are_the rulingss() {
+fn the_build_values_are_the_defaults_of_the_parameters_file() {
     let _ = NetworkBuilder::new();
     assert!((VALUES.walk_speed - 4.8).abs() < 1e-12 && (VALUES.bike_speed - 15.0).abs() < 1e-12);
 }

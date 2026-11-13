@@ -9,7 +9,8 @@
 //! trips at the stopping rule: 3 % on a time and on `Σ τ x`, 3 % of capacity on a queued link's
 //! entries. The convergence tier (ignored in the debug suite; CI runs it in release), twice the
 //! population (0.09 of TNTP per hour, capacities at a fifth, 97 362 trips) to a fixed 400
-//! iterations: `Σ τ x`, the route pattern, converges to the program (measured −0.00 % at 400,
+//! iterations: `Σ τ x`, the route pattern, converges to the program (measured −0.09 % at 400
+//! under the present re-choice; under the plain method of successive averages −0.00 % at 400,
 //! +0.02 % at four times the population) and is judged at 0.1 %; a queued link's entries at
 //! 2 % of capacity (measured within 1.7 %); the mean trip only at 1 %, because the queues of a
 //! point queue at constant demand drift along the window (measured by departure hour at four

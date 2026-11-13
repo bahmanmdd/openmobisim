@@ -23,7 +23,7 @@ use openmobisim_types::mode::{Mode, ModeSet};
 use openmobisim_types::time::Second;
 use openmobisim_types::units::Metres;
 
-/// The build values of the rulings.
+/// The default per-lane capacity (veh/h), bike speed and walking speed (km/h) of `PARAMETERS.md`.
 pub const VALUES: BuildValues =
     BuildValues { capacity_per_lane: 1_800.0, bike_speed: 15.0, walk_speed: 4.8 };
 
@@ -399,6 +399,29 @@ pub fn far_from_best(run: &Run) -> Vec<f64> {
         finished.iter().sum::<f64>() / finished.len() as f64
     );
     excess
+}
+
+/// The seeds a fast equilibrium test is judged over: its quantities against theory on their
+/// mean over seeds 0 to 4, since one seed scatters about as much as the tolerances.
+pub const SEEDS: u64 = 5;
+
+/// The mean and its standard error (the standard deviation over `√n`) of `v`.
+#[must_use]
+pub fn mean_se(v: &[f64]) -> (f64, f64) {
+    let n = v.len() as f64;
+    let mean = v.iter().sum::<f64>() / n;
+    let var = v.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / (n - 1.0);
+    (mean, (var / n).sqrt())
+}
+
+/// The mean of `v`, one value per seed from seed 0, printed with each seed's value and the
+/// standard error of the mean under `label`.
+#[must_use]
+pub fn seed_mean(label: &str, v: &[f64]) -> f64 {
+    let (mean, se) = mean_se(v);
+    let each: Vec<String> = v.iter().map(|x| format!("{x:.3}")).collect();
+    println!("{label}: seeds 0 to {} {}; mean {mean:.3} ± {se:.3}", v.len() - 1, each.join(", "));
+    mean
 }
 
 /// Print the iterations table (run with `--nocapture` to see it).

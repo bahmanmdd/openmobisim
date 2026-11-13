@@ -8,6 +8,11 @@
 //! times, the short one at capacity, so the trips leaving after `t*` split by capacity: `c1 / q`
 //! on the short route (Wardrop). The mean trip over the hour is
 //! `[t1 t* + (q − c1) t*² / (2 c1) + (T − t*) t2] / T`.
+//!
+//! The equilibrium test is judged over seeds 0 to 4: in every seed, part 1 (the queue and the
+//! record) and the long route at free flow; on the mean over the five seeds, the short route's
+//! share, `t*`, the mean trip and the equal times, since one seed scatters about as much as
+//! their tolerances. The iteration-1 test is judged on seed 0 against its hand probabilities.
 
 #![allow(
     clippy::cast_precision_loss,
@@ -19,8 +24,8 @@
 mod common;
 
 use common::{
-    car_link, demand, departed_in, far_from_best, link, mean_time, network, print_iterations,
-    replay_queues, share_via, stream, time_only, took,
+    SEEDS, car_link, demand, departed_in, far_from_best, link, mean_se, mean_time, network,
+    print_iterations, replay_queues, seed_mean, share_via, stream, time_only, took,
 };
 use openmobisim_loop::parameters::Parameters;
 use openmobisim_loop::run::run;
@@ -38,8 +43,12 @@ fn closed_form(q_h: f64) -> (f64, f64, f64, f64, f64) {
     (t_star, mean, t1, t2, c1)
 }
 
-#[test]
-fn equal_times_on_both_routes_and_the_split_by_capacity_at_1800_veh_h() {
+/// One seed of the 1 800 veh/h case, its parameters otherwise. Judged in the seed: every trip
+/// finishes; part 1, the queue and the record; the long route runs free. Returned, the
+/// quantities judged on their mean over the seeds: the short route's share after `t*`, `t*`
+/// from the long route's count, the mean trip, the mean times on the short and on the long
+/// route of the trips leaving after `t*`.
+fn equilibrium_at(seed: u64) -> [f64; 5] {
     let net = network(
         &[("O", 0.0, 0.0), ("P", 2_000.0, 100.0), ("Q", 2_000.0, -100.0), ("D", 4_000.0, 0.0)],
         &[
@@ -50,15 +59,15 @@ fn equal_times_on_both_routes_and_the_split_by_capacity_at_1800_veh_h() {
         ],
     );
     let q_h = 1_800.0;
-    let rows = stream(&net, "c", "O", "D", q_h, 1.0, Second(0));
-    let dem = demand(&net, &rows);
-    let (t_star, mean, t1, t2, c1) = closed_form(q_h);
-    assert!((t_star - 345.6).abs() < 1e-9 && (mean - 452.5).abs() < 0.1, "the hand values");
-    let parameters = time_only(100);
+    let dem = demand(&net, &stream(&net, "c", "O", "D", q_h, 1.0, Second(0)));
+    let (t_star, _, _, t2, c1) = closed_form(q_h);
+    let parameters = Parameters { seed, ..time_only(100) };
+    let started = std::time::Instant::now();
     let result = run(&net, &dem, None, (Second(0), Second(3 * 3_600)), &parameters).expect("a run");
+    println!("seed {seed}: {:.1} s", started.elapsed().as_secs_f64());
     print_iterations(&result);
     let all = departed_in(&result, 0, 3_600);
-    assert_eq!(all.len(), 1_800, "every trip finishes");
+    assert_eq!(all.len(), 1_800, "seed {seed}: every trip finishes");
     let (op, oq) = (link(&net, "op"), link(&net, "oq"));
     let after = departed_in(&result, (t_star as u32) + 60, 3_600);
     let on = |l| after.iter().copied().filter(|&i| took(&result, i, l)).collect::<Vec<_>>();
@@ -67,32 +76,44 @@ fn equal_times_on_both_routes_and_the_split_by_capacity_at_1800_veh_h() {
     // Part 1, the queue and the record: the bottleneck replayed car by car, every car followed
     // along its route; the long route runs free.
     let queue = replay_queues(&net, &result, &[op]);
-    println!("part 1, queue: {}", queue.describe(&net));
-    println!("part 1, queue: the long route after t* {tl:.1} s against its free flow {t2:.1} s");
-
-    // Part 2, flows: the split by capacity after t*, c1 / q on the short route; t* from the
-    // count on the long route, n_long = (q − c1)(T − t*).
-    let short = share_via(&result, &after, op);
-    let n_long = all.iter().filter(|&&i| took(&result, i, oq)).count();
-    let t_star_sim = T - n_long as f64 / (q_h / 3_600.0 - c1);
-    println!(
-        "part 2, flows: short route's share after t* {short:.3} against {:.3}",
-        c1 / (q_h / 3_600.0)
-    );
-    println!(
-        "part 2, flows: t* from the long route's count {t_star_sim:.1} s against {t_star:.1} s"
-    );
+    println!("seed {seed}, part 1, queue: {}", queue.describe(&net));
+    println!("seed {seed}, part 1, queue: the long route after t* {tl:.1} s against {t2:.1} s");
 
     // Part 3, choices: each traveller against the best of its own set.
     let _ = far_from_best(&result);
 
-    // Mixed, following from parts 1 to 3: the mean trip, equal times on both used routes.
-    let got = mean_time(&result, &all);
-    println!("mixed: mean trip {got:.1} s against {mean:.1} s");
-    println!("mixed: after t*, short route {ts:.1} s, long route {tl:.1} s (t1 {t1:.1} s)");
-
     queue.judge(&net, true);
-    assert!((tl - t2).abs() <= 1e-6, "part 1, queue: the long route runs free: {tl} against {t2}");
+    assert!((tl - t2).abs() <= 1e-6, "seed {seed}, part 1, queue: the long route runs free: {tl}");
+    let short = share_via(&result, &after, op);
+    let n_long = all.iter().filter(|&&i| took(&result, i, oq)).count();
+    let t_star_sim = T - n_long as f64 / (q_h / 3_600.0 - c1);
+    [short, t_star_sim, mean_time(&result, &all), ts, tl]
+}
+
+/// Part 1 and the long route's free flow in every seed; the rest on the mean over seeds 0 to 4.
+#[test]
+fn equal_times_on_both_routes_and_the_split_by_capacity_at_1800_veh_h() {
+    let q_h = 1_800.0;
+    let (t_star, mean, t1, t2, c1) = closed_form(q_h);
+    assert!((t_star - 345.6).abs() < 1e-9 && (mean - 452.5).abs() < 0.1, "the hand values");
+    let runs: Vec<[f64; 5]> = (0..SEEDS).map(equilibrium_at).collect();
+    let column = |k: usize| runs.iter().map(|r| r[k]).collect::<Vec<_>>();
+
+    // Part 2, flows: the split by capacity after t*, c1 / q on the short route; t* from the
+    // count on the long route, n_long = (q − c1)(T − t*).
+    let label =
+        format!("part 2, flows: short route's share after t* against {:.3}", c1 / (q_h / 3_600.0));
+    let short = seed_mean(&label, &column(0));
+    let t_star_sim = seed_mean(
+        &format!("part 2, flows: t* from the long route's count, s, against {t_star:.1}"),
+        &column(1),
+    );
+
+    // Mixed, following from parts 1 to 3: the mean trip, equal times on both used routes.
+    let got = seed_mean(&format!("mixed: mean trip, s, against {mean:.1}"), &column(2));
+    let ts = seed_mean(&format!("mixed: after t*, short route, s (t1 {t1:.1})"), &column(3));
+    let tl = seed_mean(&format!("mixed: after t*, long route, s (t2 {t2:.1})"), &column(4));
+
     assert!(
         (short - c1 / (q_h / 3_600.0)).abs() <= 0.03,
         "part 2, flows: short route's share {short}"
@@ -188,14 +209,6 @@ fn at_iteration_1_the_found_and_switch_shares_are_the_hand_values() {
             "trips {from} to {to}: {got} against {want}"
         );
     }
-}
-
-/// The mean and its standard error (the standard deviation over `√n`) of `v`.
-fn mean_se(v: &[f64]) -> (f64, f64) {
-    let n = v.len() as f64;
-    let mean = v.iter().sum::<f64>() / n;
-    let var = v.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / (n - 1.0);
-    (mean, (var / n).sqrt())
 }
 
 /// The first test's case over seeds 0 to 19, its parameters otherwise: each quantity it

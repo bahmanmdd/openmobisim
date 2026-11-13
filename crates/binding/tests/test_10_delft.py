@@ -1,4 +1,4 @@
-"""Test 10: Delft, signals ignored. Release only, by hand on the Mac (not in CI): it runs about
+"""Test 10: Delft, signals ignored. Release only, run by hand (not in CI): it runs about
 a minute. Run with `TEST_10=1 pytest crates/binding/tests/test_10_delft.py -s` after
 `maturin develop --release`; without `TEST_10=1` it is skipped.
 
