@@ -1,6 +1,7 @@
 //! The tree form: every node within a bound, forward (`reach`) and backward (`reach_backward`),
 //! against networkx's bounded Dijkstra (Hagberg, Schult and Swart 2008, networkx 3.7), and the
-//! property that `reach` arrives at each node when `fastest` does.
+//! bound by hand. `reach` on loaded link times is held against every simple path in
+//! `brute_force.rs`.
 //!
 //! The fixture `fixtures/networkx_reach.txt` is written by `networkx_routes.py reach` (beside
 //! this file, not run in CI): a 10 × 10 grid of nodes 100 m apart, each moved by up to 20 m in x
@@ -13,11 +14,9 @@
 
 mod common;
 
-use common::{
-    Draws, VALUES, at, free_flow, grid_node, grid_with, l_route_cars, loaded, row, window,
-};
+use common::{VALUES, at, free_flow, grid_node, grid_with, row};
 use openmobisim_graph::network::{LinkRow, Network, NetworkBuilder};
-use openmobisim_search::search::{Query, Search};
+use openmobisim_search::search::Search;
 use openmobisim_types::ids::{EntityId, NodeId};
 use openmobisim_types::mode::{Mode, ModeSet};
 use openmobisim_types::time::Second;
@@ -115,39 +114,6 @@ fn reaches_forward_and_backward_are_networkx_bounded_dijkstra() {
     }
     // The one-way walk links must matter, or the backward test is the forward one again.
     assert!(differ >= 3, "forward and backward differ for only {differ} of 8 origins");
-}
-
-#[test]
-fn reach_arrives_at_every_node_when_fastest_does_on_a_loaded_grid() {
-    // 20 × 20 grid of 100 m links at 50 km/h and 200 veh/h, 6 000 cars over 30 min (the
-    // determinism test's loading): queues form, the times depend on the instant.
-    let n = 20;
-    let net = grid_with(n, |_, _| LinkRow { capacity_veh_h: Some(200.0), ..row(1, 50.0) });
-    let mut draws = Draws::new(7);
-    let cars = l_route_cars(&net, n, 6_000, 1_800, &mut draws);
-    let times = loaded(&net, &cars, window(300, 7_200));
-    let mut search = Search::new(&net, &times);
-    let mut compared = 0;
-    for i in 0..20 {
-        let origin = grid_node(&net, draws.below(n), draws.below(n));
-        let departure = Second(draws.below(3_600));
-        let mode = if i % 4 == 0 { Mode::Bike } else { Mode::Car };
-        let reached = search.reach(origin, mode, departure, Duration(240.0));
-        assert!(reached.iter().any(|&(node, _)| node == origin), "the origin is reached");
-        for &(node, arrival) in &reached {
-            let departure = Duration(f64::from(departure.get()));
-            let q = Query { origin, destination: node, mode, departure, trip: None };
-            let route = search.fastest(&q).expect("reached, so reachable");
-            assert_eq!(
-                arrival.get().to_bits(),
-                route.arrival.get().to_bits(),
-                "from {origin} to {node} by {mode} at {departure}: reach {arrival}, fastest {}",
-                route.arrival
-            );
-            compared += 1;
-        }
-    }
-    assert!(compared >= 1_000, "only {compared} nodes compared");
 }
 
 #[test]

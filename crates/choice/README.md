@@ -56,10 +56,11 @@ choice: no rows, a row whose attributes are not one per column, a traveller's cl
 does not have, a cost that is not finite. Nothing panics.
 
 ## Bikes
-A bike route is a row like any other: its time at the bike's speed, its money, its `ln PS`
-among the other bike routes; its mode label says bike and nothing reads it. A bike, a car, a
-walk and a transit itinerary in different nests make mode and route choice one nested logit.
-The path-size test is on three bike routes; test 9's path-size shares for bikes rest on it.
+A bike route is a row like any other: its time at the bike's speed, its money, its `ln PS` as
+the caller gives it (0 in a run, where a bike has one route); its mode label says bike and
+nothing reads it. A bike, a car, a walk and a transit itinerary in different nests make mode and
+route choice one nested logit. The path-size test is on three car routes, the mode whose sets
+hold several routes; the formula does not read the mode.
 
 ## Tests
 `cargo test -p openmobisim-choice`, about 2 s in debug. Each expected value comes from outside
@@ -67,7 +68,7 @@ the crate: six rows with costs `ln(21 / k)` take `k / 21` by hand within 1e-12, 
 fit by chi-square (below 20.52, the 0.999 quantile at 5 degrees of freedom); three nests of
 three, one and two rows at `μ` of 0.2, 0.5, 0.9 and 1 against the formula written out in the
 test within 1e-12, 20 000 draws each by chi-square, the plain logit at `μ = 1`, nest ids 7 and
-4 000 000 000 giving the shares of 0 and 1; the path-size logit on three bike routes of equal
+4 000 000 000 giving the shares of 0 and 1; the path-size logit on three car routes of equal
 time, `P_A = 1 / (3 − φ)` (0.4545 at φ = 0.8, 0.4 at φ = 0.5, 1/3 without the term); a car
 nest of 288 s and 345.6 s routes against a 3 000 s walk at 0.03 per minute, `P(walk)` and
 `P(short | car)` by hand at `μ` of 0.5 and 1, 6 000 draws within three standard deviations; two

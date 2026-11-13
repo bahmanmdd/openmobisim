@@ -208,7 +208,11 @@ the cheaper mode taken, the nearest stop tried alone and two journeys on one run
 rides, the refusals, the stopping rule on hand-made rows; the choice row of each mode by hand
 (`tests/choice_row.rs`: a car and a bike with gap walks, a walk, a journey with one transfer,
 every part in minutes; the path size of two overlapping car routes, 0 for bike and walk
-routes); the default run against outside answers: without congestion, the closed-form logit
+routes; and of three car routes sharing one link among three and one among two, one link
+slower than the rest, by length: 7/12, 14/27 and 17/30); the path size of every car route of
+every set at the end of a run, three routes of 800, 1 000 and 1 200 m sharing their first
+600 m, by hand (`tests/path_size_in_a_run.rs`);
+the default run against outside answers: without congestion, the closed-form logit
 shares of car, bike, walk and transit (`tests/no_congestion.rs`), and car against bike behind
 a bottleneck, a hand-derived trajectory solved by scipy (`tests/bottleneck_mode_choice.rs`,
 `tests/fixtures/bottleneck/`; release only, skipped by `cargo test`; CI

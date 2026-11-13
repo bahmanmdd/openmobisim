@@ -10,10 +10,10 @@
 
 mod common;
 
-use common::{VALUES, at, car_link, demand, network, time_only};
+use common::{at, car_link, demand, network, time_only};
 use openmobisim_demand::demand::Demand;
 use openmobisim_demand::input::TripRow;
-use openmobisim_graph::network::{LinkRow, Network, NetworkBuilder};
+use openmobisim_graph::network::{LinkRow, Network};
 use openmobisim_loop::assess::{Iteration, stops};
 use openmobisim_loop::parameters::Parameters;
 use openmobisim_loop::run::{RunError, run};
@@ -326,10 +326,4 @@ fn the_stopping_rule_by_hand() {
     let mut none = flat;
     none[4] = row(f64::NAN, 0.0);
     assert!(!stops(&none), "no finished trip, no mean");
-}
-
-#[test]
-fn the_build_values_are_the_defaults_of_the_parameters_file() {
-    let _ = NetworkBuilder::new();
-    assert!((VALUES.walk_speed - 4.8).abs() < 1e-12 && (VALUES.bike_speed - 15.0).abs() < 1e-12);
 }

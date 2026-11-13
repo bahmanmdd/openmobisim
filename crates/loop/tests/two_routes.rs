@@ -126,7 +126,8 @@ fn equal_times_on_both_routes_and_the_split_by_capacity_at_1800_veh_h() {
 /// Iteration 0 puts everyone on the short route, whose queue then delays a departure at `t` by
 /// `(q − c1) t / c1 = t / 2`; at iteration 1 the search finds the long route cheaper for the
 /// trips departing after `t1 + t / 2 > t2`, that is `t > 345.6 s`: the departures at even
-/// seconds from 346 s, `1 627 / 1 800 = 0.9039`, resolved to one 60 s bin (30 trips, 0.017).
+/// seconds from 346 s, `1 627 / 1 800 = 0.9039`, exactly: each traveller reads its own time on
+/// the short route (the derivation is in `found_by_mode.rs`).
 /// At iteration 1's choice the trip departing at `t = 2 n` holds the short route, which it
 /// reads at `c = 288 + n` s, and its best route (both are car routes) is the long one at
 /// `b = 460.8` s for `n` from 173 to 1 799. It is offered a new choice with probability
@@ -161,7 +162,7 @@ fn at_iteration_1_the_found_and_switch_shares_are_the_hand_values() {
     print_iterations(&result);
     let one = &result.iterations[1];
     assert!((result.iterations[0].found_share - 1.0).abs() < 1e-12, "everyone found at 0");
-    assert!((one.found_share - 1_627.0 / 1_800.0).abs() <= 0.017, "found {}", one.found_share);
+    assert!((one.found_share - 1_627.0 / 1_800.0).abs() < 1e-12, "found {}", one.found_share);
     // The hand probabilities of the text above, summed over the trips `from..to`: the mean
     // and the standard deviation of the share that switches.
     let by_hand = |from: usize, to: usize| {

@@ -75,7 +75,9 @@ A bike and a walker cross each link in its length over their mode's speed (the g
 their shortest by length, from any departure, and its arrival is the departure plus the
 route's length over the speed. A bike rides every link its mode set allows, a cycle path
 included; a street with a car queue costs it nothing more. Test 9 checks these routes against
-networkx's shortest paths by length. A bike's or a walker's `reach_backward` is the time to a
+networkx's shortest paths by length. A bike's `reach` reads no queue either: its tree is its
+tree at free flow, judged against networkx's bounded Dijkstra (`tests/reach.rs`); the trees on
+loaded times (`tests/brute_force.rs`) are by car. A bike's or a walker's `reach_backward` is the time to a
 node from every node around it, on the links its mode may use in their own direction: a
 one-way cycle path is ridden one way only, backward as forward.
 
@@ -87,8 +89,10 @@ bike, walk and free-flow car routes equal to networkx's shortest paths by length
 cutoff on a jittered 10 × 10 grid with 30 links closed to walkers (`networkx_routes.py reach`
 writes the fixture: 8 origins, forward on foot within 450 m and by bike within 600 m, and on
 foot on the reversed graph; the same nodes, their times within 1e-9 of length over speed;
-forward and backward differ for at least 3 origins); `reach`'s arrival at each of over 1 000
-nodes equal to the bit to `fastest`'s on a loaded 20 × 20 grid; the bound by hand (a car at
+forward and backward differ for at least 3 origins); `reach` by car on the five loaded nodes
+below against every simple path (2 000 trees within 120.02 s, which cuts nodes off, and within
+300.02 s, which reaches over best paths of two links or more: a node is reached exactly when
+the best path arrives within the bound, at that arrival); the bound by hand (a car at
 50 km/h crosses 100 m in 7.2 s: within 7.2 s a node and its four neighbours, within 7.1 s the
 node alone); car backward and transit refused; a free-flow car detour by hand on a 5 × 5 grid with two slow links
 (43.2 s against 50.4 s, the route among four of equal time fixed by the tie rule by hand, the

@@ -1,7 +1,7 @@
-//! The network of Spiess and Florian (1989) as timetables: stops A, X, Y, B; line 1 A to B in
-//! 25 min every 12 min; line 2 A, X, Y in 7 + 6 min every 12; line 3 X, Y, B in 4 + 4 min every
-//! 30; line 4 Y to B in 10 min every 6; each line's first departure drawn from its headway by a
-//! fixed seed. A traveller every 10 s for two hours from A to B, slack 0, up to four rides.
+//! The network of Spiess and Florian (1989) as timetables (test 8 of the specification, its
+//! second half): stops A, X, Y, B; line 1 A to B in 25 min every 12 min; line 2 A, X, Y in
+//! 7 + 6 min every 12; line 3 X, Y, B in 4 + 4 min every 30; line 4 Y to B in 10 min every 6;
+//! each line's first departure drawn from its headway by a fixed seed. A traveller every 10 s for two hours from A to B, slack 0, up to four rides.
 //! RAPTOR must equal the brute force on every traveller. The mean door time is reported next to
 //! the paper's 27.75 min, and not asserted: the paper's travellers follow the optimal strategy
 //! knowing only the frequencies, these know the timetable, so they are expected to do better.

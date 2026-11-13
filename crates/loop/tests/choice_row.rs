@@ -29,6 +29,8 @@
 //! Path size (Ben-Akiva and Bierlaire 1999): two routes a→m→b sharing a→m (1 000 m) and each
 //! with its own m→b (500 m): `PS = (1 000 / 1 500) / 2 + (500 / 1 500) / 1 = 2/3` for each, so
 //! two car routes have `ln PS = ln(2/3)`; the same two routes by bike or on foot have 0.
+//! Three car routes of a hand-built set, a link shared by all three, one by two, and one link
+//! slower than the rest: 7/12, 14/27 and 17/30 by hand (the last test, its arithmetic there).
 //!
 //! For bikes: the bike's row holds its riding minutes and its gap walks apart, and its path
 //! size is 0 whatever its routes overlap.
@@ -199,5 +201,58 @@ fn path_size_is_computed_for_car_routes_and_is_0_for_bike_and_walk_routes() {
         assert!((a.ln_path_size - want).abs() < 1e-12, "{}: {}", a.mode, a.ln_path_size);
         let k = COLUMNS.iter().position(|&c| c == "car_ln_path_size").expect("a column");
         assert!((a.attributes()[k] - want).abs() < 1e-12, "{}", a.mode);
+    }
+}
+
+/// Nodes a, m, n, b; car links at 50 km/h but `mn` at 30 km/h: `am` 1 000 m, `mb` 600 m,
+/// `mn` 400 m, `nb1` 400 m, `nb2` 600 m. Three car routes: direct = am, mb (1 600 m); upper =
+/// am, mn, nb1 (1 800 m); lower = am, mn, nb2 (2 000 m). `am` is used by three routes, `mn` by
+/// two (upper and lower), the rest by one. By hand, `PS_i = Σ_a (l_a / L_i) / n_a`:
+///
+/// * direct: (1 000 / 1 600) / 3 + 600 / 1 600 = 5/24 + 3/8 = 7/12;
+/// * upper: (1 000 / 1 800) / 3 + (400 / 1 800) / 2 + 400 / 1 800 = 5/27 + 1/9 + 2/9 = 14/27;
+/// * lower: (1 000 / 2 000) / 3 + (400 / 2 000) / 2 + 600 / 2 000 = 1/6 + 1/10 + 3/10 = 17/30.
+///
+/// Two wrong formulas give other values. (i) A link used by some routes only counted as used by
+/// all three (`mn` divided by 3): direct 7/12; upper 5/27 + 4/54 + 2/9 = 13/27; lower 1/6 +
+/// 1/15 + 3/10 = 8/15. (ii) Links weighed by free-flow time instead of length (`am` 72 s, `mb`
+/// 43.2 s, `mn` 48 s at 30 km/h, `nb1` 28.8 s, `nb2` 43.2 s): direct (72 / 115.2) / 3 + 43.2 /
+/// 115.2 = 7/12, the same, its links at one speed; upper (24 + 24 + 28.8) / 148.8 = 16/31;
+/// lower (24 + 24 + 43.2) / 163.2 = 19/34.
+#[test]
+fn three_car_routes_take_the_path_size_by_length_over_the_routes_using_each_link() {
+    let net = network(
+        &[("a", 0.0, 0.0), ("m", 1_000.0, 0.0), ("n", 1_200.0, 200.0), ("b", 1_500.0, 0.0)],
+        &[
+            ("am", "a", "m", car_link(1_000.0, 50.0, 1_800.0)),
+            ("mb", "m", "b", car_link(600.0, 50.0, 1_800.0)),
+            ("mn", "m", "n", car_link(400.0, 30.0, 1_800.0)),
+            ("nb1", "n", "b", car_link(400.0, 50.0, 1_800.0)),
+            ("nb2", "n", "b", car_link(600.0, 50.0, 1_800.0)),
+        ],
+    );
+    let id = |s: &str| common::link(&net, s);
+    let routes: [(&[&str], f64); 3] = [
+        (&["am", "mb"], 7.0 / 12.0),
+        (&["am", "mn", "nb1"], 14.0 / 27.0),
+        (&["am", "mn", "nb2"], 17.0 / 30.0),
+    ];
+    let mut set: Vec<Alternative> = routes
+        .iter()
+        .map(|(links, _)| {
+            let legs = vec![
+                Leg::Walk(Duration(0.0)),
+                Leg::Route { mode: Mode::Car, links: links.iter().map(|s| id(s)).collect() },
+                Leg::Walk(Duration(0.0)),
+            ];
+            // A stale value, to see it rewritten.
+            Alternative { mode: Mode::Car, legs, time: 100.0, ln_path_size: 0.5 }
+        })
+        .collect();
+    path_sizes(&net, &mut set);
+    for (a, (links, ps)) in set.iter().zip(&routes) {
+        let got = a.ln_path_size;
+        assert!((got - ps.ln()).abs() < 1e-12, "{links:?}: ln PS {got}, by hand ln {ps}");
+        println!("{links:?}: PS {:.6} by hand {ps:.6}", got.exp());
     }
 }

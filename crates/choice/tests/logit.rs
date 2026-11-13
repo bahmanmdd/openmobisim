@@ -1,5 +1,8 @@
 //! The plain logit (test 7 of the specification, first part), the path-size logit by hand
-//! (Ben-Akiva and Bierlaire 1999) on three bike routes, and two user classes over the same rows.
+//! (Ben-Akiva and Bierlaire 1999) on three car routes, and two user classes over the same rows.
+//!
+//! For bikes: the formulas do not depend on the mode; in a run a bike has one route and no
+//! path size (`crates/loop/README.md`), so the path-size test is on car routes.
 
 mod common;
 
@@ -68,7 +71,7 @@ fn a_cost_of_hours_in_seconds_neither_overflows_nor_underflows() {
     assert!(largest_gap(&p, &[e / (1.0 + e), 1.0 / (1.0 + e)]) < 1e-12, "{p:?}");
 }
 
-/// The shares of three bike routes of 600 s each, A alone and B and C sharing a fraction `phi`
+/// The shares of three car routes of 600 s each, A alone and B and C sharing a fraction `phi`
 /// of their length, with `beta_ln_ps` on the `ln PS` column.
 fn path_size_shares(phi: f64, beta_ln_ps: f64) -> Vec<f64> {
     // The path-size factor by hand: PS_i = Σ_{a∈i} (l_a / L_i) / (routes using a). A uses its
@@ -76,14 +79,14 @@ fn path_size_shares(phi: f64, beta_ln_ps: f64) -> Vec<f64> {
     // routes, the rest by B alone: PS_B = φ/2 + (1 − φ) = 1 − φ/2, and PS_C likewise.
     let ps = [1.0, 1.0 - phi / 2.0, 1.0 - phi / 2.0];
     let attributes: Vec<Vec<f64>> = ps.iter().map(|p: &f64| vec![600.0, p.ln()]).collect();
-    let rows = rows(&attributes, Mode::Bike, &[0, 1, 2]);
+    let rows = rows(&attributes, Mode::Car, &[0, 1, 2]);
     let coefficients = one_class(&["time_s", "ln_path_size"], &[0.0005, beta_ln_ps]);
     let model = Logit::new(coefficients, 1.0, RngKey::new(9)).expect("valid");
     model.probabilities(&traveller(0, 0), &rows).expect("probabilities")
 }
 
 #[test]
-fn path_size_logit_on_three_bike_routes_gives_the_lone_route_one_over_three_minus_phi() {
+fn path_size_logit_on_three_car_routes_gives_the_lone_route_one_over_three_minus_phi() {
     // P_A = PS_A / (PS_A + PS_B + PS_C) = 1 / (1 + 2 − φ) = 1 / (3 − φ): 1 / 2.2 = 0.4545… at
     // φ = 0.8 and 1 / 2.5 = 0.4 at φ = 0.5; B and C split the rest equally.
     for (phi, p_a) in [(0.8, 1.0 / 2.2), (0.5, 0.4)] {
