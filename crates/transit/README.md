@@ -39,6 +39,14 @@ reach of a trip's ends, is the caller's; the access and egress lists arrive alre
   count.
 - `Timetable` accessors, read-only: stop and run counts and external ids, stop positions, a
   run's calls and pattern, a pattern's stops and runs, a stop's footpaths.
+- `Timetable::fingerprint()`, a `u64` (the FNV-1a hash of `openmobisim-types`) over what the
+  timetable was built from, in this order: the stop count, then per stop in id order its
+  external id and its x and y in metres; the run count, then per run in id order its external
+  id, its call count and per call the stop id, the arrival and the departure; the footpath
+  count, then per footpath (by stop walked from, stop walked to, seconds) the two stop ids and
+  the seconds as given. The patterns follow from the runs and are not fed. The same input, in
+  any order, gives the same fingerprint; a change to any value of a stop, a call or a footpath
+  changes it.
 
 ## Units
 Seconds and metres. Times of the timetable and of the journey are whole seconds of the clock
@@ -81,7 +89,8 @@ walk.
 ## Bikes
 Nothing here is a bike: a run carries passengers on its timetable, and the walks are the
 caller's. A bike-and-ride journey, later, is an access by bike to the same query: the caller
-rides to the stops and gives the seconds it reaches each as the access list.
+rides to the stops and gives the seconds it reaches each as the access list. No bike value is
+in the timetable's fingerprint.
 
 ## Tests
 `cargo test -p openmobisim-transit`. Each expected value comes from outside the crate: RAPTOR
@@ -98,5 +107,10 @@ footpaths by hand; `by_rides` by hand (a slow direct run and a faster connection
 a direct run as early or earlier: one); the refusals; `earliest_many`'s determinism over 1 and 8
 threads and two runs (1 000 queries; a run does not call it). `by_rides_many`'s, the one a run
 calls, is tested with the whole chain (`crates/loop/tests/determinism.rs`).
+The fingerprint as a property (`tests/fingerprint.rs`): two builds of the same rows equal; one
+value changed, all else equal, in each of the 10 input columns (stop id, x, y; run id; a call's
+stop, arrival, departure; a footpath's from, to, seconds), each a named case, changes it; the
+same rows in reverse order give the same fingerprint; two stops, one run and one footpath hash
+to the byte stream above written out by hand.
 The run time is reported by hand: `cargo test --release -p openmobisim-transit --test run_time
 -- --ignored --nocapture`.

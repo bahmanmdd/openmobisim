@@ -622,8 +622,11 @@ dependencies = [
  "arrow-schema",
  "openmobisim-demand",
  "openmobisim-graph",
+ "openmobisim-io-gtfs",
+ "openmobisim-io-osm",
  "openmobisim-loading",
  "openmobisim-loop",
+ "openmobisim-transit",
  "openmobisim-types",
  "parquet",
 ]

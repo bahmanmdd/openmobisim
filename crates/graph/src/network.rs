@@ -29,12 +29,13 @@
 
 use core::fmt;
 
+use openmobisim_types::fingerprint::Fingerprint;
 use openmobisim_types::ids::{EntityId, ExternalIdTable, ExternalIdTableBuilder, LinkId, NodeId};
 use openmobisim_types::mode::{Mode, ModeSet};
 use openmobisim_types::units::{Duration, Flow, Metres, Speed};
 
 use crate::csr::Csr;
-use crate::geometry::{LonLat, Position, Projection, Xy};
+use crate::geometry::{Hemisphere, LonLat, Position, Projection, Xy};
 
 /// What the caller knows about a link: one row of a link table.
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -692,5 +693,51 @@ impl Network {
     #[must_use]
     pub fn in_links(&self, node: NodeId) -> &[LinkId] {
         self.in_links.targets(node)
+    }
+
+    /// The fingerprint of the network as built (`openmobisim_types::fingerprint`), fed in this
+    /// order: the projection (0, or 1 then its zone number and hemisphere, 0 north and 1 south);
+    /// the bike and walk speeds (m/s); the node count, then per node in id order its external
+    /// id, x and y (metres) and signal mark; the link count, then per link in id order its
+    /// external id, upstream and downstream node ids, length (m), lanes, modes, car free-flow
+    /// speed (m/s, `NaN` on a link without cars), capacity (veh/s, infinite on a link without
+    /// cars) and downstream-end signal mark. Two builds of the same rows, in any order, have the
+    /// same fingerprint; a change to any value a run reads changes it.
+    #[must_use]
+    pub fn fingerprint(&self) -> u64 {
+        let mut h = Fingerprint::new();
+        match self.projection {
+            None => h.u8(0),
+            Some(p) => {
+                h.u8(1);
+                h.u8(p.zone().number());
+                h.u8(match p.zone().hemisphere() {
+                    Hemisphere::North => 0,
+                    Hemisphere::South => 1,
+                });
+            }
+        }
+        h.f64(self.bike_speed.get());
+        h.f64(self.walk_speed.get());
+        h.u32(self.node_count());
+        for (i, id) in self.node_ids.iter().enumerate() {
+            h.str(id);
+            h.f64(self.node_x[i]);
+            h.f64(self.node_y[i]);
+            h.flag(self.node_signalised[i]);
+        }
+        h.u32(self.link_count());
+        for (i, id) in self.link_ids.iter().enumerate() {
+            h.str(id);
+            h.u32(self.link_upstream[i].raw());
+            h.u32(self.link_downstream[i].raw());
+            h.f64(self.link_length[i].get());
+            h.u8(self.link_lanes[i]);
+            h.modes(self.link_modes[i]);
+            h.f64(self.link_speed[speed_column(Mode::Car)][i].get());
+            h.f64(self.link_capacity[i].get());
+            h.flag(self.link_signal_downstream[i]);
+        }
+        h.finish()
     }
 }

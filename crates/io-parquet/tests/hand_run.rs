@@ -42,9 +42,11 @@ use openmobisim_demand::demand::Demand;
 use openmobisim_demand::input::TripRow;
 use openmobisim_graph::geometry::{Position, Xy};
 use openmobisim_graph::network::{BuildValues, LinkRow, Network, NetworkBuilder};
-use openmobisim_io_parquet::{WriteError, write};
+use openmobisim_io_gtfs::Report as GtfsReport;
+use openmobisim_io_parquet::{Given, Source, Transit, WriteError, write};
 use openmobisim_loop::parameters::{ChoiceModel, Parameters};
 use openmobisim_loop::run::{Run, run};
+use openmobisim_transit::timetable::TimetableBuilder;
 use openmobisim_types::mode::{Mode, ModeSet};
 use openmobisim_types::time::Second;
 use openmobisim_types::units::Metres;
@@ -110,18 +112,36 @@ fn demand(network: &Network) -> Demand {
         row("lost", 1_500.0, START, "leisure", Mode::Transit),
     ];
     let classes = ["commute".to_string(), "leisure".to_string()];
-    Demand::build(&rows, &classes, network, None, Metres(400.0)).expect("a demand")
+    Demand::build(&rows, &classes, network, None, Metres(STOP_WALK_MAX)).expect("a demand")
 }
 
-fn hand_run(network: &Network, demand: &Demand) -> Run {
-    let parameters = Parameters {
+/// The `stop_walk_max` the demand is built with, metres.
+const STOP_WALK_MAX: f64 = 400.0;
+
+fn parameters() -> Parameters {
+    Parameters {
         link_bin: 60,
         iteration_cap: 3,
         choice: ChoiceModel::Deterministic,
         coefficients: vec![TIME_ONLY; 2],
         ..Parameters::defaults(2)
-    };
-    run(network, demand, None, (Second(START), Second(START + 3_600)), &parameters).expect("a run")
+    }
+}
+
+fn hand_run(network: &Network, demand: &Demand) -> Run {
+    run(network, demand, None, (Second(START), Second(START + 3_600)), &parameters())
+        .expect("a run")
+}
+
+/// What the hand run was given besides its network and demand.
+fn given(parameters: &Parameters) -> Given<'_> {
+    Given {
+        source: Source::Tables,
+        build_values: VALUES,
+        stop_walk_max: STOP_WALK_MAX,
+        transit: None,
+        parameters,
+    }
 }
 
 /// The folder `read_back.py` reads.
@@ -134,8 +154,10 @@ fn the_hand_run_writes_three_files_of_7_4_and_3_rows_byte_identical_twice() {
     let net = network();
     let dem = demand(&net);
     let r = hand_run(&net, &dem);
-    let first = write(&r, &net, &dem, &folder("io-parquet-hand-run")).expect("written");
-    let again = write(&r, &net, &dem, &folder("io-parquet-hand-run-again")).expect("written");
+    let p = parameters();
+    let first = write(&r, &net, &dem, &given(&p), &folder("io-parquet-hand-run")).expect("written");
+    let again =
+        write(&r, &net, &dem, &given(&p), &folder("io-parquet-hand-run-again")).expect("written");
     for (table, rows) in [(&first.trips, 7), (&first.links, 4), (&first.iterations, 3)] {
         assert!(table.path.is_file(), "{}", table.path.display());
         assert_eq!(table.rows, rows, "{}", table.path.display());
@@ -161,11 +183,12 @@ fn a_demand_or_a_network_not_the_runs_is_refused() {
     let net = network();
     let dem = demand(&net);
     let r = hand_run(&net, &dem);
+    let p = parameters();
     let other = Demand::build(&[], &["commute".to_string()], &net, None, Metres(400.0))
         .expect("an empty demand");
     let out = folder("io-parquet-refused");
     assert!(matches!(
-        write(&r, &net, &other, &out),
+        write(&r, &net, &other, &given(&p), &out),
         Err(WriteError::NotTheRunsDemand { run_trips: 7, demand_trips: 0 })
     ));
     let mut b = NetworkBuilder::new();
@@ -174,7 +197,7 @@ fn a_demand_or_a_network_not_the_runs_is_refused() {
     b.add_link("ab", "a", "b", street(1_500.0, 50.0, 1_800.0));
     let small = b.build(VALUES).expect("a network");
     assert!(matches!(
-        write(&r, &small, &dem, &out),
+        write(&r, &small, &dem, &given(&p), &out),
         Err(WriteError::NotTheRunsNetwork { link: 1, network_links: 1 })
     ));
     assert!(!out.exists(), "nothing written on a refusal");
@@ -185,7 +208,162 @@ fn a_folder_that_cannot_be_made_is_an_io_error() {
     let net = network();
     let dem = demand(&net);
     let r = hand_run(&net, &dem);
+    let p = parameters();
     let blocker = folder("io-parquet-a-file");
     std::fs::write(&blocker, b"a file, not a folder").expect("a file");
-    assert!(matches!(write(&r, &net, &dem, &blocker.join("inside")), Err(WriteError::Io(_))));
+    assert!(matches!(
+        write(&r, &net, &dem, &given(&p), &blocker.join("inside")),
+        Err(WriteError::Io(_))
+    ));
+}
+
+#[test]
+fn the_record_is_written_beside_the_tables_and_byte_identical_twice() {
+    // Its keys and values are checked by another tool, `read_record.py` (Python's `tomllib`),
+    // against the numbers written in that script, on the folder of the first test above.
+    let net = network();
+    let dem = demand(&net);
+    let r = hand_run(&net, &dem);
+    let p = parameters();
+    let first = write(&r, &net, &dem, &given(&p), &folder("io-parquet-record")).expect("written");
+    let again =
+        write(&r, &net, &dem, &given(&p), &folder("io-parquet-record-again")).expect("written");
+    assert_eq!(first.record, folder("io-parquet-record").join("run.toml"));
+    let (x, y) =
+        (std::fs::read(&first.record).expect("read"), std::fs::read(&again.record).expect("read"));
+    assert!(x == y, "{} and {} differ", first.record.display(), again.record.display());
+}
+
+#[test]
+fn a_record_value_toml_cannot_hold_is_refused_by_name_and_nothing_written() {
+    // The record holds finite numbers only (TOML's nan and inf are never written), and TOML 1.0
+    // has no integer above 2^63 - 1: a coefficient that is not a number and a seed of 2^64 - 1
+    // are refused, naming the key.
+    let net = network();
+    let dem = demand(&net);
+    let r = hand_run(&net, &dem);
+    let out = folder("io-parquet-not-writable");
+    let mut p = parameters();
+    p.coefficients[1][2] = f64::NAN;
+    let Err(WriteError::NotWritable { key, .. }) = write(&r, &net, &dem, &given(&p), &out) else {
+        panic!("a coefficient that is not a number was written");
+    };
+    assert_eq!(key, "parameters.coefficients.\"leisure\".walk_min");
+    let mut p = parameters();
+    p.seed = u64::MAX;
+    let Err(WriteError::NotWritable { key, .. }) = write(&r, &net, &dem, &given(&p), &out) else {
+        panic!("a seed above 2^63 - 1 was written");
+    };
+    assert_eq!(key, "parameters.seed");
+    assert!(!out.exists(), "nothing written on a refusal");
+}
+
+#[test]
+fn parameters_or_a_transit_not_the_runs_are_refused_and_nothing_written() {
+    let net = network();
+    let dem = demand(&net);
+    let r = hand_run(&net, &dem);
+    let out = folder("io-parquet-not-the-runs");
+    let p = Parameters { link_bin: 300, ..parameters() };
+    assert!(matches!(
+        write(&r, &net, &dem, &given(&p), &out),
+        Err(WriteError::NotTheRunsParameters(_))
+    ));
+    let p = Parameters { coefficients: vec![TIME_ONLY; 3], ..parameters() };
+    assert!(matches!(
+        write(&r, &net, &dem, &given(&p), &out),
+        Err(WriteError::NotTheRunsParameters(_))
+    ));
+    let mut b = TimetableBuilder::new();
+    b.add_stop("S", (Metres(0.0), Metres(0.0)));
+    let timetable = b.build().expect("a timetable of one stop");
+    let report = GtfsReport::default();
+    let p = parameters();
+    let transit = Transit { timetable: &timetable, report: &report, transfer_walk_max: 400.0 };
+    let with_transit = Given { transit: Some(transit), ..given(&p) };
+    assert!(matches!(
+        write(&r, &net, &dem, &with_transit, &out),
+        Err(WriteError::NotTheRunsTransit { demand_stops: 0, transit_stops: 1 })
+    ));
+    assert!(!out.exists(), "nothing written on a refusal");
+}
+
+#[test]
+fn build_values_whose_speeds_are_not_the_networks_are_refused_and_nothing_written() {
+    // The network was built at 15 km/h for bikes and 4.8 km/h for walkers; a record saying
+    // 16 km/h for bikes, or 5 km/h for walkers, would be false.
+    let net = network();
+    let dem = demand(&net);
+    let r = hand_run(&net, &dem);
+    let out = folder("io-parquet-not-the-speeds");
+    let p = parameters();
+    for other in
+        [BuildValues { bike_speed: 16.0, ..VALUES }, BuildValues { walk_speed: 5.0, ..VALUES }]
+    {
+        let wrong = Given { build_values: other, ..given(&p) };
+        assert!(
+            matches!(
+                write(&r, &net, &dem, &wrong, &out),
+                Err(WriteError::NotTheNetworksSpeeds { .. })
+            ),
+            "{other:?}"
+        );
+    }
+    assert!(!out.exists(), "nothing written on a refusal");
+}
+
+#[test]
+fn a_failed_write_into_a_used_folder_leaves_no_record_beside_the_tables() {
+    // A folder holding a record from an earlier run, where `links.parquet` cannot be written
+    // (a folder of that name): the write fails, and the old record is gone, so no record
+    // describes tables it did not write.
+    let net = network();
+    let dem = demand(&net);
+    let r = hand_run(&net, &dem);
+    let p = parameters();
+    let out = folder("io-parquet-used-folder");
+    let _ = std::fs::remove_dir_all(&out);
+    std::fs::create_dir_all(out.join("links.parquet")).expect("a folder");
+    std::fs::write(out.join("run.toml"), "# an earlier run's record\n").expect("a file");
+    assert!(matches!(write(&r, &net, &dem, &given(&p), &out), Err(WriteError::Io(_))));
+    assert!(!out.join("run.toml").exists(), "the earlier record is left beside new tables");
+}
+
+#[test]
+fn without_a_class_the_record_has_no_coefficients_comment_or_table() {
+    let net = network();
+    let none = Demand::build(&[], &[], &net, None, Metres(STOP_WALK_MAX)).expect("no trips");
+    let p = Parameters { link_bin: 60, iteration_cap: 1, ..Parameters::defaults(0) };
+    let r = run(&net, &none, None, (Second(START), Second(START + 3_600)), &p).expect("a run");
+    let w = write(&r, &net, &none, &given(&p), &folder("io-parquet-no-class")).expect("written");
+    let text = std::fs::read_to_string(&w.record).expect("read");
+    assert!(!text.contains("coefficients"), "{text}");
+}
+
+#[test]
+fn a_refused_write_into_a_folder_holding_a_complete_run_leaves_its_four_files_unchanged() {
+    // Every refusal comes before anything is touched: wrong speeds, parameters not the run's
+    // (another link bin) and a value the record cannot hold (a coefficient not a number).
+    let net = network();
+    let dem = demand(&net);
+    let r = hand_run(&net, &dem);
+    let p = parameters();
+    let out = folder("io-parquet-kept");
+    let w = write(&r, &net, &dem, &given(&p), &out).expect("written");
+    let paths = [&w.trips.path, &w.links.path, &w.iterations.path, &w.record];
+    let before: Vec<Vec<u8>> = paths.iter().map(|f| std::fs::read(f).expect("read")).collect();
+    let speeds = BuildValues { walk_speed: 5.0, ..VALUES };
+    let bin = Parameters { link_bin: 300, ..parameters() };
+    let mut nan = parameters();
+    nan.coefficients[0][0] = f64::NAN;
+    let refused = [
+        write(&r, &net, &dem, &Given { build_values: speeds, ..given(&p) }, &out),
+        write(&r, &net, &dem, &given(&bin), &out),
+        write(&r, &net, &dem, &given(&nan), &out),
+    ];
+    assert!(matches!(refused[0], Err(WriteError::NotTheNetworksSpeeds { .. })));
+    assert!(matches!(refused[1], Err(WriteError::NotTheRunsParameters(_))));
+    assert!(matches!(refused[2], Err(WriteError::NotWritable { .. })));
+    let after: Vec<Vec<u8>> = paths.iter().map(|f| std::fs::read(f).expect("read")).collect();
+    assert!(before == after, "a refused write changed a file of the earlier run");
 }

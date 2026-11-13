@@ -49,15 +49,20 @@ result  = oms.run(network, demand, transit=None, window=(start_s, end_s), out=fo
   | `Network.from_osm` alone | `osm_class_defaults`: only `None`, the reader's one table (`crates/io-osm/README.md`) |
   | `Transit.from_gtfs` | `transfer_walk_max` (m) |
   | `Demand.from_table` | `stop_walk_max` (m) |
-  | `run` | `boarding_slack` (s), `max_rides`, `nearby_stops`, `choice` (`"logit"` or `"deterministic"`), `coefficients` (a dict from every class id to its sixteen, in the order of the loop's choice row: cost per minute of car driving, bike riding, walking, transit in vehicle, access walk, egress walk, first wait, transfer wait, transfer walk; per transfer; per €; per unit of ln PS; the car, bike, walk and transit constants), `nest_scale`, `iteration_cap`, `iteration_floor`, `link_bin` (s), `seed` |
+  | `run` | `boarding_slack` (s), `max_rides`, `nearby_stops`, `choice` (`"logit"` or `"deterministic"`), `coefficients` (a dict from every class id to its sixteen, in the order of the loop's choice row: cost per minute of car driving, bike riding, walking, transit in vehicle, access walk, egress walk, first wait, transfer wait, transfer walk; per transfer; per €; per unit of ln PS; the car, bike, walk and transit constants), `nest_scale`, `iteration_cap`, `iteration_floor`, `link_bin` (s), `seed` (an integer from 0 to 2⁶³ − 1, the largest the run's record holds) |
 - **`run`**: `window=(start_s, end_s)`, two seconds of the clock, required, never defaulted;
   `out`, the folder the files go to (created if missing). The demand must have been built on
   the network and the transit given to `run`.
 
 ## Outputs
-`Network`, `Transit` and `Demand` objects (opaque, immutable) and, from `run`, a `Run`:
-`trips`, `links`, `iterations` (the paths of `trips.parquet`, `links.parquet`,
-`iterations.parquet`, written by `crates/io-parquet`, whose README gives every column),
+`Network`, `Transit` and `Demand` objects (opaque, immutable; each keeps the values it was
+built with, the three build values, `transfer_walk_max`, `stop_walk_max`, for the run's
+record) and, from `run`, a `Run`: `trips`, `links`, `iterations` (the paths of
+`trips.parquet`, `links.parquet`, `iterations.parquet`, written by `crates/io-parquet`, whose
+README gives every column), `record` (the path of `run.toml`, the record of what was run:
+every parameter at the value used, defaults included, the window, the counts and fingerprints
+of the network, the demand and the transit, the readers' counts; its keys in
+`crates/io-parquet/README.md`),
 `stopped_by_rule` (bool: the stopping rule, else the cap, ended the run), `osm_report` (the OSM
 reader's `Report` as a dict, `None` for a network from tables) and `gtfs_report` (the GTFS
 reader's, `None` without transit).
@@ -79,7 +84,7 @@ degrees or metres; times of day in seconds of the clock.
 ## Errors
 - A keyword that is not a row of `PARAMETERS.md`, or that another entry point reads, and a
   missing `window` or `out`: `TypeError` naming it, as Python refuses an unexpected keyword.
-- A keyword's value that cannot be read (a string for a speed, a choice model that is not one,
+- A keyword's value that cannot be read (a string for a speed, a seed above 2⁶³ − 1, a choice model that is not one,
   a class without coefficients or a coefficient row for no class, `osm_class_defaults` other
   than `None`), a missing or unknown column, a row that cannot be read, a mode name that is not
   one, a demand built on another network or transit: `ValueError` naming it.
@@ -92,7 +97,8 @@ ride it (a cycle path is a link `bike;walk` with no car field), `bike` in a trip
 the bike alternative, `bike_speed` sets the one speed of every bike. A bike's trip and its
 counts per link and bin come back in the two files like a car's. Tested: bike trips equal
 networkx's shortest lengths on a grid with streets one-way for bikes alone, and `bike_speed=30`
-halves a ride.
+halves a ride. `run.toml` records the `bike_speed` the network was built with under
+`[parameters]`.
 
 ## Tests
 `pytest crates/binding/tests` on the extension built in release (`maturin develop --release -m
@@ -116,3 +122,33 @@ Each expected value comes from outside the simulator:
   skipped unless `TEST_10=1` (about a minute; not in CI); the file's header says what it judges.
 - `test_determinism.py`: a logit run of 400 trips twice and at `RAYON_NUM_THREADS` 1 and 8:
   `trips.parquet` and `links.parquet` byte-identical.
+- `test_record.py`: `run.toml` read with Python's `tomllib`. The names under `[parameters]` are
+  the rows of `PARAMETERS.md` (parsed) less `osm_class_defaults`, and less `transfer_walk_max`
+  and `stop_walk_max` without transit; each unit comment is the row's Unit cell; with no
+  keyword every value is the default written in the test from `PARAMETERS.md`. A run with
+  transit and non-default keywords at every entry point, rebuilt and rerun from the input
+  tables and values read from its `run.toml` alone: `trips.parquet`, `links.parquet` and
+  `run.toml` byte-identical, `iterations.parquet` equal but for its five wall-clock columns,
+  the three fingerprints equal, `[transit.gtfs_report]` equal to `Run.gtfs_report`. One link,
+  one trip or one call changed changes its own fingerprint alone. `run.toml` byte-identical
+  twice and at `RAYON_NUM_THREADS` 1 and 8, on the run of `test_determinism.py` and on the case
+  with transit. Class ids with a quote, a backslash, control characters and a letter outside
+  ASCII read back unchanged. Delft from its OSM extract and feed: `source = "osm"`, and both
+  readers' counts in the record equal to the `Run`'s.
+- `test_record_values.py`: each keyword's value is the one used, read back from `run.toml`
+  beside a hand number: `walk_speed` 5 km/h walks 1 000 m in 720 s; `capacity_per_lane` 900
+  on two lanes lets cars out at 100, 102, 104 s; a 4 500 s walk unfinished in a one-hour
+  window and at its door at 29 700 s in a two-hour one, the window recorded as given;
+  `iteration_floor` 8 gives 8 rows, the rule alone 5, `iteration_cap` 3 gives 3, and
+  `[result]` agrees with the rows and `Run.stopped_by_rule`; `transfer_walk_max` 300 against
+  400 m keeps 0 against 2 footpaths of 375 m; `stop_walk_max` 1 000 against 1 200 m leaves a
+  stop 1 100 m away out of reach (`without_stop` 1 against 0); `boarding_slack` 60 against
+  120 s takes a run leaving 100 s after arrival or the next (400 against 1 300 s);
+  `max_rides` 1 refuses a two-ride journey that 2 takes in 800 s; `nearby_stops` 1 against 2
+  offers 1 against 2 journeys. `nest_scale` 0.5 against 1: of 2 000 identical travellers
+  offered two transit journeys whose costs differ by 0.5, the share taking the cheaper within
+  3 binomial standard deviations of the nested logit's `1 / (1 + exp(−0.5 / μ))`, 0.731
+  against 0.622. `choice="deterministic"`: 1 000 travellers all take the cheaper bike over the
+  walk, which the logit would do with probability about 1e-21. `seed` changes the logit
+  choices of 400 travellers (the test says why it must). A seed of 2⁶³ refused before the run, 2⁶³ − 1 run
+  and read back.

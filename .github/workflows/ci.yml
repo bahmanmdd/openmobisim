@@ -52,6 +52,8 @@ jobs:
           python3 -m venv "$RUNNER_TEMP/pyarrow"
           "$RUNNER_TEMP/pyarrow/bin/pip" install --quiet pyarrow==26.0.1
           "$RUNNER_TEMP/pyarrow/bin/python" crates/io-parquet/tests/read_back.py target/tmp/io-parquet-hand-run
+      - name: The hand run's record read by Python's tomllib against the hand numbers
+        run: python3 crates/io-parquet/tests/read_record.py target/tmp/io-parquet-hand-run
       - name: Sioux Falls's run written in release (under 1 s)
         run: cargo test --release -p openmobisim-io-parquet --test sioux_falls -- --ignored --nocapture
       - name: The Python binding built in release by maturin, its tests by pytest (pyarrow 26.0.1, networkx 3.7)

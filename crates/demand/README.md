@@ -30,6 +30,13 @@ structure of arrays read through accessors:
 - `stop_count`, and per stop `stop_end`: its walk node and gap.
 - `origins_without_stop`, `destinations_without_stop`: the trips with transit in their set
   whose list is empty at that end; `trips_without_transit`: those with either list empty.
+- `fingerprint()`, a `u64` (the FNV-1a hash of `openmobisim-types`) over what the demand was
+  built from, in this order: the class count, then each class's external id in id order; the
+  trip count, then per trip in id order its external id, its class id, its departure, its
+  modes, and its origin's and destination's x and y in metres in the network's plane. The joins
+  to nodes and stops and the access and egress lists are not fed: they follow from the network,
+  the timetable and `stop_walk_max`, each recorded beside it. The same rows, in any order, give
+  the same fingerprint; a change to any value of a trip row or to the class list changes it.
 
 Nothing here builds a transit query or a route: that is the loop's.
 
@@ -85,7 +92,8 @@ bike), which may differ from the car's and the walker's. On a cycle path the bik
 walker link to the path's node while the car links to the nearest street; next to a motorway
 the car may link to it and the bike may not. A bike is never in a transit list here: the
 access and egress walks are on foot (a bike-and-ride access, later, would be given to the
-transit query as its own list).
+transit query as its own list). In the fingerprint a trip's bike is in its modes: a trip
+offered the bike or no longer offered it changes the fingerprint.
 
 ## Tests
 `cargo test -p openmobisim-demand`. Each expected value comes from outside the crate:
@@ -96,7 +104,11 @@ egress lists equal to networkx's bounded Dijkstra by length plus the gaps on a 2
 with one-way walk links, 6 stops off the nodes and 50 trip ends (`tests/networkx_access.py`
 writes the fixture; networkx 3.7; seconds within 1e-9 of metres over 4.8 km/h); the gaps by
 hand (30 m + 1 000 m + 40 m = 1 070 m in 802.5 s at 4.8 km/h; at `stop_walk_max` 1 500 m a
-walk of 1 500 m in, 1 501 m out); the refusals, each naming its row. The demand's determinism
+walk of 1 500 m in, 1 501 m out); the refusals, each naming its row; the fingerprint as a property (`tests/fingerprint.rs`): two
+builds of the same rows equal, and one value changed, all else equal, in each of the 9 input
+columns (class id; trip id, class, departure, modes, origin x and y, destination x and y), each
+a named case, changes it; the same rows in reverse order give the same fingerprint; one class
+and one trip hash to the byte stream above written out by hand. The demand's determinism
 over 1 and 8 threads and two runs is tested with the whole chain
 (`crates/loop/tests/determinism.rs`: every end and both lists). The run time on a 20 000-node grid with 300 stops
 and 13 000 trips is reported by hand: `cargo test --release -p openmobisim-demand --test

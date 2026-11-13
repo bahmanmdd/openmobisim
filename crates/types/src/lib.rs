@@ -10,6 +10,7 @@
 //! | [`units`] | metres, metres per second, seconds, vehicles per second and cost, as zero-cost newtypes |
 //! | [`reduce`] | sums and reductions in a fixed order, identical at any number of threads |
 //! | [`rng`] | ChaCha8 draws addressed by seed, stream and entity identity |
+//! | [`fingerprint`] | the 64-bit FNV-1a hash of what a network, a timetable or a demand was built from |
 //!
 //! Units are metric throughout; vehicles per hour and kilometres per hour are converted once, as
 //! a value is read. Bikes share every type with cars and walkers: there is no passenger-car
@@ -22,6 +23,7 @@
 // Identifiers are `u32` widened to `usize`; a narrower pointer would make that lossy.
 const _: () = assert!(usize::BITS >= 32, "openmobisim needs a pointer width of at least 32 bits");
 
+pub mod fingerprint;
 pub mod ids;
 pub mod mode;
 pub mod reduce;

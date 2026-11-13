@@ -18,7 +18,22 @@ held as a structure of arrays. Depends on `openmobisim-types` only.
 `Network`: counts and external-id tables of nodes and links; per node its position in metres
 and signalised flag; per link its two nodes, length, free-flow speed and time per mode,
 capacity, lanes, modes and signal flag; out- and in-links per node; the projection, if any;
-`bike_speed()` and `walk_speed()`, the build values in m/s, the same on every link.
+`bike_speed()` and `walk_speed()`, the build values in m/s, the same on every link;
+`fingerprint()`, below.
+
+## Fingerprint
+`Network::fingerprint()`, a `u64` (the FNV-1a hash of `openmobisim-types`), over the network as
+built, in this order: the projection (0 for none, else 1, the UTM zone number and the
+hemisphere, 0 north and 1 south); the bike and walk speeds in m/s; the node count, then per
+node in id order its external id, its x and y in metres (projected, for longitude/latitude) and
+its signal mark; the link count, then per link in id order its external id, its upstream and
+downstream node ids, its length in metres (given, or the straight line), its lanes, its modes,
+its car free-flow speed in m/s (`NaN` without cars), its capacity in veh/s (given, or lanes ×
+`capacity_per_lane`; infinite without cars) and its downstream-end signal mark. Nothing derived
+from these (free-flow times, out- and in-links) is fed. The same rows, in any order, give the
+same fingerprint; a change to any value of a node or link row or to a build value changes it,
+except a `capacity_per_lane` no car link reads (every car link gives its capacity) and a length
+or capacity given equal to the one it would take.
 
 ## Units
 Metres, m/s, seconds and veh/s inside; km/h and veh/h only in the rows and build values.
@@ -50,7 +65,9 @@ A bike is a mode on the same links as cars and walkers, with its own free-flow s
 (`bike_speed`, on every link); there is one network and no separate layer. A link a bike may
 use has bike in its mode set; a cycle path is a link whose set is bike (and walk) alone, given
 with no car field: no lanes, no car speed, no capacity limit. A bike rides 1 500 m at 15 km/h
-in 360 s, on a street or a cycle path, signal or not.
+in 360 s, on a street or a cycle path, signal or not. In the fingerprint a link's bike
+permission is in its modes and the bike speed is fed once: a link opened to or closed to bikes,
+or another `bike_speed`, changes the fingerprint.
 
 ## Tests
 `cargo test -p openmobisim-graph`. Each expected value comes from outside the crate: hand
@@ -60,4 +77,12 @@ infinite capacity, 0 lanes; the bike and walk speeds read back, 36 km/h as 10 m/
 as 2 m/s); hand capacities (1 200 veh/h is 1/3 veh/s; 2 lanes × 1 800 veh/h
 is 1 veh/s; a car row's infinity kept as an unlimited capacity); Pythagoras (3 m and 4 m apart is 5 m); a hand count of a 3 × 3
 grid (9 nodes, 24 links, out-degrees 2, 3, 4); the standard library's sort for the id order;
-the UTM grid's definition and the WGS84 meridian and parallel arcs for the projection.
+the UTM grid's definition and the WGS84 meridian and parallel arcs for the projection. The
+fingerprint as a property (`tests/fingerprint.rs`): two builds of the same rows equal; one
+value changed, all else equal, in each of the 18 input columns (node id, x, y, longitude,
+latitude, signal mark; link id, upstream, downstream, modes, `length_m`, `lanes`,
+`car_speed_km_h`, `capacity_veh_h`, `signal_at_downstream_end`; `capacity_per_lane`,
+`bike_speed`, `walk_speed`), each a named case, changes it; the same rows in reverse order
+give the same fingerprint; two nodes and one link hash to the byte stream above written out by
+hand, in metres and in longitude/latitude south of the equator (zone 56, south, by the UTM
+grid's definition).

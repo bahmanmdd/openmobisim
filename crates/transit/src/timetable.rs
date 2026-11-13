@@ -34,6 +34,7 @@
 use core::fmt;
 use std::collections::HashMap;
 
+use openmobisim_types::fingerprint::Fingerprint;
 use openmobisim_types::ids::{
     EntityId, ExternalIdTable, ExternalIdTableBuilder, StopId, TransitRunId,
 };
@@ -483,6 +484,45 @@ impl Timetable {
     /// seconds.
     pub fn footpaths(&self, stop: StopId) -> impl Iterator<Item = (StopId, Duration)> + '_ {
         self.walks(stop).iter().map(|w| (w.to, w.seconds))
+    }
+
+    /// The fingerprint of what the timetable was built from (`openmobisim_types::fingerprint`),
+    /// fed in this order: the stop count, then per stop in id order its external id, x and y
+    /// (metres); the run count, then per run in id order its external id, its call count and
+    /// per call the stop id, the arrival and the departure (seconds of the clock); the footpath
+    /// count, then per footpath, by stop walked from, stop walked to, then seconds, the two stop
+    /// ids and the seconds as given. Two builds of the same input, in any order, have the same
+    /// fingerprint. The patterns are not fed: they follow from the runs.
+    #[must_use]
+    pub fn fingerprint(&self) -> u64 {
+        let mut h = Fingerprint::new();
+        h.u32(self.stop_count());
+        for (i, id) in self.stop_ids.iter().enumerate() {
+            h.str(id);
+            h.f64(self.positions[i].0.get());
+            h.f64(self.positions[i].1.get());
+        }
+        h.u32(self.run_count());
+        for (i, id) in self.run_ids.iter().enumerate() {
+            h.str(id);
+            let run = TransitRunId::from_index(i);
+            h.u32(to_u32(self.pattern_stops(self.run_pattern(run)).len()));
+            for (stop, arrival, departure) in self.calls(run) {
+                h.u32(stop.raw());
+                h.u32(arrival.get());
+                h.u32(departure.get());
+            }
+        }
+        h.u64(self.footpaths.len() as u64);
+        for from in 0..self.stop_count() {
+            let from = StopId::new(from);
+            for (to, seconds) in self.footpaths(from) {
+                h.u32(from.raw());
+                h.u32(to.raw());
+                h.f64(seconds.get());
+            }
+        }
+        h.finish()
     }
 
     // What the search reads.

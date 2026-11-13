@@ -58,10 +58,10 @@ def grid(n, seed, one_way_bike_share=0.15, cars=False):
     return nodes, links, pos, graphs
 
 
-def logit_run(out):
+def logit_run(out, **keywords):
     """The determinism test's run: an 8 x 8 grid with cars, 400 trips open to car, bike and walk
     between drawn nodes, two classes, the default choice model (the nested logit), 8 iterations
-    at most, written into `out`."""
+    at most, written into `out`; `keywords`, if any, are given to `run` besides."""
     import openmobisim as oms
 
     nodes, links, pos, _ = grid(8, seed=3, cars=True)
@@ -77,7 +77,7 @@ def logit_run(out):
             trips[column].append(value)
     network = oms.Network.from_tables(nodes, links)
     demand = oms.Demand.from_table(trips, ["a", "b"], network)
-    return oms.run(network, demand, window=(28_800, 32_400), out=out, iteration_cap=8)
+    return oms.run(network, demand, window=(28_800, 32_400), out=out, iteration_cap=8, **keywords)
 
 
 if __name__ == "__main__":

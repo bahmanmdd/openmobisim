@@ -27,7 +27,7 @@ use openmobisim_demand::demand::Demand as RustDemand;
 use openmobisim_graph::network::{BuildValues, Network as RustNetwork};
 use openmobisim_io_gtfs::{GtfsError, Report as GtfsReport};
 use openmobisim_io_osm::{OsmError, Report as OsmReport};
-use openmobisim_io_parquet::WriteError;
+use openmobisim_io_parquet::{Given as RunGiven, Source, Transit as RunTransit, WriteError};
 use openmobisim_loop::parameters::{ChoiceModel, Parameters};
 use openmobisim_transit::timetable::Timetable;
 use openmobisim_types::time::Second;
@@ -63,6 +63,8 @@ fn build_values(given: &Given<'_>) -> PyResult<BuildValues> {
 #[pyclass(frozen, module = "openmobisim")]
 struct Network {
     network: Arc<RustNetwork>,
+    /// The build values it was built with, kept for the run's record.
+    values: BuildValues,
     /// The OSM reader's counts; none for a network from tables.
     report: Option<OsmReport>,
 }
@@ -93,7 +95,7 @@ impl Network {
             OsmError::Io { .. } => PyOSError::new_err(e.to_string()),
             _ => value_error(&e),
         })?;
-        Ok(Self { network: Arc::new(network), report: Some(report) })
+        Ok(Self { network: Arc::new(network), values, report: Some(report) })
     }
 
     /// Build from a nodes table (`node_id`, then `lon_deg`, `lat_deg` or `x_m`, `y_m`) and a
@@ -118,7 +120,7 @@ impl Network {
         let values = build_values(&given)?;
         let builder = tables::network(nodes, links)?;
         let network = py.detach(|| builder.build(values)).map_err(|e| value_error(&e))?;
-        Ok(Self { network: Arc::new(network), report: None })
+        Ok(Self { network: Arc::new(network), values, report: None })
     }
 }
 
@@ -129,6 +131,8 @@ struct Transit {
     /// The network its footpaths were derived on.
     network: Arc<RustNetwork>,
     report: GtfsReport,
+    /// The `transfer_walk_max` it was read with, metres, kept for the run's record.
+    transfer_walk_max: f64,
 }
 
 #[pymethods]
@@ -145,14 +149,15 @@ impl Transit {
         transit_parameters: Option<&Bound<'_, PyDict>>,
     ) -> PyResult<Self> {
         let given = Given::read(Entry::Transit, "Transit.from_gtfs", transit_parameters)?;
-        let max = Metres(given.get("transfer_walk_max", TRANSFER_WALK_MAX)?);
+        let transfer_walk_max = given.get("transfer_walk_max", TRANSFER_WALK_MAX)?;
         let network = Arc::clone(&network.get().network);
-        let read = py.detach(|| openmobisim_io_gtfs::read(&path, &network, max));
+        let read =
+            py.detach(|| openmobisim_io_gtfs::read(&path, &network, Metres(transfer_walk_max)));
         let (timetable, report) = read.map_err(|e| match e {
             GtfsError::Io(_) => PyOSError::new_err(e.to_string()),
             _ => value_error(&e),
         })?;
-        Ok(Self { timetable: Arc::new(timetable), network, report })
+        Ok(Self { timetable: Arc::new(timetable), network, report, transfer_walk_max })
     }
 }
 
@@ -163,6 +168,8 @@ struct Demand {
     demand: RustDemand,
     network: Arc<RustNetwork>,
     transit: Option<Arc<Timetable>>,
+    /// The `stop_walk_max` it was built with, metres, kept for the run's record.
+    stop_walk_max: f64,
 }
 
 #[pymethods]
@@ -183,7 +190,7 @@ impl Demand {
         demand_parameters: Option<&Bound<'_, PyDict>>,
     ) -> PyResult<Self> {
         let given = Given::read(Entry::Demand, "Demand.from_table", demand_parameters)?;
-        let max = Metres(given.get("stop_walk_max", STOP_WALK_MAX)?);
+        let stop_walk_max = given.get("stop_walk_max", STOP_WALK_MAX)?;
         let network = Arc::clone(&network.get().network);
         let transit = transit.map(|t| t.get());
         if transit.is_some_and(|t| !Arc::ptr_eq(&t.network, &network)) {
@@ -191,15 +198,16 @@ impl Demand {
         }
         let transit = transit.map(|t| Arc::clone(&t.timetable));
         let rows = tables::trips(trips)?;
+        let max = Metres(stop_walk_max);
         let build = || RustDemand::build(&rows, &classes, &network, transit.as_deref(), max);
         let demand = py.detach(build).map_err(|e| value_error(&e))?;
-        Ok(Self { demand, network, transit })
+        Ok(Self { demand, network, transit, stop_walk_max })
     }
 }
 
-/// What a run returns: the paths of its three Parquet files, whether the stopping rule (else
-/// the iteration cap) ended it, and the readers' counts (`None` for a network from tables or a
-/// run without transit).
+/// What a run returns: the paths of its three Parquet files and of its record, `run.toml`,
+/// whether the stopping rule (else the iteration cap) ended it, and the readers' counts (`None`
+/// for a network from tables or a run without transit).
 #[pyclass(frozen, get_all, module = "openmobisim")]
 struct Run {
     /// `trips.parquet`: one row per trip.
@@ -208,6 +216,8 @@ struct Run {
     links: PathBuf,
     /// `iterations.parquet`: one row per iteration.
     iterations: PathBuf,
+    /// `run.toml`: the record of what was run.
+    record: PathBuf,
     /// Whether the stopping rule ended the run (else the iteration cap).
     stopped_by_rule: bool,
     /// The OSM reader's counts, as a dict; `None` for a network from tables.
@@ -246,11 +256,18 @@ fn parameters(given: &Given<'_>, demand: &RustDemand) -> PyResult<Parameters> {
             })?;
         }
     }
+    let seed = given.get("seed", d.seed)?;
+    if i64::try_from(seed).is_err() {
+        return Err(PyValueError::new_err(format!(
+            "seed: {seed} is outside 0 to 9223372036854775807 (2^63 - 1), the integers the \
+             run's record holds"
+        )));
+    }
     Ok(Parameters {
         link_bin: given.get("link_bin", d.link_bin)?,
         iteration_cap: given.get("iteration_cap", d.iteration_cap)?,
         iteration_floor: given.get("iteration_floor", d.iteration_floor)?,
-        seed: given.get("seed", d.seed)?,
+        seed,
         boarding_slack: given.get("boarding_slack", d.boarding_slack)?,
         max_rides: given.get("max_rides", d.max_rides)?,
         nearby_stops: given.get("nearby_stops", d.nearby_stops)?,
@@ -261,8 +278,8 @@ fn parameters(given: &Given<'_>, demand: &RustDemand) -> PyResult<Parameters> {
 }
 
 /// Run the loop on `network`, `demand` (built on that network and that transit) and `transit`
-/// over `window`, two seconds of the clock, and write `trips.parquet`, `links.parquet` and
-/// `iterations.parquet` into `out`. Keywords: the loop's rows of `PARAMETERS.md`.
+/// over `window`, two seconds of the clock, and write `trips.parquet`, `links.parquet`,
+/// `iterations.parquet` and `run.toml` into `out`. Keywords: the loop's rows of `PARAMETERS.md`.
 #[pyfunction]
 #[pyo3(signature = (network, demand, transit=None, *, window, out, **parameters))]
 #[allow(clippy::needless_pass_by_value, reason = "pyo3 hands the arguments over by value")]
@@ -292,10 +309,22 @@ fn run(
     let timetable = transit.map(|t| &*t.timetable);
     let window = (Second(window.0), Second(window.1));
     let (net, dem) = (&*network.network, &demand.demand);
+    let given = RunGiven {
+        source: network.report.as_ref().map_or(Source::Tables, Source::Osm),
+        build_values: network.values,
+        stop_walk_max: demand.stop_walk_max,
+        transit: transit.map(|t| RunTransit {
+            timetable: &t.timetable,
+            report: &t.report,
+            transfer_walk_max: t.transfer_walk_max,
+        }),
+        parameters: &p,
+    };
     let written = py.detach(|| {
         let r = openmobisim_loop::run::run(net, dem, timetable, window, &p)
             .map_err(|e| value_error(&e))?;
-        let written = openmobisim_io_parquet::write(&r, net, dem, &out).map_err(|e| match e {
+        let write = openmobisim_io_parquet::write(&r, net, dem, &given, &out);
+        let written = write.map_err(|e| match e {
             WriteError::Io(_) => PyOSError::new_err(e.to_string()),
             _ => value_error(&e),
         })?;
@@ -306,6 +335,7 @@ fn run(
         trips: written.trips.path,
         links: written.links.path,
         iterations: written.iterations.path,
+        record: written.record,
         stopped_by_rule,
         osm_report: network.report.as_ref().map(|r| osm_report(py, r)).transpose()?,
         gtfs_report: transit.map(|t| gtfs_report(py, &t.report)).transpose()?,

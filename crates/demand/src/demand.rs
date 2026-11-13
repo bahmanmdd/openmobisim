@@ -32,6 +32,7 @@
 use openmobisim_graph::geometry::Xy;
 use openmobisim_graph::network::Network;
 use openmobisim_transit::timetable::Timetable;
+use openmobisim_types::fingerprint::Fingerprint;
 use openmobisim_types::ids::{EntityId, ExternalIdTable, NodeId, StopId, TripId, UserClassId};
 use openmobisim_types::mode::{Mode, ModeSet};
 use openmobisim_types::time::Second;
@@ -395,5 +396,34 @@ impl Demand {
     #[must_use]
     pub fn trips_without_transit(&self) -> u32 {
         self.without_transit
+    }
+
+    /// The fingerprint of what the demand was built from (`openmobisim_types::fingerprint`),
+    /// fed in this order: the class count, then each class's external id in id order; the trip
+    /// count, then per trip in id order its external id, class id, departure (a second of the
+    /// clock), modes, and origin and destination x and y (metres in the network's plane). Two
+    /// builds of the same rows, in any order, have the same fingerprint. The joins to nodes and
+    /// stops and the access and egress lists are not fed: they follow from the network, the
+    /// timetable and `stop_walk_max`.
+    #[must_use]
+    pub fn fingerprint(&self) -> u64 {
+        let mut h = Fingerprint::new();
+        let t = &self.trips;
+        h.u32(t.classes.count());
+        for id in t.classes.iter() {
+            h.str(id);
+        }
+        h.u32(t.ids.count());
+        for (i, id) in t.ids.iter().enumerate() {
+            h.str(id);
+            h.u32(t.class[i].raw());
+            h.u32(t.departure[i].get());
+            h.modes(t.modes[i]);
+            for p in [t.origin[i], t.destination[i]] {
+                h.f64(p.x);
+                h.f64(p.y);
+            }
+        }
+        h.finish()
     }
 }

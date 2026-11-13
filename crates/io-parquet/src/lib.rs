@@ -1,9 +1,12 @@
 //! Writing the three tables of a run (trips, links by time bin, iterations) as three Parquet
-//! files in a folder, and nothing else.
+//! files in a folder, and the run's record, `run.toml`, beside them, and nothing else.
 //!
 //! [`write`] takes the `Run` the loop returned, the `Network` and the `Demand` it ran on (for the
-//! external ids), and a folder; it writes `trips.parquet`, `links.parquet` and
-//! `iterations.parquet` there and returns their paths and row counts ([`Written`]). One row per
+//! external ids), what else the run was given ([`Given`]: the values its network, transit and
+//! demand were built with, the loop's parameters, the readers' counts), and a folder; it writes
+//! `trips.parquet`, `links.parquet`, `iterations.parquet` and `run.toml` there and returns their
+//! paths and the tables' row counts ([`Written`]). The record's layout is in `src/record.rs`.
+//! One row per
 //! entity, external ids as strings, every column named with its unit; null, never `NaN`, where
 //! the loop's `NaN` means "no value". Every time of day is a second of the clock (seconds after
 //! midnight of the run's day): the loop's seconds after the window's start plus the window's
@@ -17,14 +20,57 @@ use std::sync::Arc;
 
 use arrow_array::RecordBatch;
 use openmobisim_demand::demand::Demand;
-use openmobisim_graph::network::Network;
+use openmobisim_graph::network::{BuildValues, Network};
+use openmobisim_io_gtfs::Report as GtfsReport;
+use openmobisim_io_osm::Report as OsmReport;
+use openmobisim_loop::parameters::Parameters;
 use openmobisim_loop::run::Run;
+use openmobisim_transit::timetable::Timetable;
 use openmobisim_types::ids::EntityId;
+use openmobisim_types::units::Speed;
 use parquet::arrow::ArrowWriter;
 
 mod iterations;
 mod links;
+mod record;
 mod trips;
+
+/// Where the network came from.
+#[derive(Clone, Copy, Debug)]
+pub enum Source<'a> {
+    /// An OpenStreetMap extract, with the reader's counts.
+    Osm(&'a OsmReport),
+    /// Node and link tables.
+    Tables,
+}
+
+/// The run's transit: its timetable, read from a GTFS feed, the reader's counts and the
+/// `transfer_walk_max` it was read with (m).
+#[derive(Clone, Copy, Debug)]
+pub struct Transit<'a> {
+    /// The timetable the run and its demand were built on.
+    pub timetable: &'a Timetable,
+    /// The GTFS reader's counts.
+    pub report: &'a GtfsReport,
+    /// The longest footpath between stops the reader derived, metres.
+    pub transfer_walk_max: f64,
+}
+
+/// What the run was given besides its network and its demand, for its record: every value as
+/// the run used it, defaults included.
+#[derive(Clone, Copy, Debug)]
+pub struct Given<'a> {
+    /// Where the network came from.
+    pub source: Source<'a>,
+    /// The network's three build values: veh/h per lane, km/h, km/h.
+    pub build_values: BuildValues,
+    /// The `stop_walk_max` the demand was built with, metres.
+    pub stop_walk_max: f64,
+    /// The transit, if the run had one.
+    pub transit: Option<Transit<'a>>,
+    /// The loop's parameters.
+    pub parameters: &'a Parameters,
+}
 
 /// Why a write was refused or failed.
 #[derive(Debug)]
@@ -43,6 +89,32 @@ pub enum WriteError {
         /// Links of the network given.
         network_links: u32,
     },
+    /// The transit given is not the run's: its stop count is not the demand's.
+    NotTheRunsTransit {
+        /// Stops the demand was built with (0 without transit).
+        demand_stops: u32,
+        /// Stops of the transit given (0 without).
+        transit_stops: u32,
+    },
+    /// The bike or walk speed of the build values given is not the network's: `Given` holds
+    /// them again because the network keeps them in m/s, and km/h is not recovered exactly.
+    NotTheNetworksSpeeds {
+        /// The bike speed given, km/h.
+        bike_km_h: f64,
+        /// The walk speed given, km/h.
+        walk_km_h: f64,
+    },
+    /// The parameters given are not the run's: a coefficient row per class, or the link bin of
+    /// the run's links table, differs.
+    NotTheRunsParameters(String),
+    /// A value the record refuses: a float that is not finite (TOML's `nan` and `inf` are never
+    /// written), an integer above TOML's largest, 2⁶³ − 1.
+    NotWritable {
+        /// The key, with its table (`parameters.nest_scale`).
+        key: String,
+        /// The value refused.
+        value: String,
+    },
     /// The folder or a file could not be created or written.
     Io(std::io::Error),
     /// The Arrow or Parquet writer rejected the data.
@@ -60,6 +132,20 @@ impl fmt::Display for WriteError {
                 f,
                 "the run names link {link} and the network has {network_links}: not the run's network"
             ),
+            Self::NotTheRunsTransit { demand_stops, transit_stops } => write!(
+                f,
+                "the demand was built with {demand_stops} stops and the transit has \
+                 {transit_stops}: not the run's transit"
+            ),
+            Self::NotTheNetworksSpeeds { bike_km_h, walk_km_h } => write!(
+                f,
+                "a bike speed of {bike_km_h} km/h and a walk speed of {walk_km_h} km/h are not \
+                 the network's: not the build values it was built with"
+            ),
+            Self::NotTheRunsParameters(why) => write!(f, "not the run's parameters: {why}"),
+            Self::NotWritable { key, value } => {
+                write!(f, "{key} = {value} cannot be written in the run's record")
+            }
             Self::Io(e) => write!(f, "could not write the file: {e}"),
             Self::Parquet(m) => write!(f, "could not encode the table: {m}"),
         }
@@ -102,7 +188,7 @@ pub struct Table {
     pub rows: usize,
 }
 
-/// The three files written.
+/// The four files written.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Written {
     /// `trips.parquet`: one row per trip.
@@ -111,21 +197,58 @@ pub struct Written {
     pub links: Table,
     /// `iterations.parquet`: one row per iteration.
     pub iterations: Table,
+    /// `run.toml`: the record of the run, its path.
+    pub record: PathBuf,
 }
 
 /// Write the three tables of `run` as `trips.parquet`, `links.parquet` and
-/// `iterations.parquet` in `folder`, created if missing; a file already there is replaced.
+/// `iterations.parquet`, and its record as `run.toml`, in `folder`, created if missing; a file
+/// already there is replaced. Every refusal comes before anything is written.
 ///
 /// # Errors
 ///
-/// [`WriteError`]: a demand or a network that is not the run's; the folder or a file that
-/// cannot be created or written; the writer's refusal.
+/// [`WriteError`]: a demand, a network, a transit or parameters that are not the run's; a
+/// value the record cannot hold; the folder or a file that cannot be created or written; the
+/// writer's refusal.
 pub fn write(
     run: &Run,
     network: &Network,
     demand: &Demand,
+    given: &Given<'_>,
     folder: &Path,
 ) -> Result<Written, WriteError> {
+    check(run, network, demand, given)?;
+    // Everything that can be refused is built first: the record and the three batches.
+    let record = record::text(run, network, demand, given)?;
+    let start = run.links.window().origin();
+    let trips = trips::batch(&run.trips, demand, start)?;
+    let links = links::batch(&run.links, network)?;
+    let iterations = iterations::batch(&run.iterations)?;
+    std::fs::create_dir_all(folder)?;
+    // A record left from an earlier run goes first and the new one is written last, so a folder
+    // that holds a record holds the complete run it describes.
+    let record_path = folder.join("run.toml");
+    match std::fs::remove_file(&record_path) {
+        Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(e.into()),
+        _ => {}
+    }
+    let written = Written {
+        trips: file(folder, "trips.parquet", &trips)?,
+        links: file(folder, "links.parquet", &links)?,
+        iterations: file(folder, "iterations.parquet", &iterations)?,
+        record: record_path,
+    };
+    std::fs::write(&written.record, record)?;
+    Ok(written)
+}
+
+/// Refuse a demand, a network, a transit, build values or parameters that are not the run's.
+fn check(
+    run: &Run,
+    network: &Network,
+    demand: &Demand,
+    given: &Given<'_>,
+) -> Result<(), WriteError> {
     if run.trips.class.len() != demand.trip_count() as usize {
         return Err(WriteError::NotTheRunsDemand {
             run_trips: run.trips.class.len(),
@@ -136,13 +259,33 @@ pub fn write(
     if let Some(link) = run.links.links().iter().map(|l| l.raw()).find(|&l| l >= network_links) {
         return Err(WriteError::NotTheRunsNetwork { link, network_links });
     }
-    std::fs::create_dir_all(folder)?;
-    let start = run.links.window().origin();
-    Ok(Written {
-        trips: file(folder, "trips.parquet", &trips::batch(&run.trips, demand, start)?)?,
-        links: file(folder, "links.parquet", &links::batch(&run.links, network)?)?,
-        iterations: file(folder, "iterations.parquet", &iterations::batch(&run.iterations)?)?,
-    })
+    let transit_stops = given.transit.map_or(0, |t| t.timetable.stop_count());
+    if demand.stop_count() != transit_stops {
+        return Err(WriteError::NotTheRunsTransit {
+            demand_stops: demand.stop_count(),
+            transit_stops,
+        });
+    }
+    let (rows, classes) = (given.parameters.coefficients.len(), demand.class_count());
+    if rows != classes as usize {
+        return Err(WriteError::NotTheRunsParameters(format!(
+            "{rows} coefficient rows for {classes} classes"
+        )));
+    }
+    let (bin, run_bin) = (given.parameters.link_bin, run.links.window().step_seconds());
+    if bin != run_bin {
+        return Err(WriteError::NotTheRunsParameters(format!(
+            "a link bin of {bin} s where the run's is {run_bin} s"
+        )));
+    }
+    let (bike, walk) = (given.build_values.bike_speed, given.build_values.walk_speed);
+    let same = |km_h: f64, m_s: Speed| {
+        Speed::from_km_per_hour(km_h).get().to_bits() == m_s.get().to_bits()
+    };
+    if !same(bike, network.bike_speed()) || !same(walk, network.walk_speed()) {
+        return Err(WriteError::NotTheNetworksSpeeds { bike_km_h: bike, walk_km_h: walk });
+    }
+    Ok(())
 }
 
 /// Write `batch` to `folder/name` as one Parquet file at the writer's default settings.
