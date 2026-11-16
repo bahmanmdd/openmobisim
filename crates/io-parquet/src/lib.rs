@@ -12,6 +12,9 @@
 //! midnight of the run's day): the loop's seconds after the window's start plus the window's
 //! start, converted here and nowhere else. The files are written with the `parquet` crate's
 //! default settings: no compression, dictionary encoding, one row group per 1 048 576 rows.
+//!
+//! [`read_table`] reads an input table (nodes, links or trips) from a Parquet file, uncompressed
+//! or snappy: its column names and each column's cells by kind (`src/input.rs`).
 
 use core::fmt;
 use std::fs::File;
@@ -30,10 +33,14 @@ use openmobisim_types::ids::EntityId;
 use openmobisim_types::units::Speed;
 use parquet::arrow::ArrowWriter;
 
+mod input;
 mod iterations;
 mod links;
 mod record;
 mod trips;
+
+pub use input::{Cells, InputTable, Kind, ReadError, read_table};
+pub use record::KEYS;
 
 /// Where the network came from.
 #[derive(Clone, Copy, Debug)]
@@ -56,12 +63,31 @@ pub struct Transit<'a> {
     pub transfer_walk_max: f64,
 }
 
+/// The files the run's inputs were read from, each a canonical path (absolute, symbolic links
+/// resolved), `None` for an input given in memory: the record writes each relative to its own
+/// folder, so that the record alone can run again.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Files<'a> {
+    /// The OpenStreetMap extract of the network.
+    pub osm: Option<&'a Path>,
+    /// The nodes table of the network.
+    pub nodes: Option<&'a Path>,
+    /// The links table of the network.
+    pub links: Option<&'a Path>,
+    /// The trips table of the demand.
+    pub trips: Option<&'a Path>,
+    /// The GTFS feed of the transit.
+    pub gtfs: Option<&'a Path>,
+}
+
 /// What the run was given besides its network and its demand, for its record: every value as
 /// the run used it, defaults included.
 #[derive(Clone, Copy, Debug)]
 pub struct Given<'a> {
     /// Where the network came from.
     pub source: Source<'a>,
+    /// The files its inputs were read from.
+    pub files: Files<'a>,
     /// The network's three build values: veh/h per lane, km/h, km/h.
     pub build_values: BuildValues,
     /// The `stop_walk_max` the demand was built with, metres.
@@ -115,6 +141,9 @@ pub enum WriteError {
         /// The value refused.
         value: String,
     },
+    /// A file the write would replace is one of the run's input files (canonical paths
+    /// compared): writing would destroy the input the record names.
+    WouldReplaceInput(PathBuf),
     /// The folder or a file could not be created or written.
     Io(std::io::Error),
     /// The Arrow or Parquet writer rejected the data.
@@ -146,6 +175,12 @@ impl fmt::Display for WriteError {
             Self::NotWritable { key, value } => {
                 write!(f, "{key} = {value} cannot be written in the run's record")
             }
+            Self::WouldReplaceInput(path) => write!(
+                f,
+                "{} is one of the run's input files; writing the run there would replace it: \
+                 write the run into another folder",
+                path.display()
+            ),
             Self::Io(e) => write!(f, "could not write the file: {e}"),
             Self::Parquet(m) => write!(f, "could not encode the table: {m}"),
         }
@@ -208,8 +243,8 @@ pub struct Written {
 /// # Errors
 ///
 /// [`WriteError`]: a demand, a network, a transit or parameters that are not the run's; a
-/// value the record cannot hold; the folder or a file that cannot be created or written; the
-/// writer's refusal.
+/// value the record cannot hold; a file to be written that is one of the run's input files; the
+/// folder or a file that cannot be created or written; the writer's refusal.
 pub fn write(
     run: &Run,
     network: &Network,
@@ -218,13 +253,18 @@ pub fn write(
     folder: &Path,
 ) -> Result<Written, WriteError> {
     check(run, network, demand, given)?;
-    // Everything that can be refused is built first: the record and the three batches.
-    let record = record::text(run, network, demand, given)?;
+    replaces_no_input(&given.files, folder)?;
+    // Everything that can be refused is built first: the record and the three batches. The
+    // record is built again once the folder exists, since an input file's path is written
+    // relative to the folder's canonical path; the paths themselves are never refused.
+    record::text(run, network, demand, given, None)?;
     let start = run.links.window().origin();
     let trips = trips::batch(&run.trips, demand, start)?;
     let links = links::batch(&run.links, network)?;
     let iterations = iterations::batch(&run.iterations)?;
     std::fs::create_dir_all(folder)?;
+    let canonical = std::fs::canonicalize(folder)?;
+    let record = record::text(run, network, demand, given, Some(&canonical))?;
     // A record left from an earlier run goes first and the new one is written last, so a folder
     // that holds a record holds the complete run it describes.
     let record_path = folder.join("run.toml");
@@ -284,6 +324,29 @@ fn check(
     };
     if !same(bike, network.bike_speed()) || !same(walk, network.walk_speed()) {
         return Err(WriteError::NotTheNetworksSpeeds { bike_km_h: bike, walk_km_h: walk });
+    }
+    Ok(())
+}
+
+/// Refuse a write into `folder` whose `trips.parquet`, `links.parquet`, `iterations.parquet` or
+/// `run.toml` is one of the run's input files `files`, canonical paths compared: a file of those
+/// names that does not exist yet (or a folder that does not exist yet) is no input. Paths are
+/// compared, not files: a hard link of an input under one of those names is not recognised.
+///
+/// [`write`] calls it before anything is written, so that no caller of `write` ever replaces an
+/// input; a caller that knows the files and the folder before the run (the Python binding)
+/// calls it before the loop too, so that the mistake costs no run.
+///
+/// # Errors
+///
+/// [`WriteError::WouldReplaceInput`], naming the file.
+pub fn replaces_no_input(files: &Files<'_>, folder: &Path) -> Result<(), WriteError> {
+    let inputs = [files.osm, files.nodes, files.links, files.trips, files.gtfs];
+    for name in ["trips.parquet", "links.parquet", "iterations.parquet", "run.toml"] {
+        let Ok(output) = std::fs::canonicalize(folder.join(name)) else { continue };
+        if inputs.iter().flatten().any(|input| *input == output) {
+            return Err(WriteError::WouldReplaceInput(output));
+        }
     }
     Ok(())
 }

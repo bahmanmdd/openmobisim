@@ -1,6 +1,6 @@
 [package]
 name = "openmobisim-binding"
-description = "The Python binding: Network, Demand, Transit, run and Run."
+description = "The Python binding: Network, Demand, Transit, run, run_file and Run."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

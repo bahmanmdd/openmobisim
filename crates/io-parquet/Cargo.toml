@@ -1,6 +1,6 @@
 [package]
 name = "openmobisim-io-parquet"
-description = "Writing the three result tables (trips, links by time bin, iterations) as Parquet, and the run's record as TOML."
+description = "Writing the three result tables (trips, links by time bin, iterations) as Parquet and the run's record as TOML; reading input tables from Parquet."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

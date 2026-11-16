@@ -43,7 +43,7 @@ use openmobisim_demand::input::TripRow;
 use openmobisim_graph::geometry::{Position, Xy};
 use openmobisim_graph::network::{BuildValues, LinkRow, Network, NetworkBuilder};
 use openmobisim_io_gtfs::Report as GtfsReport;
-use openmobisim_io_parquet::{Given, Source, Transit, WriteError, write};
+use openmobisim_io_parquet::{Files, Given, Source, Transit, WriteError, write};
 use openmobisim_loop::parameters::{ChoiceModel, Parameters};
 use openmobisim_loop::run::{Run, run};
 use openmobisim_transit::timetable::TimetableBuilder;
@@ -137,6 +137,7 @@ fn hand_run(network: &Network, demand: &Demand) -> Run {
 fn given(parameters: &Parameters) -> Given<'_> {
     Given {
         source: Source::Tables,
+        files: Files::default(),
         build_values: VALUES,
         stop_walk_max: STOP_WALK_MAX,
         transit: None,

@@ -1,21 +1,30 @@
 //! The three tables a caller gives, `nodes`, `links` and `trips`, read into the crates' rows.
 //!
-//! A table is anything that gives a column by name, `table[name]`: a dict of lists, a pandas or
-//! polars frame, a pyarrow table. Its column names are read from `column_names` (pyarrow),
-//! else `columns` (pandas, polars), else `keys()` (a dict). Each needed column is read once
-//! into a plain list: by `to_pylist()` when the column has one (pyarrow), else by iterating it.
-//! The column names are fixed, with no aliases: a missing column or a column the table should
-//! not hold is refused by name. A null is Python's `None`, and only where the crate's field is
-//! optional.
+//! A table is either in memory or the path of a Parquet file (a `str` or an `os.PathLike`, as
+//! `os.fspath` reads it). In memory it is anything that gives a column by name, `table[name]`:
+//! a dict of lists, a pandas or polars frame, a pyarrow table. Its column names are read from
+//! `column_names` (pyarrow), else `columns` (pandas, polars), else `keys()` (a dict). Each
+//! needed column is read once into a plain list: by `to_pylist()` when the column has one
+//! (pyarrow), else by iterating it. A file is read whole by `openmobisim_io_parquet::read_table`
+//! (uncompressed or snappy), its column names from its schema, and each needed column, of the
+//! kind its row field asks for ([`Cell`]), into the same plain list of Python values; from
+//! there both are read by the same code, so a file and the same table in memory give the same
+//! rows. The column names are fixed, with no aliases: a missing column or a column the table
+//! should not hold is refused by name. A null is Python's `None` (a file's null), and only where
+//! the crate's field is optional.
+
+use std::path::{Path, PathBuf};
 
 use openmobisim_demand::input::TripRow;
 use openmobisim_graph::geometry::{LonLat, Position, Xy};
 use openmobisim_graph::network::{LinkRow, NetworkBuilder};
+use openmobisim_io_parquet::{Cells, InputTable, Kind, ReadError, read_table};
 use openmobisim_types::mode::{Mode, ModeSet};
 use openmobisim_types::time::Second;
 use pyo3::conversion::FromPyObjectOwned;
-use pyo3::exceptions::PyValueError;
+use pyo3::exceptions::{PyOSError, PyValueError};
 use pyo3::prelude::*;
+use pyo3::types::PyList;
 
 /// The columns of the links table, in the order the README lists them.
 const LINK_COLUMNS: [&str; 8] = [
@@ -29,17 +38,73 @@ const LINK_COLUMNS: [&str; 8] = [
     "capacity_veh_h",
 ];
 
-/// One table being read: its name for the messages, the object, its column names, and the row
-/// count of the first column read.
+/// The kind of Parquet cell a row field is read from: text for an id or a mode set, an integer
+/// for a lane count or a second of the clock, a float for metres, degrees, km/h or veh/h.
+trait Cell {
+    const KIND: Kind;
+}
+
+impl Cell for String {
+    const KIND: Kind = Kind::Text;
+}
+
+impl Cell for u8 {
+    const KIND: Kind = Kind::Integer;
+}
+
+impl Cell for u32 {
+    const KIND: Kind = Kind::Integer;
+}
+
+impl Cell for f64 {
+    const KIND: Kind = Kind::Float;
+}
+
+impl<T: Cell> Cell for Option<T> {
+    const KIND: Kind = T::KIND;
+}
+
+/// The path a table argument gives in place of a table: a `str` or an `os.PathLike`, as
+/// `os.fspath` reads it; `None` for a table in memory.
+pub(crate) fn path(table: &Bound<'_, PyAny>) -> Option<PathBuf> {
+    table.extract::<PathBuf>().ok()
+}
+
+/// A table's file that cannot be read: an `OSError` when it cannot be opened or read, else a
+/// `ValueError`, each naming the table and the file.
+fn file_error(what: &str, path: &Path, e: &ReadError) -> PyErr {
+    let message = format!("{what} ({}): {e}", path.display());
+    match e {
+        ReadError::Io(_) => PyOSError::new_err(message),
+        _ => PyValueError::new_err(message),
+    }
+}
+
+/// Where a table's columns come from: an object in memory, or a Parquet file read whole.
+enum Source<'py> {
+    Memory(Bound<'py, PyAny>),
+    File(InputTable),
+}
+
+/// One table being read: the interpreter, its name for the messages, its source, its column
+/// names, and the row count of the first column read.
 struct Table<'py> {
+    py: Python<'py>,
     what: &'static str,
-    table: Bound<'py, PyAny>,
+    source: Source<'py>,
     names: Vec<String>,
     rows: Option<usize>,
 }
 
 impl<'py> Table<'py> {
     fn new(what: &'static str, table: &Bound<'py, PyAny>) -> PyResult<Self> {
+        if let Some(path) = path(table) {
+            let read = table.py().detach(|| read_table(&path));
+            let file = read.map_err(|e| file_error(what, &path, &e))?;
+            let names = file.names();
+            let source = Source::File(file);
+            return Ok(Self { py: table.py(), what, source, names, rows: None });
+        }
         let names = if table.hasattr("column_names")? {
             table.getattr("column_names")?
         } else if table.hasattr("columns")? {
@@ -48,7 +113,34 @@ impl<'py> Table<'py> {
             table.call_method0("keys")?
         };
         let names = names.try_iter()?.map(|n| n?.extract::<String>()).collect::<PyResult<_>>()?;
-        Ok(Self { what, table: table.clone(), names, rows: None })
+        let source = Source::Memory(table.clone());
+        Ok(Self { py: table.py(), what, source, names, rows: None })
+    }
+
+    /// The column `name` as a plain Python list: from memory by `to_pylist()` when the column
+    /// has one, else the column itself, iterated by the caller; from a file, its cells of the
+    /// kind `kind`, a null as `None`.
+    fn list(&self, name: &str, kind: Kind) -> PyResult<Bound<'py, PyAny>> {
+        match &self.source {
+            Source::Memory(table) => {
+                let column = table.get_item(name)?;
+                if column.hasattr("to_pylist")? {
+                    column.call_method0("to_pylist")
+                } else {
+                    Ok(column)
+                }
+            }
+            Source::File(file) => {
+                let cells = file
+                    .column(name, kind)
+                    .map_err(|e| PyValueError::new_err(format!("{}: {e}", self.what)))?;
+                Ok(match cells {
+                    Cells::Text(v) => PyList::new(self.py, v)?.into_any(),
+                    Cells::Integer(v) => PyList::new(self.py, v)?.into_any(),
+                    Cells::Float(v) => PyList::new(self.py, v)?.into_any(),
+                })
+            }
+        }
     }
 
     fn has(&self, name: &str) -> bool {
@@ -76,10 +168,8 @@ impl<'py> Table<'py> {
 
     /// The column `name` as a list of `T`, each row read once; a row that is not a `T`, or a
     /// column of another length than the first read, is refused by name.
-    fn column<T: FromPyObjectOwned<'py>>(&mut self, name: &str) -> PyResult<Vec<T>> {
-        let column = self.table.get_item(name)?;
-        let list =
-            if column.hasattr("to_pylist")? { column.call_method0("to_pylist")? } else { column };
+    fn column<T: FromPyObjectOwned<'py> + Cell>(&mut self, name: &str) -> PyResult<Vec<T>> {
+        let list = self.list(name, T::KIND)?;
         let mut values = Vec::new();
         for (row, value) in list.try_iter()?.enumerate() {
             values.push(value?.extract::<T>().map_err(|e| {

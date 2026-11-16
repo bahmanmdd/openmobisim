@@ -26,7 +26,8 @@ READ_BACK = Path(__file__).resolve().parents[2] / "io-parquet" / "tests" / "read
 START = 25_200
 
 
-def test_the_hand_run_through_python_passes_read_back(tmp_path):
+def hand_tables():
+    """The hand run's nodes, links and trips tables, dicts of lists."""
     nodes = {"node_id": ["a", "b", "c"], "x_m": [0.0, 1_500.0, 2_500.0], "y_m": [0.0, 0.0, 0.0]}
     links = {
         "link_id": ["ab", "st1", "st2"],
@@ -57,15 +58,32 @@ def test_the_hand_run_through_python_passes_read_back(tmp_path):
         "class_id": [r[3] for r in rows],
         "modes": [r[4] for r in rows],
     }
+    return nodes, links, trips
+
+
+def hand_run(nodes, links, trips, out):
+    """The hand run on the three tables given (in memory or files), written into `out`."""
     network = oms.Network.from_tables(
         nodes, links, capacity_per_lane=1_800.0, bike_speed=15.0, walk_speed=4.8
     )
     demand = oms.Demand.from_table(trips, ["commute", "leisure"], network)
-    result = oms.run(
-        network, demand, window=(START, START + 3_600), out=tmp_path,
+    return oms.run(
+        network, demand, window=(START, START + 3_600), out=out,
         link_bin=60, iteration_cap=3, choice="deterministic",
         coefficients={"commute": TIME_ONLY, "leisure": TIME_ONLY},
     )
+
+
+def read_back(folder):
+    """read_back.py on `folder`: its output, and whether it passed."""
+    done = subprocess.run(
+        [sys.executable, str(READ_BACK), str(folder)], capture_output=True, text=True
+    )
+    return done.stdout + done.stderr, done.returncode == 0
+
+
+def test_the_hand_run_through_python_passes_read_back(tmp_path):
+    result = hand_run(*hand_tables(), tmp_path)
     assert [Path(p).name for p in (result.trips, result.links, result.iterations)] == [
         "trips.parquet", "links.parquet", "iterations.parquet"
     ]
@@ -73,8 +91,6 @@ def test_the_hand_run_through_python_passes_read_back(tmp_path):
     # The rule reads the last five iterations' means, so three iterations end at the cap.
     assert result.stopped_by_rule is False
     assert result.osm_report is None and result.gtfs_report is None
-    done = subprocess.run(
-        [sys.executable, str(READ_BACK), str(tmp_path)], capture_output=True, text=True
-    )
-    print(done.stdout)
-    assert done.returncode == 0, done.stdout + done.stderr
+    output, passed = read_back(tmp_path)
+    print(output)
+    assert passed, output

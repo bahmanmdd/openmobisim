@@ -1,7 +1,8 @@
 //! `run.toml`: the record of a run, what was run, so that the folder alone tells which
-//! parameters and inputs produced its three tables. TOML (version 1.0) written by hand: keys in
-//! a fixed order, no time stamp, path, file name, machine or thread count, so a second write of
-//! the same run is the same bytes.
+//! parameters and inputs produced its three tables, and, when every input was read from a file,
+//! so that the record alone runs again (the binding's `run_file`). TOML (version 1.0) written by
+//! hand: keys in a fixed order, no time stamp, machine or thread count, and an input file's path
+//! relative to the record's folder, so a second write of the same run is the same bytes.
 //!
 //! ```toml
 //! # The record of one openmobisim run: ...
@@ -18,10 +19,11 @@
 //! car_drive_min = 1.0
 //! ...                          (one table per class, a key per column of the choice row)
 //!
-//! [network]                    source, nodes, links, fingerprint
+//! [network]                    source, nodes, links, fingerprint; osm_file, or nodes_file and
+//!                              links_file, each absent for a table given in memory
 //! [network.osm_report]         the OSM reader's counts; absent for a network from tables
-//! [demand]                     trips, classes, fingerprint
-//! [transit]                    stops, runs, fingerprint; absent without transit
+//! [demand]                     trips, classes, fingerprint; trips_file, absent likewise
+//! [transit]                    stops, runs, fingerprint, gtfs_file; absent without transit
 //! [transit.gtfs_report]        the GTFS reader's counts
 //! [result]                     iterations, stopped_by_rule
 //! ```
@@ -34,11 +36,17 @@
 //! a float of the same bits; an integer as an integer; a string and a quoted key as a basic
 //! string with the quote, the backslash and every control character escaped. A float that is not
 //! finite (TOML's `nan` and `inf` are never written), or an integer above TOML's largest
-//! (2⁶³ − 1), is refused with an error naming its key, before anything is written.
+//! (2⁶³ − 1), is refused with an error naming its key, before anything is written. An input
+//! file's path is written relative to the folder the record is in, from the canonical paths of
+//! both (absolute, symbolic links resolved), with `/` between components (`../inputs/trips.parquet`);
+//! absolute only when no relative path exists (another drive); a path that is not UTF-8, which
+//! a TOML string cannot hold, is refused naming its key.
 //!
 //! For bikes: `bike_speed`, the one speed of every bike, is a key of `[parameters]` with its
 //! unit; a link's bike permission and a trip's bike are in the network's and the demand's
 //! fingerprints, so a change to either changes the record.
+
+use std::path::{Component, Path};
 
 use openmobisim_demand::demand::Demand;
 use openmobisim_graph::network::Network;
@@ -69,6 +77,84 @@ const UNITS: [(&str, &str); 14] = [
     ("iteration_floor", "iterations"),
     ("link_bin", "s"),
     ("seed", "none"),
+];
+
+/// Every table of the record, by its dotted name (`""` for the top), and the keys the writer may
+/// write in it, so that a reader can refuse any other. The tables of the coefficients, one per
+/// class under `parameters.coefficients`, hold the columns of the choice row
+/// (`openmobisim_loop::parameters::COLUMNS`).
+pub const KEYS: [(&str, &[&str]); 8] = [
+    (
+        "",
+        &[
+            "format",
+            "openmobisim_version",
+            "window_start_s",
+            "window_end_s",
+            "parameters",
+            "network",
+            "demand",
+            "transit",
+            "result",
+        ],
+    ),
+    (
+        "parameters",
+        &[
+            "capacity_per_lane",
+            "bike_speed",
+            "walk_speed",
+            "stop_walk_max",
+            "transfer_walk_max",
+            "boarding_slack",
+            "max_rides",
+            "nearby_stops",
+            "choice",
+            "nest_scale",
+            "iteration_cap",
+            "iteration_floor",
+            "link_bin",
+            "seed",
+            "coefficients",
+        ],
+    ),
+    (
+        "network",
+        &[
+            "source",
+            "nodes",
+            "links",
+            "fingerprint",
+            "osm_file",
+            "nodes_file",
+            "links_file",
+            "osm_report",
+        ],
+    ),
+    ("network.osm_report", &["nodes", "links", "links_unreachable", "loops_dropped", "ways_cut"]),
+    ("demand", &["trips", "classes", "fingerprint", "trips_file"]),
+    ("transit", &["stops", "runs", "fingerprint", "gtfs_file", "gtfs_report"]),
+    (
+        "transit.gtfs_report",
+        &[
+            "date",
+            "trips",
+            "runs",
+            "calls",
+            "night_runs",
+            "frequency_runs",
+            "stops",
+            "trips_untimed",
+            "trips_single_call",
+            "times_interpolated",
+            "pickup_drop_off_ignored",
+            "frequency_rows_skipped",
+            "footpaths",
+            "transfers_applied",
+            "transfers_skipped",
+        ],
+    ),
+    ("result", &["iterations", "stopped_by_rule"]),
 ];
 
 /// The comment above the coefficient tables.
@@ -186,12 +272,15 @@ fn parameter<'a>(name: &str, given: &Given<'a>) -> Option<Value<'a>> {
     })
 }
 
-/// The record of `run` as TOML text.
+/// The record of `run` as TOML text, each input file's path relative to `folder`, the canonical
+/// path of the folder it is written in. Without a folder (the build that checks every value
+/// before the folder exists, its text discarded) each path is written whole.
 pub(crate) fn text(
     run: &Run,
     network: &Network,
     demand: &Demand,
     given: &Given<'_>,
+    folder: Option<&Path>,
 ) -> Result<String, WriteError> {
     let mut t = Toml { text: format!("{HEAD}\n"), table: String::new() };
     let window = run.links.window();
@@ -216,7 +305,7 @@ pub(crate) fn text(
             t.key(column, &Value::Float(b), None)?;
         }
     }
-    inputs(&mut t, network, demand, given)?;
+    inputs(&mut t, network, demand, given, folder)?;
     t.table("result");
     t.keys(&[
         ("iterations", Value::Int(run.iterations.len() as u64)),
@@ -225,13 +314,51 @@ pub(crate) fn text(
     Ok(t.text)
 }
 
-/// The tables `[network]`, `[demand]` and `[transit]`, with the readers' counts.
+/// `file` relative to `folder`, both canonical paths, with `/` between components: a `..` for
+/// each component of the folder past their common start, then the rest of the file's. The file's
+/// whole path when they have no common start (another drive) or there is no folder. `None` when
+/// a component is not UTF-8.
+fn relative(file: &Path, folder: Option<&Path>) -> Option<String> {
+    let f: Vec<Component<'_>> = file.components().collect();
+    let d: Vec<Component<'_>> = folder.map_or_else(Vec::new, |d| d.components().collect());
+    let common = f.iter().zip(&d).take_while(|(a, b)| a == b).count();
+    if common == 0 {
+        return file.to_str().map(|s| s.replace(std::path::MAIN_SEPARATOR, "/"));
+    }
+    let mut parts = vec![".."; d.len() - common];
+    for c in &f[common..] {
+        parts.push(c.as_os_str().to_str()?);
+    }
+    Some(parts.join("/"))
+}
+
+/// Write each `(key, file)` whose file is given, its path relative to `folder` ([`relative`]).
+fn files(
+    t: &mut Toml,
+    files: &[(&str, Option<&Path>)],
+    folder: Option<&Path>,
+) -> Result<(), WriteError> {
+    for &(key, file) in files {
+        let Some(file) = file else { continue };
+        let text = relative(file, folder).ok_or_else(|| WriteError::NotWritable {
+            key: format!("{}.{key}", t.table),
+            value: file.display().to_string(),
+        })?;
+        t.key(key, &Value::Str(&text), None)?;
+    }
+    Ok(())
+}
+
+/// The tables `[network]`, `[demand]` and `[transit]`, with the input files' paths and the
+/// readers' counts.
 fn inputs(
     t: &mut Toml,
     network: &Network,
     demand: &Demand,
     given: &Given<'_>,
+    folder: Option<&Path>,
 ) -> Result<(), WriteError> {
+    let f = &given.files;
     t.table("network");
     let source = match given.source {
         Source::Osm(_) => "osm",
@@ -244,6 +371,8 @@ fn inputs(
         ("links", Value::Int(u64::from(network.link_count()))),
         ("fingerprint", Value::Str(&fingerprint)),
     ])?;
+    let network_files = [("osm_file", f.osm), ("nodes_file", f.nodes), ("links_file", f.links)];
+    files(t, &network_files, folder)?;
     if let Source::Osm(r) = given.source {
         t.table("network.osm_report");
         let n = |x: u32| Value::Int(u64::from(x));
@@ -262,6 +391,7 @@ fn inputs(
         ("classes", Value::Strs(demand.class_ids().iter().collect())),
         ("fingerprint", Value::Str(&fingerprint)),
     ])?;
+    files(t, &[("trips_file", f.trips)], folder)?;
     let Some(transit) = &given.transit else { return Ok(()) };
     t.table("transit");
     let fingerprint = hex(transit.timetable.fingerprint());
@@ -270,6 +400,7 @@ fn inputs(
         ("runs", Value::Int(u64::from(transit.timetable.run_count()))),
         ("fingerprint", Value::Str(&fingerprint)),
     ])?;
+    files(t, &[("gtfs_file", f.gtfs)], folder)?;
     t.table("transit.gtfs_report");
     let (r, n) = (transit.report, |x: u32| Value::Int(u64::from(x)));
     t.keys(&[

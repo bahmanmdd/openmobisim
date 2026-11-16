@@ -22,7 +22,7 @@ use openmobisim_demand::demand::Demand;
 use openmobisim_demand::input::TripRow;
 use openmobisim_graph::geometry::{LonLat, Position, Projection, Xy};
 use openmobisim_graph::network::{BuildValues, LinkRow, Network, NetworkBuilder};
-use openmobisim_io_parquet::{Given, Source, write};
+use openmobisim_io_parquet::{Files, Given, Source, write};
 use openmobisim_loop::parameters::{ChoiceModel, Parameters};
 use openmobisim_loop::run::run;
 use openmobisim_types::mode::{Mode, ModeSet};
@@ -128,6 +128,7 @@ fn sioux_falls_s_run_is_written_in_under_1_s() {
     let started = Instant::now();
     let given = Given {
         source: Source::Tables,
+        files: Files::default(),
         build_values: BuildValues { capacity_per_lane: 1_800.0, bike_speed: 15.0, walk_speed: 4.8 },
         stop_walk_max: 1_500.0,
         transit: None,

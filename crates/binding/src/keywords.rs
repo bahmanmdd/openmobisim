@@ -57,30 +57,36 @@ const ROWS: [(&str, Entry); 16] = [
     ("seed", Entry::Run),
 ];
 
+/// The entry point that reads the row `name` of `PARAMETERS.md`; `None` for a name that is not a
+/// row.
+pub(crate) fn entry(name: &str) -> Option<Entry> {
+    ROWS.iter().find(|(row, _)| *row == name).map(|&(_, at)| at)
+}
+
 /// The keywords given at one entry point, each checked to be a row read there.
 pub(crate) struct Given<'py>(BTreeMap<String, Bound<'py, PyAny>>);
 
 impl<'py> Given<'py> {
-    /// The keywords of `kwargs`, given to the function `here` of the entry point `entry`.
+    /// The keywords of `kwargs`, given to the function `here` of the entry point `here_entry`.
     ///
     /// A keyword that is not a row of `PARAMETERS.md`, or that another entry point reads, is a
     /// `TypeError` naming it, as Python refuses an unexpected keyword.
     pub(crate) fn read(
-        entry: Entry,
+        here_entry: Entry,
         here: &str,
         kwargs: Option<&Bound<'py, PyDict>>,
     ) -> PyResult<Self> {
         let mut given = BTreeMap::new();
         for (key, value) in kwargs.into_iter().flat_map(|d| d.iter()) {
             let name: String = key.extract()?;
-            match ROWS.iter().find(|(row, _)| *row == name) {
+            match entry(&name) {
                 None => {
                     return Err(PyTypeError::new_err(format!(
                         "{here}: {name} is not a parameter; the parameters are the rows of \
                          PARAMETERS.md"
                     )));
                 }
-                Some((_, at)) if *at != entry => {
+                Some(at) if at != here_entry => {
                     return Err(PyTypeError::new_err(format!(
                         "{here}: {name} is read by {}, not here",
                         at.name()

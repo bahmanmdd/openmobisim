@@ -1,5 +1,5 @@
-//! The Python binding: the module `openmobisim`, with `Network`, `Transit`, `Demand`, `run` and
-//! `Run`, and nothing else.
+//! The Python binding: the module `openmobisim`, with `Network`, `Transit`, `Demand`, `run`,
+//! `run_file` and `Run`, and nothing else.
 //!
 //! ```python
 //! import openmobisim as oms
@@ -8,26 +8,30 @@
 //! transit = oms.Transit.from_gtfs(path, network, **transit_parameters)
 //! demand  = oms.Demand.from_table(trips, classes, network, transit=None, **demand_parameters)
 //! result  = oms.run(network, demand, transit=None, window=(start_s, end_s), out=folder, **parameters)
+//! result  = oms.run_file(record, out=folder)
 //! ```
 //!
 //! Every keyword is a row of `PARAMETERS.md`, read at the one entry point whose crate reads it
-//! (`keywords.rs`); the tables are read into the crates' rows (`tables.rs`). The interpreter's
+//! (`keywords.rs`); the tables, in memory or Parquet files, are read into the crates' rows
+//! (`tables.rs`); a run's record runs again through the same entry points (`record.rs`). Each
+//! input read from a file keeps the file's canonical path, which the record writes. The interpreter's
 //! lock is released while a file is read, a network, timetable or demand is built, and a run
 //! runs and is written. A crate's error is a `ValueError` carrying its message unchanged (an
 //! input or output failure an `OSError`); a panic is pyo3's `PanicException`, never an abort.
 
 mod keywords;
+mod record;
 mod tables;
 
 use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use openmobisim_demand::demand::Demand as RustDemand;
 use openmobisim_graph::network::{BuildValues, Network as RustNetwork};
 use openmobisim_io_gtfs::{GtfsError, Report as GtfsReport};
 use openmobisim_io_osm::{OsmError, Report as OsmReport};
-use openmobisim_io_parquet::{Given as RunGiven, Source, Transit as RunTransit, WriteError};
+use openmobisim_io_parquet::{Files, Given as RunGiven, Source, Transit as RunTransit, WriteError};
 use openmobisim_loop::parameters::{ChoiceModel, Parameters};
 use openmobisim_transit::timetable::Timetable;
 use openmobisim_types::time::Second;
@@ -50,6 +54,12 @@ fn value_error(e: &impl ToString) -> PyErr {
     PyValueError::new_err(e.to_string())
 }
 
+/// The canonical path of a file just read (absolute, symbolic links resolved), for the record;
+/// an `OSError` naming it if it cannot be resolved.
+fn canonical(path: &Path) -> PyResult<PathBuf> {
+    std::fs::canonicalize(path).map_err(|e| PyOSError::new_err(format!("{}: {e}", path.display())))
+}
+
 /// The graph's three build values: the keywords given, else the defaults above.
 fn build_values(given: &Given<'_>) -> PyResult<BuildValues> {
     Ok(BuildValues {
@@ -67,6 +77,11 @@ struct Network {
     values: BuildValues,
     /// The OSM reader's counts; none for a network from tables.
     report: Option<OsmReport>,
+    /// The files it was read from, canonical: the extract, or the nodes and the links tables
+    /// each when given as a file.
+    osm_file: Option<PathBuf>,
+    nodes_file: Option<PathBuf>,
+    links_file: Option<PathBuf>,
 }
 
 #[pymethods]
@@ -95,13 +110,20 @@ impl Network {
             OsmError::Io { .. } => PyOSError::new_err(e.to_string()),
             _ => value_error(&e),
         })?;
-        Ok(Self { network: Arc::new(network), values, report: Some(report) })
+        Ok(Self {
+            network: Arc::new(network),
+            values,
+            report: Some(report),
+            osm_file: Some(canonical(&path)?),
+            nodes_file: None,
+            links_file: None,
+        })
     }
 
     /// Build from a nodes table (`node_id`, then `lon_deg`, `lat_deg` or `x_m`, `y_m`) and a
     /// links table (`link_id`, `upstream`, `downstream`, `modes`, `length_m`, `lanes`,
-    /// `car_speed_km_h`, `capacity_veh_h`). Keywords: `capacity_per_lane` (veh/h per lane),
-    /// `bike_speed`, `walk_speed` (km/h).
+    /// `car_speed_km_h`, `capacity_veh_h`), each in memory or the path of a Parquet file.
+    /// Keywords: `capacity_per_lane` (veh/h per lane), `bike_speed`, `walk_speed` (km/h).
     #[staticmethod]
     #[pyo3(signature = (nodes, links, **network_parameters))]
     fn from_tables(
@@ -120,7 +142,14 @@ impl Network {
         let values = build_values(&given)?;
         let builder = tables::network(nodes, links)?;
         let network = py.detach(|| builder.build(values)).map_err(|e| value_error(&e))?;
-        Ok(Self { network: Arc::new(network), values, report: None })
+        Ok(Self {
+            network: Arc::new(network),
+            values,
+            report: None,
+            osm_file: None,
+            nodes_file: tables::path(nodes).map(|p| canonical(&p)).transpose()?,
+            links_file: tables::path(links).map(|p| canonical(&p)).transpose()?,
+        })
     }
 }
 
@@ -133,6 +162,8 @@ struct Transit {
     report: GtfsReport,
     /// The `transfer_walk_max` it was read with, metres, kept for the run's record.
     transfer_walk_max: f64,
+    /// The feed it was read from, canonical.
+    gtfs_file: PathBuf,
 }
 
 #[pymethods]
@@ -157,7 +188,8 @@ impl Transit {
             GtfsError::Io(_) => PyOSError::new_err(e.to_string()),
             _ => value_error(&e),
         })?;
-        Ok(Self { timetable: Arc::new(timetable), network, report, transfer_walk_max })
+        let gtfs_file = canonical(&path)?;
+        Ok(Self { timetable: Arc::new(timetable), network, report, transfer_walk_max, gtfs_file })
     }
 }
 
@@ -170,14 +202,17 @@ struct Demand {
     transit: Option<Arc<Timetable>>,
     /// The `stop_walk_max` it was built with, metres, kept for the run's record.
     stop_walk_max: f64,
+    /// The trips table's file, canonical, when it was given as one.
+    trips_file: Option<PathBuf>,
 }
 
 #[pymethods]
 impl Demand {
     /// Build from a trips table (`trip_id`, `origin_lon_deg`, `origin_lat_deg` or
     /// `origin_x_m`, `origin_y_m`, the same for `destination_`, `departure_s`, `class_id`,
-    /// `modes`) and the list of class ids, on `network` and, if given, `transit` (read on the
-    /// same network). Keyword: `stop_walk_max` (m).
+    /// `modes`), in memory or the path of a Parquet file, and the list of class ids, on
+    /// `network` and, if given, `transit` (read on the same network). Keyword: `stop_walk_max`
+    /// (m).
     #[staticmethod]
     #[pyo3(signature = (trips, classes, network, transit=None, **demand_parameters))]
     #[allow(clippy::needless_pass_by_value, reason = "pyo3 hands the arguments over by value")]
@@ -201,7 +236,8 @@ impl Demand {
         let max = Metres(stop_walk_max);
         let build = || RustDemand::build(&rows, &classes, &network, transit.as_deref(), max);
         let demand = py.detach(build).map_err(|e| value_error(&e))?;
-        Ok(Self { demand, network, transit, stop_walk_max })
+        let trips_file = tables::path(trips).map(|p| canonical(&p)).transpose()?;
+        Ok(Self { demand, network, transit, stop_walk_max, trips_file })
     }
 }
 
@@ -311,6 +347,13 @@ fn run(
     let (net, dem) = (&*network.network, &demand.demand);
     let given = RunGiven {
         source: network.report.as_ref().map_or(Source::Tables, Source::Osm),
+        files: Files {
+            osm: network.osm_file.as_deref(),
+            nodes: network.nodes_file.as_deref(),
+            links: network.links_file.as_deref(),
+            trips: demand.trips_file.as_deref(),
+            gtfs: transit.map(|t| t.gtfs_file.as_path()),
+        },
         build_values: network.values,
         stop_walk_max: demand.stop_walk_max,
         transit: transit.map(|t| RunTransit {
@@ -320,6 +363,9 @@ fn run(
         }),
         parameters: &p,
     };
+    // An `out` that would replace an input file is refused before the loop runs: the paths
+    // alone tell it, and `write` would refuse it after the run.
+    openmobisim_io_parquet::replaces_no_input(&given.files, &out).map_err(|e| value_error(&e))?;
     let written = py.detach(|| {
         let r = openmobisim_loop::run::run(net, dem, timetable, window, &p)
             .map_err(|e| value_error(&e))?;
@@ -383,5 +429,6 @@ fn openmobisim(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<Demand>()?;
     m.add_class::<Run>()?;
     m.add_function(wrap_pyfunction!(run, m)?)?;
+    m.add_function(wrap_pyfunction!(record::run_file, m)?)?;
     Ok(())
 }
