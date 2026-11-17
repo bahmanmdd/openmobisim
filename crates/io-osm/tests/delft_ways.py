@@ -8,10 +8,12 @@ What comes from outside the reader: each way's tags and node positions, decoded 
 (not the `osmpbf` crate the reader uses), and its length, the sum of the WGS84 geodesics between
 its nodes by pyproj's `Geod.line_length` (Karney's algorithm, not the reader's Vincenty). What is
 written here, from the OpenStreetMap wiki and not from the reader's code: the modes, lanes and
-free-flow speed each direction carries, by the rules the crate's README states (access by the
-most specific key over the Netherlands row of the wiki's defaults; `oneway`, `oneway:bicycle`;
-`lanes`, `lanes:forward`, `lanes:backward`; `maxspeed:forward`, `:backward`, then `maxspeed`).
-The raw tags are in the last column so that each row can be checked by hand.
+free-flow speed each direction carries, by the rules the crate's README states (version 1's car,
+bike and walk rules; `oneway`, `oneway:bicycle`; `lanes`, `lanes:forward`, `lanes:backward`;
+`maxspeed:forward`, `:backward`, then `maxspeed`). The raw tags are in the last column so that
+each row can be checked by hand. When the reader took version 1's rules this script's rules were
+rewritten to them and `ways.csv`'s one changed row (the path: walkers alone, a bike needs a
+`bicycle` tag) edited by hand; the script was not run again (pyosmium was not installed).
 
 Each way is the one with the lowest id that meets its case, among the ways with every node in
 the extract and at least 2 km inside its bounding box (the extract's edge cuts one-way
@@ -61,18 +63,15 @@ CAR = {
     "tertiary": (50, 1), "tertiary_link": (30, 1), "unclassified": (40, 1), "road": (40, 1),
     "residential": (30, 1), "living_street": (20, 1), "service": (20, 1),
 }
-NO_CAR = {  # bike, walk
-    "pedestrian": (False, True), "track": (True, True), "busway": (False, False),
-    "footway": (False, True), "bridleway": (False, False), "steps": (False, True),
-    "corridor": (False, True), "path": (True, True), "cycleway": (True, True),
-}
-YES = {"yes", "designated", "permissive", "destination", "customers", "delivery", "official",
-       "discouraged"}
-NO = {"no", "private", "permit", "use_sidepath", "agricultural", "forestry", "dismount"}
-READ = ["highway", "oneway", "oneway:bicycle", "oneway:foot", "junction", "access", "vehicle",
-        "motor_vehicle", "motorcar", "bicycle", "foot", "motorroad", "service", "lanes",
-        "lanes:forward", "lanes:backward", "lanes:both_ways", "maxspeed", "maxspeed:forward",
-        "maxspeed:backward"]
+# The classes cars do not use: a footway's (paths, tracks, steps, corridors and bridleways among
+# them) and a pedestrian street's bike needs a `bicycle` tag; a busway's bike and walker need one.
+FOOTWAY = {"pedestrian", "footway", "path", "track", "steps", "corridor", "bridleway"}
+NO_CAR = FOOTWAY | {"cycleway", "busway"}
+PERMITS = {"yes", "designated", "permissive"}
+CLOSES = {"no", "private"}
+READ = ["highway", "oneway", "oneway:bicycle", "junction", "access", "vehicle", "motor_vehicle",
+        "motorcar", "bicycle", "foot", "motorroad", "service", "lanes", "lanes:forward",
+        "lanes:backward", "lanes:both_ways", "maxspeed", "maxspeed:forward", "maxspeed:backward"]
 
 
 def two_way(t):
@@ -80,39 +79,41 @@ def two_way(t):
         and t.get("junction") not in ("roundabout", "circular")
 
 
-def may(t, keys, default):
-    for k in keys:
-        if t.get(k) in YES:
-            return True
-        if t.get(k) in NO:
-            return False
-    return default
-
-
-def direction(value, default):
-    return {"yes": (1, 0), "1": (1, 0), "-1": (0, 1)}.get(value, (1, 1) if value else default)
-
-
 def expected(t):
     h = t["highway"]
-    motorroad = t.get("motorroad") == "yes"
+    closed = t.get("access") in CLOSES
+    car_key = next((t[k] for k in ("motorcar", "motor_vehicle", "vehicle") if k in t), None)
     service_only = h == "service" and t.get("service") in (
         "parking_aisle", "driveway", "drive-through", "emergency_access")
-    if h in CAR:
-        bike = walk = h not in ("motorway", "motorway_link")
+    car = h in CAR and not closed and car_key not in CLOSES and not service_only
+    bicycle, foot = t.get("bicycle"), t.get("foot")
+    motorroad = t.get("motorroad") == "yes"
+    bike = not (bicycle in ("no", "use_sidepath") or motorroad or (closed and bicycle not in PERMITS))
+    if h in ("motorway", "motorway_link"):
+        bike = False
+    elif h in ("trunk", "trunk_link", "busway"):
+        bike = bike and bicycle in PERMITS
+    elif h in FOOTWAY:
+        bike = bike and bicycle in PERMITS | {"dismount"}
+    walk = not (foot in ("no", "use_sidepath") or motorroad or (closed and foot not in PERMITS))
+    if h in ("motorway", "motorway_link") or (h == "busway" and foot not in PERMITS):
+        walk = False
+    oneway = t.get("oneway")
+    if oneway in ("yes", "true", "1"):
+        vehicles = (1, 0)
+    elif oneway in ("-1", "reverse"):
+        vehicles = (0, 1)
+    elif oneway in ("no", "false", "0"):
+        vehicles = (1, 1)
+    elif h in ("motorway", "motorway_link") or t.get("junction") in ("roundabout", "circular"):
+        vehicles = (1, 0)
     else:
-        bike, walk = NO_CAR[h]
-    car = h in CAR and may(t, ["motorcar", "motor_vehicle", "vehicle", "access"], not service_only)
-    bike = may(t, ["bicycle", "vehicle", "access"], bike and not motorroad)
-    walk = may(t, ["foot", "access"], walk and not motorroad)
-    implied = h in ("motorway", "motorway_link") or t.get("junction") in ("roundabout", "circular")
-    vehicles = direction(t.get("oneway"), (1, 0) if implied else (1, 1))
-    bikes = direction(t.get("oneway:bicycle"), vehicles) if "oneway:bicycle" in t else vehicles
-    walkers = direction(t.get("oneway:foot"), (1, 1)) if "oneway:foot" in t else (1, 1)
+        vehicles = (1, 1)
+    bikes = (1, 1) if t.get("oneway:bicycle") in ("no", "false", "0") else vehicles
     sides = []
     for k, side in enumerate(("forward", "backward")):
         modes = ("c" if car and vehicles[k] else "") + ("b" if bike and bikes[k] else "") \
-            + ("w" if walk and walkers[k] else "")
+            + ("w" if walk else "")
         lanes = speed = ""
         if "c" in modes:
             lanes = lanes_of(t, side, vehicles, CAR[h][1])

@@ -4,6 +4,7 @@
 
 use std::collections::BTreeMap;
 
+use openmobisim_io_osm::Region;
 use pyo3::conversion::FromPyObjectOwned;
 use pyo3::exceptions::{PyTypeError, PyValueError};
 use pyo3::prelude::*;
@@ -131,4 +132,46 @@ pub(crate) fn not_boolean(name: &str, v: &Bound<'_, PyAny>) -> PyResult<()> {
     } else {
         Ok(())
     }
+}
+
+/// The region `from_osm` cuts the extract to: `None`, a `(west, south, east, north)` box, or a
+/// sequence of `(lon, lat)` points of a polygon, in WGS84 degrees, lists and tuples alike (a
+/// record's region comes back from TOML as lists), no boolean among them; one that is no area
+/// refused with the reader's reason, or, for a polygon of three points or more, because they
+/// repeat or lie on one line.
+pub(crate) fn region(v: Option<&Bound<'_, PyAny>>) -> PyResult<Option<Region>> {
+    let Some(v) = v.filter(|v| !v.is_none()) else { return Ok(None) };
+    not_boolean("region", v)?;
+    let made = if let Ok([west, south, east, north]) = v.extract::<[f64; 4]>() {
+        Region::bbox(west, south, east, north)
+    } else {
+        let points: Vec<[f64; 2]> = v.extract().map_err(|_| {
+            PyValueError::new_err(format!(
+                "region: {v} is neither a (west, south, east, north) box nor a sequence of \
+                 (lon, lat) points, in degrees"
+            ))
+        })?;
+        let points: Vec<(f64, f64)> = points.into_iter().map(|[lon, lat]| (lon, lat)).collect();
+        if points.len() >= 3 && no_area(&points) {
+            return Err(PyValueError::new_err(
+                "region: a polygon needs at least three vertices that are distinct and not on \
+                 one line: these enclose no area",
+            ));
+        }
+        Region::polygon(points)
+    };
+    made.map(Some).map_err(|e| PyValueError::new_err(format!("region: {e}")))
+}
+
+/// Whether a polygon's points enclose no area: all lie on one line (fewer than three distinct
+/// points included), each within 1e-9 of the farthest point's distance from the first, of the
+/// line through the two (a figure eight is an area, by the even-odd rule the reader cuts by). A
+/// point not finite is left to the reader's refusal.
+fn no_area(points: &[(f64, f64)]) -> bool {
+    let (x0, y0) = points[0];
+    let reach2 = |&(x, y): &(f64, f64)| (x - x0).powi(2) + (y - y0).powi(2);
+    let far = points.iter().copied().max_by(|a, b| reach2(a).total_cmp(&reach2(b)));
+    let Some((dx, dy)) = far.map(|(x, y)| (x - x0, y - y0)) else { return true };
+    let far2 = dx * dx + dy * dy;
+    points.iter().all(|&(x, y)| ((x - x0) * dy - (y - y0) * dx).abs() <= 1e-9 * far2)
 }

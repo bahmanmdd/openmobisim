@@ -1,343 +1,551 @@
-//! The tags against the OpenStreetMap wiki, by hand: who may use a way and in which direction,
-//! the lanes and the free-flow speed of each car direction, and the values the reader repairs.
-//!
-//! Each case is a two-node street (way 100 from node 1 to node 2, about 69 m) with the tags
-//! the wiki page names, and a two-way street back (way 900) so that cars can always return; the expected modes, lanes and speeds are read off the page. Directions:
-//! `f` along the way's node order, `b` against it. Bikes: every rule says what it means for a
-//! bike (the `b` in the mode letters).
+//! The tag rules by hand, from the OpenStreetMap wiki pages they read (`Key:highway`,
+//! `Key:access`, `Key:oneway`, `Key:lanes`, `Key:maxspeed`, `Key:cycleway`, "Default speed
+//! limits") and version 1's rules: a way's road class, who may use it in which direction, a car
+//! link's lanes and speed, the nodes that split a way, and what the reader repairs. Most cases
+//! call the rule itself; the end-to-end ones read a two-node street (way 100 from node 1 to node
+//! 2, about 69 m) with a two-way street back (way 900), so every layer can return. Directions:
+//! `f` along the way's node order, `b` against it. Bikes: every bike rule has its own case.
 
-#![allow(clippy::float_cmp, reason = "speeds are the tagged numbers, rounded to 1e-9 km/h")]
+#![allow(clippy::float_cmp, reason = "speeds are the tagged numbers, exact by construction")]
 
 mod common;
 
-use common::{close, direction, read, street};
-use openmobisim_io_osm::car::KM_PER_MILE;
-use openmobisim_io_osm::class::{CLASSES, class_of};
+use common::{close, direction, modes, read, street};
+use openmobisim_io_osm::tags::{
+    self, Car, CarNotes, Direction, IMPLICIT_SPEED_LIMITS_KM_H, KM_PER_MILE, RoadClass,
+    WALKING_SPEED_KM_H, bike_way, maxspeed, road_class, walk_way,
+};
+use openmobisim_types::mode::Mode;
 
-/// The modes of each direction of a two-node street with `tags` (`-` for no link).
-fn modes(tags: &[(&str, &str)]) -> (String, String) {
-    let (net, _) = read(&street(2, tags)).expect("readable");
-    let of = |t| direction(&net, 100, t).map_or("-".to_owned(), |d| d.modes);
-    (of("f"), of("b"))
+fn tags(pairs: &[(&str, &str)]) -> Vec<(String, String)> {
+    pairs.iter().map(|(k, v)| ((*k).to_owned(), (*v).to_owned())).collect()
+}
+
+/// The car fields each way of a way of `class` with `pairs`, and what was noted.
+fn car(class: RoadClass, pairs: &[(&str, &str)]) -> ((Option<Car>, Option<Car>), CarNotes) {
+    let t = tags(pairs);
+    let mut notes = CarNotes::default();
+    let road = tags::direction(&t, class);
+    (tags::car_fields(&t, road, class.car().expect("a car class"), &mut notes), notes)
+}
+
+/// The lanes each way (0 where cars do not drive).
+fn lanes(class: RoadClass, pairs: &[(&str, &str)]) -> (u8, u8) {
+    let ((f, b), _) = car(class, pairs);
+    (f.map_or(0, |c| c.lanes), b.map_or(0, |c| c.lanes))
+}
+
+/// The speeds each way, km/h.
+fn speeds(class: RoadClass, pairs: &[(&str, &str)]) -> (Option<f64>, Option<f64>) {
+    let ((f, b), _) = car(class, pairs);
+    (f.map(|c| c.speed_km_h), b.map(|c| c.speed_km_h))
+}
+
+/// Whether bikes may ride a way with `pairs` (two nodes) along and against its node order.
+fn bike(pairs: &[(&str, &str)]) -> Option<(bool, bool)> {
+    bike_way(&tags(pairs), 2).map(|(_, d)| (d.has_forward(), d.has_backward()))
+}
+
+/// The modes each way of way 100 with `pairs`, end to end (`-` for none).
+fn both_modes(pairs: &[(&str, &str)]) -> (String, String) {
+    let (net, _) = read(&street(2, pairs)).expect("readable");
+    (modes(&net, 100, "f"), modes(&net, 100, "b"))
 }
 
 fn pair(f: &str, b: &str) -> (String, String) {
     (f.to_owned(), b.to_owned())
 }
 
-/// A car direction's lanes and free-flow speed in km/h.
-type Car = (u8, f64);
-
-/// The car's (lanes, km/h) each way on a two-node street with `tags`. The graph holds speeds
-/// in m/s; read back in km/h they are rounded to 1e-9 km/h.
-fn car(tags: &[(&str, &str)]) -> (Option<Car>, Option<Car>) {
-    let (net, _) = read(&street(2, tags)).expect("readable");
-    let of = |t| {
-        let d = direction(&net, 100, t)?;
-        Some((d.lanes?, (d.speed_km_h? * 1e9).round() / 1e9))
-    };
-    (of("f"), of("b"))
-}
+// --- the road class (version 1's `classify`) ------------------------------------------------
 
 #[test]
-fn a_cycleway_is_bike_and_walk_with_no_car_field() {
-    // Wiki, access defaults, Netherlands: cycleway motorcar no, bicycle designated, foot yes.
-    assert_eq!(modes(&[("highway", "cycleway")]), pair("bw", "bw"));
-    let (net, _) = read(&street(2, &[("highway", "cycleway")])).unwrap();
-    let f = direction(&net, 100, "f").unwrap();
-    assert_eq!((f.lanes, f.speed_km_h), (None, None), "no car field on a cycle path");
-}
-
-#[test]
-fn a_motorway_is_car_only_and_one_way() {
-    // Motorway: motorcar designated, bicycle no, foot no; one-way by the Vienna Convention.
-    assert_eq!(modes(&[("highway", "motorway")]), pair("c", "-"));
-    assert_eq!(modes(&[("highway", "motorway_link")]), pair("c", "-"));
-    assert_eq!(modes(&[("highway", "motorway"), ("oneway", "no")]), pair("c", "c"));
-}
-
-#[test]
-fn a_street_is_car_bike_and_walk_both_ways() {
-    for class in ["trunk", "primary", "secondary", "tertiary", "unclassified", "residential"] {
-        assert_eq!(modes(&[("highway", class)]), pair("cbw", "cbw"), "{class}");
+fn a_road_is_classed_and_anything_else_is_no_road() {
+    let class = |pairs: &[(&str, &str)], n| road_class(&tags(pairs), n);
+    assert_eq!(class(&[("highway", "residential")], 2), Some(RoadClass::Residential));
+    assert_eq!(class(&[("highway", "road")], 2), Some(RoadClass::Unclassified));
+    assert_eq!(class(&[("highway", "path")], 2), Some(RoadClass::Footway));
+    assert_eq!(class(&[("building", "yes")], 5), None);
+    assert_eq!(class(&[("highway", "proposed")], 2), None);
+    assert_eq!(class(&[("highway", "pedestrian"), ("area", "yes")], 4), None);
+    assert_eq!(class(&[("highway", "service"), ("access", "private")], 2), None);
+    assert_eq!(class(&[("highway", "residential")], 1), None);
+    assert_eq!(class(&[("route", "ferry")], 2), None, "a ferry is no road");
+    // A restriction to a destination is on through traffic, not on the street.
+    for value in ["yes", "destination", "permissive", "customers"] {
+        let t = [("highway", "residential"), ("access", value)];
+        assert_eq!(class(&t, 2), Some(RoadClass::Residential), "access={value}");
     }
-    assert_eq!(modes(&[("highway", "living_street")]), pair("cbw", "cbw"));
-    assert_eq!(modes(&[("highway", "service")]), pair("cbw", "cbw"));
 }
 
 #[test]
-fn bicycle_no_removes_the_bike_and_leaves_the_rest() {
-    assert_eq!(modes(&[("highway", "residential"), ("bicycle", "no")]), pair("cw", "cw"));
-    assert_eq!(modes(&[("highway", "residential"), ("bicycle", "use_sidepath")]), pair("cw", "cw"));
-    assert_eq!(modes(&[("highway", "residential"), ("foot", "no")]), pair("cb", "cb"));
-}
-
-#[test]
-fn footways_paths_and_steps_follow_the_wiki() {
-    // Footway: bicycle dismount (a bike pushed is a walker), foot designated.
-    assert_eq!(modes(&[("highway", "footway")]), pair("w", "w"));
-    assert_eq!(modes(&[("highway", "footway"), ("bicycle", "yes")]), pair("bw", "bw"));
-    assert_eq!(modes(&[("highway", "footway"), ("bicycle", "dismount")]), pair("w", "w"));
-    assert_eq!(modes(&[("highway", "pedestrian")]), pair("w", "w"));
-    assert_eq!(modes(&[("highway", "steps")]), pair("w", "w"));
-    // Path: bicycle yes, foot yes. Track: bike and walk (cars: the reader's one departure).
-    assert_eq!(modes(&[("highway", "path")]), pair("bw", "bw"));
-    assert_eq!(modes(&[("highway", "track")]), pair("bw", "bw"));
-    assert_eq!(modes(&[("highway", "bridleway"), ("bicycle", "yes")]), pair("b", "b"));
-}
-
-#[test]
-fn the_most_specific_access_key_decides() {
-    // Key:access: access < vehicle < motor_vehicle < motorcar; access < vehicle < bicycle.
-    let r = ("highway", "residential");
-    assert_eq!(modes(&[r, ("access", "private")]), ("-".into(), "-".into()));
-    assert_eq!(modes(&[r, ("access", "no"), ("bicycle", "yes")]), pair("b", "b"));
-    assert_eq!(modes(&[r, ("vehicle", "no")]), pair("w", "w"));
-    assert_eq!(modes(&[r, ("vehicle", "no"), ("motor_vehicle", "yes")]), pair("cw", "cw"));
-    assert_eq!(modes(&[r, ("motor_vehicle", "no")]), pair("bw", "bw"));
-    assert_eq!(modes(&[r, ("motor_vehicle", "destination")]), pair("cbw", "cbw"));
-    assert_eq!(
-        modes(&[r, ("motor_vehicle", "unknown"), ("access", "no")]),
-        ("-".into(), "-".into())
-    );
-    // A motorroad closes the way to bikes and walkers.
-    assert_eq!(modes(&[("highway", "trunk"), ("motorroad", "yes")]), pair("c", "c"));
-    // A parking aisle is not a street for cars; bikes and walkers keep it.
-    assert_eq!(modes(&[("highway", "service"), ("service", "parking_aisle")]), pair("bw", "bw"));
-    // A cycleway is never a car street, whatever its car keys say (mopeds on Dutch cycleways).
-    assert_eq!(
-        modes(&[("highway", "cycleway"), ("motor_vehicle", "destination")]),
-        pair("bw", "bw")
-    );
-}
-
-#[test]
-fn oneway_binds_cars_and_bikes_and_not_walkers() {
-    // Key:oneway: it "only applies to vehicles"; oneway:bicycle=no opens the street to bikes
-    // both ways; oneway:foot binds walkers.
-    let r = ("highway", "residential");
-    assert_eq!(modes(&[r, ("oneway", "yes")]), pair("cbw", "w"));
-    assert_eq!(modes(&[r, ("oneway", "-1")]), pair("w", "cbw"));
-    assert_eq!(modes(&[r, ("oneway", "yes"), ("oneway:bicycle", "no")]), pair("cbw", "bw"));
-    assert_eq!(modes(&[("highway", "cycleway"), ("oneway", "yes")]), pair("bw", "w"));
-    assert_eq!(modes(&[("highway", "footway"), ("oneway:foot", "yes")]), pair("w", "-"));
-    assert_eq!(modes(&[r, ("junction", "roundabout")]), pair("cbw", "w"));
-    assert_eq!(modes(&[r, ("oneway", "reversible")]), pair("cbw", "cbw"));
-}
-
-#[test]
-fn lanes_follow_the_wiki_with_one_side_given() {
-    let two_way = |extra: &[(&str, &str)]| {
-        let mut t = vec![("highway", "primary"), ("maxspeed", "50")];
-        t.extend_from_slice(extra);
-        let (f, b) = car(&t);
-        (f.unwrap().0, b.unwrap().0)
-    };
-    // Bug fixed: total 4, forward 1 on a two-way street gives backward 4 − 1 = 3 (not 4 / 2).
-    assert_eq!(two_way(&[("lanes", "4"), ("lanes:forward", "1")]), (1, 3));
-    assert_eq!(two_way(&[("lanes", "4"), ("lanes:backward", "1")]), (3, 1));
-    // A centre lane belongs to neither side: 5 − 2 − 1 = 2.
-    assert_eq!(
-        two_way(&[("lanes", "5"), ("lanes:forward", "2"), ("lanes:both_ways", "1")]),
-        (2, 2)
-    );
-    assert_eq!(two_way(&[("lanes:forward", "3"), ("lanes:backward", "2")]), (3, 2));
-    // The total alone is split: 4 gives 2 and 2; 3 gives 1 and 1; 1 gives 1 and 1.
-    assert_eq!(two_way(&[("lanes", "4")]), (2, 2));
-    assert_eq!(two_way(&[("lanes", "3")]), (1, 1));
-    assert_eq!(two_way(&[("lanes", "1")]), (1, 1));
-    // No lane tag: the class's default (primary, 2 per direction).
-    assert_eq!(two_way(&[]), (2, 2));
-    // One way: the total is the one direction's.
-    let (f, b) = car(&[("highway", "primary"), ("oneway", "yes"), ("lanes", "3")]);
-    assert_eq!((f.unwrap().0, b), (3, None));
-}
-
-#[test]
-fn maxspeed_by_direction_is_read_first() {
-    // Bug fixed: maxspeed:forward=30 and maxspeed:backward=70 give 30 and 70 km/h.
-    let t = [("highway", "secondary"), ("maxspeed:forward", "30"), ("maxspeed:backward", "70")];
-    let (f, b) = car(&t);
-    assert_eq!((f.unwrap().1, b.unwrap().1), (30.0, 70.0));
-    let (f, b) = car(&[("highway", "secondary"), ("maxspeed", "50"), ("maxspeed:backward", "70")]);
-    assert_eq!((f.unwrap().1, b.unwrap().1), (50.0, 70.0));
-    // 30 mph is 30 × 1.609 344 = 48.280 32 km/h.
-    let (f, _) = car(&[("highway", "secondary"), ("maxspeed", "30 mph")]);
-    assert!(close(f.unwrap().1, 48.280_32, 1e-9), "{f:?}");
-    assert!(close(30.0 * KM_PER_MILE, 48.280_32, 1e-12));
-    // No maxspeed: the class's default (secondary, 50 km/h).
-    assert_eq!(car(&[("highway", "secondary")]).0.unwrap().1, 50.0);
-}
-
-/// The way's repairs, as (key, count, first ids).
-fn repairs(tags: &[(&str, &str)]) -> Vec<(&'static str, u64, Vec<String>)> {
-    let (_, report) = read(&street(2, tags)).expect("readable");
-    report.repairs.kinds().iter().map(|k| (k.key, k.count, k.first.clone())).collect()
-}
-
-#[test]
-fn a_tag_the_reader_cannot_read_is_read_as_absent_and_noted() {
-    // A residential street: 30 km/h, 1 lane each way, cars, bikes and walkers both ways.
-    let way = vec!["way 100".to_string()];
-    fn residential<'a>(extra: (&'a str, &'a str)) -> [(&'a str, &'a str); 2] {
-        [("highway", "residential"), extra]
-    }
-    for value in ["none", "walk", "NL:urban", "50;30", "fast", "0", "-20", "50 km/h"] {
-        let tags = residential(("maxspeed", value));
-        assert_eq!(car(&tags), (Some((1, 30.0)), Some((1, 30.0))), "{value}");
-        assert_eq!(repairs(&tags), [("speeds_defaulted", 1, way.clone())], "{value}");
-    }
-    let tags = residential(("maxspeed:forward", "signals"));
-    assert_eq!(car(&tags).0, Some((1, 30.0)));
-    assert_eq!(repairs(&tags), [("speeds_defaulted", 1, way.clone())]);
-    for extra in [("lanes", "two"), ("lanes", "2;3"), ("lanes:forward", "1.5")] {
-        assert_eq!(car(&residential(extra)), (Some((1, 30.0)), Some((1, 30.0))), "{extra:?}");
-        assert_eq!(repairs(&residential(extra)), [("tags_unread", 1, way.clone())], "{extra:?}");
-    }
-    for extra in
-        [("oneway", "true"), ("oneway", "no;yes"), ("bicycle", "maybe"), ("access", "yes|no")]
-    {
-        assert_eq!(modes(&residential(extra)), pair("cbw", "cbw"), "{extra:?}");
-        assert_eq!(repairs(&residential(extra)), [("tags_unread", 1, way.clone())], "{extra:?}");
-    }
-    // A restricted group is read as `private`: closed, nothing noted.
-    for extra in [("access", "residents"), ("access", "employees"), ("access", "emergency")] {
-        assert_eq!(modes(&residential(extra)), pair("-", "-"), "{extra:?}");
-        assert!(repairs(&residential(extra)).is_empty(), "{extra:?}");
-    }
-    assert_eq!(modes(&residential(("foot", "emergency"))), pair("cb", "cb"));
-    // A list: the most restrictive known part decides.
-    assert_eq!(modes(&residential(("motor_vehicle", "destination;permit"))), pair("bw", "bw"));
-    assert_eq!(modes(&residential(("access", "private;customers"))), pair("-", "-"));
-    assert_eq!(modes(&residential(("bicycle", "optional_sidepath;maybe"))), pair("cbw", "cbw"));
-    // Lane tags that leave a side no lane, or a total not the sum: repaired, noted.
-    let lanes = [("highway", "primary"), ("lanes", "2"), ("lanes:forward", "2")];
-    assert_eq!(car(&lanes), (Some((2, 60.0)), Some((1, 60.0))));
-    assert_eq!(repairs(&lanes), [("lanes_repaired", 1, way.clone())]);
-    let sum =
-        [("highway", "primary"), ("lanes", "4"), ("lanes:forward", "2"), ("lanes:backward", "1")];
-    assert_eq!(car(&sum), (Some((2, 60.0)), Some((1, 60.0))));
-    assert_eq!(repairs(&sum), [("lanes_repaired", 1, way.clone())]);
-    let none = [("highway", "primary"), ("lanes:forward", "0")];
-    assert_eq!(car(&none).0, Some((1, 60.0)));
-    assert_eq!(repairs(&none), [("lanes_repaired", 1, way)]);
-    // A way without cars does not read the car tags.
-    assert!(repairs(&[("highway", "footway"), ("maxspeed", "walk")]).is_empty());
-    assert!(
-        repairs(&[("highway", "cycleway"), ("motor_vehicle", "agricultural;whatever")]).is_empty()
-    );
-}
-
-/// A value naming a mode or a group of vehicles is "only these": on a residential street (cars,
-/// bikes and walkers both ways by default), `access=foot` leaves walkers alone, `bicycle` bikes
-/// alone, `vehicle` cars and bikes, `motor_vehicle` cars, `bus` (no mode of ours) none;
-/// `foot;bicycle` is one group, walkers and bikes; `access=bus;destination` closes (the group
-/// refuses every mode, the most restrictive part). `bicycle=separate` and `foot=separate` are
-/// `use_sidepath`: that mode closed. `access=visitors` admits, as `customers`. `construction`
-/// and `service` are not read: noted, the default kept. A lane value on a way no car drives
-/// (`motor_vehicle=no`, `lanes=two`) is not read, so not noted. Nothing else noted.
-#[test]
-fn a_mode_or_vehicle_group_admits_it_alone() {
-    let residential =
-        |key: &'static str, value: &'static str| [("highway", "residential"), (key, value)];
-    for (value, want) in [
-        ("foot", "w"),
-        ("bicycle", "b"),
-        ("vehicle", "cb"),
-        ("motor_vehicle", "c"),
-        ("bus", "-"),
-        ("foot;bicycle", "bw"),
-        ("bus;destination", "-"),
-        ("visitors", "cbw"),
+fn a_way_closed_to_cars_by_its_most_specific_key_is_no_car_road() {
+    for pairs in [
+        &[("motor_vehicle", "no")][..],
+        &[("motor_vehicle", "private")],
+        &[("motorcar", "no")],
+        &[("vehicle", "no")],
+        &[("vehicle", "private")],
+        &[("vehicle", "yes"), ("motor_vehicle", "no")],
     ] {
-        let tags = residential("access", value);
-        assert_eq!(modes(&tags), pair(want, want), "{value}");
-        assert!(repairs(&tags).is_empty(), "{value}");
+        let mut all = vec![("highway", "residential")];
+        all.extend_from_slice(pairs);
+        assert_eq!(road_class(&tags(&all), 2), None, "{pairs:?}");
     }
-    assert_eq!(modes(&residential("bicycle", "separate")), pair("cw", "cw"));
-    assert_eq!(modes(&residential("foot", "separate")), pair("cb", "cb"));
-    for value in ["construction", "service"] {
-        let tags = residential("access", value);
-        assert_eq!(modes(&tags), pair("cbw", "cbw"), "{value}");
-        assert_eq!(repairs(&tags), [("tags_unread", 1, vec!["way 100".to_string()])], "{value}");
+    for pairs in [
+        &[("vehicle", "no"), ("motor_vehicle", "yes")][..],
+        &[("motor_vehicle", "no"), ("motorcar", "yes")],
+        &[("motor_vehicle", "destination")],
+        &[("motorcar", "customers")],
+    ] {
+        let mut all = vec![("highway", "residential")];
+        all.extend_from_slice(pairs);
+        assert_eq!(road_class(&tags(&all), 2), Some(RoadClass::Residential), "{pairs:?}");
     }
-    let no_cars = [("highway", "residential"), ("motor_vehicle", "no"), ("lanes", "two")];
-    assert_eq!(modes(&no_cars), pair("bw", "bw"));
-    assert!(repairs(&no_cars).is_empty());
+    // Not a car class to begin with: nothing to close (a road, no car road).
+    let footway = [("highway", "footway"), ("motor_vehicle", "no")];
+    assert_eq!(road_class(&tags(&footway), 2), Some(RoadClass::Footway));
+}
+
+#[test]
+fn parking_aisles_and_driveways_are_no_car_roads_but_alleys_and_plain_service_are() {
+    for service in ["parking_aisle", "driveway", "drive-through", "emergency_access"] {
+        let t = [("highway", "service"), ("service", service)];
+        assert_eq!(road_class(&tags(&t), 2), None, "service={service}");
+        assert_eq!(bike(&t), Some((true, true)), "bikes keep it: service={service}");
+    }
+    for pairs in [
+        &[("highway", "service")][..],
+        &[("highway", "service"), ("service", "alley")],
+        &[("highway", "residential"), ("service", "driveway")],
+    ] {
+        assert!(road_class(&tags(pairs), 2).is_some(), "{pairs:?}");
+    }
 }
 
 #[test]
 fn the_class_table_reads_as_its_readme_states() {
     // The parameter osm_class_defaults (PARAMETERS.md): the README's table, (highway, km/h,
-    // lanes per direction) for every car class.
+    // lanes per direction, veh/h per lane) for every car class. Speeds and lanes: version 1's.
+    // Capacities, junctions counted in: 2 000 (ICTAVRU), 1 800 a carriageway, 1 550 a ramp
+    // (Cerema, "Fondamentaux de la conception routière"); at signals 1 800 × the green share
+    // (Cerema 2016): 0.60, 0.50, 0.45, 0.40, 1/3, 0.25 by class (the project's assumption).
     let table = [
-        ("motorway", 110.0, 2),
-        ("motorway_link", 60.0, 1),
-        ("trunk", 90.0, 2),
-        ("trunk_link", 50.0, 1),
-        ("primary", 60.0, 2),
-        ("primary_link", 40.0, 1),
-        ("secondary", 50.0, 1),
-        ("secondary_link", 40.0, 1),
-        ("tertiary", 50.0, 1),
-        ("tertiary_link", 30.0, 1),
-        ("unclassified", 40.0, 1),
-        ("road", 40.0, 1),
-        ("residential", 30.0, 1),
-        ("living_street", 20.0, 1),
-        ("service", 20.0, 1),
+        ("motorway", 110.0, 2, 2000.0),
+        ("motorway_link", 60.0, 1, 1550.0),
+        ("trunk", 90.0, 2, 1800.0),
+        ("trunk_link", 50.0, 1, 1550.0),
+        ("primary", 60.0, 2, 1080.0),
+        ("primary_link", 40.0, 1, 900.0),
+        ("secondary", 50.0, 1, 900.0),
+        ("secondary_link", 40.0, 1, 900.0),
+        ("tertiary", 50.0, 1, 810.0),
+        ("tertiary_link", 30.0, 1, 720.0),
+        ("unclassified", 40.0, 1, 720.0),
+        ("road", 40.0, 1, 720.0),
+        ("residential", 30.0, 1, 600.0),
+        ("living_street", 20.0, 1, 450.0),
+        ("service", 20.0, 1, 450.0),
     ];
-    for (highway, km_h, lanes) in table {
-        assert_eq!(class_of(highway).and_then(|c| c.car), Some((km_h, lanes)), "{highway}");
-        let tags = [("highway", highway), ("oneway", "no")];
-        let (f, b) = car(&tags);
-        assert_eq!((f, b), (Some((lanes, km_h)), Some((lanes, km_h))), "{highway}");
+    for (highway, km_h, n, per_lane) in table {
+        let class = RoadClass::from_highway(highway).expect(highway);
+        let d = class.car().expect(highway);
+        assert_eq!((d.speed_km_h, d.lanes, d.capacity_per_lane), (km_h, n, per_lane), "{highway}");
+        // End to end, both ways: the class's lanes, speed and lanes × capacity per lane.
+        let (net, _) = read(&street(2, &[("highway", highway), ("oneway", "no")])).unwrap();
+        for tag in ["f", "b"] {
+            let c = direction(&net, Mode::Car, 100, tag).expect(highway);
+            let want = (Some(n), Some(km_h), Some(f64::from(n) * per_lane));
+            assert_eq!((c.lanes, c.speed_km_h, c.capacity_veh_h), want, "{highway} {tag}");
+        }
     }
-    let car_classes = CLASSES.iter().filter(|c| c.car.is_some()).flat_map(|c| c.highway).count();
-    assert_eq!(car_classes, table.len(), "every car class is in the table");
-    for highway in ["construction", "proposed", "platform", "bus_guideway", "raceway"] {
-        assert!(class_of(highway).is_none(), "{highway} is not a street");
+    let car_classes = RoadClass::ALL.iter().filter(|c| c.car().is_some()).count();
+    assert_eq!(car_classes, table.len() - 1, "every car class is in the table (road is one)");
+    for highway in ["construction", "proposed", "platform", "raceway", "bridleway"] {
+        assert!(RoadClass::from_highway(highway).is_none(), "{highway} is no road");
+    }
+}
+
+// --- direction ------------------------------------------------------------------------------
+
+#[test]
+fn oneway_decides_else_roundabouts_and_motorways_are_one_way() {
+    let d = |pairs: &[(&str, &str)], class| tags::direction(&tags(pairs), class);
+    let r = RoadClass::Residential;
+    for yes in ["yes", "true", "1"] {
+        assert_eq!(d(&[("oneway", yes)], r), Direction::Forward);
+    }
+    for back in ["-1", "reverse"] {
+        assert_eq!(d(&[("oneway", back)], r), Direction::Backward);
+    }
+    for no in ["no", "false", "0"] {
+        assert_eq!(d(&[("oneway", no)], r), Direction::Both);
+    }
+    assert_eq!(d(&[("junction", "roundabout")], RoadClass::Secondary), Direction::Forward);
+    assert_eq!(d(&[], RoadClass::Motorway), Direction::Forward);
+    assert_eq!(d(&[], RoadClass::MotorwayLink), Direction::Forward);
+    assert_eq!(d(&[], RoadClass::Primary), Direction::Both);
+    assert_eq!(d(&[("oneway", "no")], RoadClass::Motorway), Direction::Both);
+    assert_eq!(d(&[("junction", "roundabout"), ("oneway", "no")], r), Direction::Both);
+    // A direction that changes over the day is read as both ways.
+    for value in ["reversible", "alternating"] {
+        assert_eq!(d(&[("oneway", value)], RoadClass::Primary), Direction::Both);
+    }
+}
+
+// --- lanes ----------------------------------------------------------------------------------
+
+#[test]
+fn lanes_follow_the_wiki_with_one_side_given() {
+    let p = RoadClass::Primary;
+    assert_eq!(
+        lanes(p, &[("lanes", "5"), ("lanes:forward", "3"), ("lanes:backward", "2")]),
+        (3, 2)
+    );
+    // Bug fixed: total 4, forward 1 on a two-way street gives backward 4 − 1 = 3 (version 1: 4 / 2).
+    assert_eq!(lanes(p, &[("lanes", "4"), ("lanes:forward", "1")]), (1, 3));
+    assert_eq!(lanes(p, &[("lanes", "4"), ("lanes:backward", "1")]), (3, 1));
+    // A centre lane belongs to neither side: 5 − 2 − 1 = 2.
+    assert_eq!(
+        lanes(p, &[("lanes", "5"), ("lanes:forward", "2"), ("lanes:both_ways", "1")]),
+        (2, 2)
+    );
+    // The total alone is split, rounding down, at least 1: 4 gives 2 and 2; 3 and 1 give 1 and 1.
+    assert_eq!(lanes(p, &[("lanes", "4")]), (2, 2));
+    assert_eq!(lanes(p, &[("lanes", "3")]), (1, 1));
+    assert_eq!(lanes(p, &[("lanes", "1")]), (1, 1));
+    // One way: the total is the one direction's.
+    assert_eq!(lanes(p, &[("oneway", "yes"), ("lanes", "3")]), (3, 0));
+    // No lane tag, or one that is not a count: the class's (primary, 2 per direction).
+    assert_eq!(lanes(p, &[]), (2, 2));
+    assert_eq!(lanes(p, &[("lanes", "two")]), (2, 2));
+}
+
+// --- speed ----------------------------------------------------------------------------------
+
+#[test]
+fn the_ordinary_speed_formats_all_read() {
+    assert_eq!(maxspeed("50"), Some(50.0));
+    assert_eq!(maxspeed(" 50 "), Some(50.0));
+    assert_eq!(maxspeed("50 km/h"), Some(50.0));
+    assert_eq!(maxspeed("50km/h"), Some(50.0));
+    assert_eq!(maxspeed("50 kph"), Some(50.0));
+    assert_eq!(maxspeed("30 mph"), Some(30.0 * KM_PER_MILE));
+    assert_eq!(maxspeed("30mph"), Some(30.0 * KM_PER_MILE));
+    assert_eq!(maxspeed("10 knots"), Some(18.52));
+    assert_eq!(maxspeed("walk"), Some(WALKING_SPEED_KM_H));
+    // A list: the limit at the way's start.
+    assert_eq!(maxspeed("50;30"), Some(50.0));
+    // 30 mph is 30 × 1.609 344 = 48.280 32 km/h.
+    assert!(close(30.0 * KM_PER_MILE, 48.280_32, 1e-12));
+}
+
+#[test]
+fn implicit_country_codes_read_the_table_with_the_country_ignored() {
+    assert_eq!(maxspeed("NL:urban"), Some(50.0));
+    assert_eq!(maxspeed("FR:rural"), Some(80.0));
+    assert_eq!(maxspeed("FR:motorway"), Some(130.0));
+    assert_eq!(maxspeed("NL:trunk"), Some(100.0));
+    assert_eq!(maxspeed("DE:living_street"), Some(15.0));
+    assert_eq!(maxspeed("FR:zone30"), Some(30.0));
+    assert_eq!(maxspeed("NL:zone20"), Some(20.0));
+    for (kind, km_h) in IMPLICIT_SPEED_LIMITS_KM_H {
+        assert_eq!(maxspeed(&format!("LU:{kind}")), Some(km_h), "{kind}");
+    }
+    assert_eq!(maxspeed("NL:urban;30"), Some(50.0));
+}
+
+#[test]
+fn a_value_that_is_not_a_speed_reads_as_none() {
+    // Germany's motorway has no limit; `none`; a code the table lacks; a malformed prefix.
+    for value in ["DE:motorway", "none", "DE:bicycle_road", "XX:signals", "de:urban", "signals"] {
+        assert_eq!(maxspeed(value), None, "{value}");
+    }
+    for value in ["-20", "0", "", "fast"] {
+        assert_eq!(maxspeed(value), None, "{value}");
     }
 }
 
 #[test]
+fn maxspeed_by_direction_is_read_first() {
+    let s = RoadClass::Secondary;
+    // Bug fixed: maxspeed:forward=30 and maxspeed:backward=70 give 30 and 70 km/h.
+    let by_direction = [("maxspeed:forward", "30"), ("maxspeed:backward", "70")];
+    assert_eq!(speeds(s, &by_direction), (Some(30.0), Some(70.0)));
+    assert_eq!(
+        speeds(s, &[("maxspeed", "50"), ("maxspeed:backward", "70")]),
+        (Some(50.0), Some(70.0))
+    );
+    // No maxspeed: the class's speed (secondary, 50 km/h).
+    assert_eq!(speeds(s, &[]), (Some(50.0), Some(50.0)));
+    // A one-way street has no backward car field.
+    assert_eq!(speeds(s, &[("oneway", "yes")]), (Some(50.0), None));
+}
+
+// --- nodes ----------------------------------------------------------------------------------
+
+#[test]
+fn signals_stops_and_barriers_split_a_way_and_a_signal_is_marked() {
+    let t = |pairs: &[(&str, &str)]| tags(pairs);
+    assert!(tags::splits(&t(&[("highway", "traffic_signals")])));
+    assert!(tags::splits(&t(&[("highway", "stop")])));
+    assert!(tags::splits(&t(&[("highway", "mini_roundabout")])));
+    assert!(tags::splits(&t(&[("barrier", "gate")])));
+    assert!(!tags::splits(&t(&[("highway", "crossing")])));
+    assert!(!tags::splits(&[]));
+    assert!(tags::signalised(&t(&[("highway", "traffic_signals")])));
+    assert!(!tags::signalised(&t(&[("highway", "stop")])));
+    // An emergency signal is green for traffic but when a fire engine turns out.
+    let emergency = [("highway", "traffic_signals"), ("traffic_signals", "emergency")];
+    assert!(!tags::signalised(&t(&emergency)) && tags::splits(&t(&emergency)));
+}
+
+// --- bikes (version 1's `bike_way`) ---------------------------------------------------------
+
+#[test]
+fn motorways_and_ways_closed_to_bikes_are_no_bike_ways() {
+    for pairs in [
+        &[("highway", "motorway")][..],
+        &[("highway", "motorway_link")],
+        &[("highway", "primary"), ("motorroad", "yes")],
+        &[("highway", "primary"), ("bicycle", "no")],
+        &[("highway", "primary"), ("bicycle", "use_sidepath")],
+        &[("highway", "service"), ("access", "private")],
+        &[("highway", "pedestrian"), ("area", "yes"), ("bicycle", "yes")],
+        &[("highway", "busway")],
+        &[("building", "yes")],
+    ] {
+        assert_eq!(bike(pairs), None, "{pairs:?}");
+    }
+    assert_eq!(bike_way(&tags(&[("highway", "residential")]), 1), None, "one node");
+}
+
+#[test]
+fn every_other_car_road_and_a_cycleway_are_bike_ways_both_ways() {
+    for highway in ["primary", "secondary", "tertiary", "unclassified", "residential"]
+        .into_iter()
+        .chain(["living_street", "service", "cycleway"])
+    {
+        assert_eq!(bike(&[("highway", highway)]), Some((true, true)), "{highway}");
+    }
+    let (class, _) = bike_way(&tags(&[("highway", "cycleway")]), 2).unwrap();
+    assert_eq!(class, RoadClass::Cycleway);
+}
+
+#[test]
+fn a_trunk_road_or_busway_carries_bikes_only_where_a_tag_lets_them_on() {
+    for highway in ["trunk", "trunk_link", "busway"] {
+        assert_eq!(bike(&[("highway", highway)]), None, "plain {highway}");
+        assert_eq!(bike(&[("highway", highway), ("bicycle", "dismount")]), None, "{highway}");
+        for value in ["yes", "designated", "permissive"] {
+            assert_eq!(bike(&[("highway", highway), ("bicycle", value)]), Some((true, true)));
+        }
+        assert_eq!(bike(&[("highway", highway), ("bicycle", "yes"), ("motorroad", "yes")]), None);
+    }
+    // A bike-only road behind access=no.
+    for value in ["yes", "designated", "permissive"] {
+        let t = [("highway", "service"), ("access", "no"), ("bicycle", value)];
+        assert_eq!(bike(&t), Some((true, true)), "access=no, bicycle={value}");
+    }
+}
+
+#[test]
+fn footways_paths_tracks_steps_and_pedestrian_streets_need_a_bicycle_tag() {
+    // Version 1's rule: a path or a track is a footway; a bike rides it only where tagged.
+    for highway in ["footway", "path", "track", "pedestrian", "steps", "bridleway"] {
+        assert_eq!(bike(&[("highway", highway)]), None, "{highway} without a bicycle tag");
+        for value in ["yes", "designated", "permissive", "dismount"] {
+            let t = [("highway", highway), ("bicycle", value)];
+            assert_eq!(bike(&t), Some((true, true)), "{highway} bicycle={value}");
+        }
+    }
+}
+
+#[test]
+fn bikes_follow_a_one_way_street_unless_a_tag_opens_it() {
+    let r = ("highway", "residential");
+    let one = ("oneway", "yes");
+    assert_eq!(bike(&[r, one]), Some((true, false)));
+    assert_eq!(bike(&[r, one, ("oneway:bicycle", "no")]), Some((true, true)));
+    assert_eq!(bike(&[r, ("oneway:bicycle", "yes")]), Some((true, false)));
+    assert_eq!(bike(&[r, ("oneway:bicycle", "-1")]), Some((false, true)));
+    assert_eq!(bike(&[r, ("junction", "roundabout")]), Some((true, false)));
+    assert_eq!(bike(&[("highway", "cycleway"), one]), Some((true, false)));
+    // An `opposite…` value, on any cycleway key, opens the contraflow.
+    for key in ["cycleway", "cycleway:both", "cycleway:left", "cycleway:right"] {
+        for value in ["opposite", "opposite_lane", "opposite_track", "opposite_share_busway"] {
+            assert_eq!(bike(&[r, one, (key, value)]), Some((true, true)), "{key}={value}");
+        }
+    }
+    // A lane, track or shared bus lane whose own `oneway` runs against the street opens it.
+    for value in ["lane", "track", "share_busway"] {
+        let t = [r, one, ("cycleway:left", value), ("cycleway:left:oneway", "-1")];
+        assert_eq!(bike(&t), Some((true, true)), "{value}");
+    }
+    // A lane alone serves the street's direction; mirrored on a street one-way the other way.
+    assert_eq!(bike(&[r, one, ("cycleway:left", "lane")]), Some((true, false)));
+    assert_eq!(bike(&[r, ("oneway", "-1"), ("cycleway", "opposite_lane")]), Some((true, true)));
+    assert_eq!(bike(&[r, ("oneway", "-1"), ("oneway:bicycle", "yes")]), Some((false, true)));
+}
+
+#[test]
+fn a_ferry_carries_bikes_and_walkers_unless_told_not_to() {
+    let ferry = |pairs: &[(&str, &str)]| bike_way(&tags(pairs), 2);
+    assert_eq!(ferry(&[("route", "ferry")]), Some((RoadClass::Ferry, Direction::Both)));
+    assert_eq!(
+        walk_way(&tags(&[("route", "ferry")]), 2),
+        Some((RoadClass::Ferry, Direction::Both))
+    );
+    assert_eq!(ferry(&[("route", "ferry"), ("bicycle", "no")]), None);
+    assert_eq!(walk_way(&tags(&[("route", "ferry"), ("foot", "no")]), 2), None);
+    assert_eq!(
+        ferry(&[("route", "ferry"), ("oneway", "yes")]),
+        Some((RoadClass::Ferry, Direction::Forward))
+    );
+}
+
+// --- walkers (version 1's `walk_way`) -------------------------------------------------------
+
+#[test]
+fn walking_is_everywhere_but_motorways_busways_and_closed_ways_and_both_ways() {
+    for highway in
+        ["primary", "trunk", "residential", "footway", "path", "steps", "pedestrian", "cycleway"]
+    {
+        let t = tags(&[("highway", highway), ("oneway", "yes")]);
+        assert_eq!(walk_way(&t, 2).map(|(_, d)| d), Some(Direction::Both), "{highway}");
+    }
+    for pairs in [
+        &[("highway", "motorway")][..],
+        &[("highway", "motorway_link")],
+        &[("highway", "busway")],
+        &[("highway", "cycleway"), ("foot", "no")],
+        &[("highway", "primary"), ("foot", "no")],
+        &[("highway", "primary"), ("foot", "use_sidepath")],
+        &[("highway", "trunk"), ("motorroad", "yes")],
+        &[("highway", "service"), ("access", "private")],
+        &[("highway", "pedestrian"), ("area", "yes")],
+    ] {
+        assert_eq!(walk_way(&tags(pairs), 2), None, "{pairs:?}");
+    }
+    let open = [("highway", "service"), ("access", "no"), ("foot", "designated")];
+    assert!(walk_way(&tags(&open), 2).is_some());
+    assert!(walk_way(&tags(&[("highway", "busway"), ("foot", "yes")]), 2).is_some());
+}
+
+// --- end to end -----------------------------------------------------------------------------
+
+#[test]
+fn each_layer_gets_the_ways_its_rules_admit() {
+    assert_eq!(both_modes(&[("highway", "residential")]), pair("cbw", "cbw"));
+    assert_eq!(both_modes(&[("highway", "residential"), ("oneway", "yes")]), pair("cbw", "w"));
+    assert_eq!(both_modes(&[("highway", "motorway"), ("oneway", "no")]), pair("c", "c"));
+    assert_eq!(both_modes(&[("highway", "cycleway")]), pair("bw", "bw"));
+    assert_eq!(both_modes(&[("highway", "footway")]), pair("w", "w"));
+    assert_eq!(both_modes(&[("highway", "path")]), pair("w", "w"));
+    assert_eq!(both_modes(&[("highway", "footway"), ("bicycle", "yes")]), pair("bw", "bw"));
+    assert_eq!(both_modes(&[("highway", "trunk")]), pair("cw", "cw"));
+    assert_eq!(both_modes(&[("highway", "residential"), ("access", "private")]), pair("-", "-"));
+    assert_eq!(
+        both_modes(&[("highway", "service"), ("service", "parking_aisle")]),
+        pair("bw", "bw")
+    );
+    // A cycleway is never a car road, whatever its car keys say (mopeds on Dutch cycleways).
+    let mopeds = [("highway", "cycleway"), ("motor_vehicle", "destination")];
+    assert_eq!(both_modes(&mopeds), pair("bw", "bw"));
+}
+
+#[test]
 fn what_every_rule_means_for_a_bike() {
-    // `f`/`b`: whether a bike may ride along / against the way's node order.
-    let bike = |tags: &[(&str, &str)]| {
-        let (f, b) = modes(tags);
+    let ride = |pairs: &[(&str, &str)]| {
+        let (f, b) = both_modes(pairs);
         (f.contains('b'), b.contains('b'))
     };
-    // The class: streets and trunk roads yes (wiki), motorways no, cycleways and paths yes,
-    // footways, pedestrian streets and steps no (a bike pushed is a walker), tracks yes.
-    assert_eq!(bike(&[("highway", "residential")]), (true, true));
-    assert_eq!(bike(&[("highway", "trunk")]), (true, true));
-    assert_eq!(bike(&[("highway", "motorway")]), (false, false));
-    assert_eq!(bike(&[("highway", "cycleway")]), (true, true));
-    assert_eq!(bike(&[("highway", "path")]), (true, true));
-    assert_eq!(bike(&[("highway", "track")]), (true, true));
-    for class in ["footway", "pedestrian", "steps", "bridleway", "busway"] {
-        assert_eq!(bike(&[("highway", class)]), (false, false), "{class}");
-    }
-    // The keys: bicycle, then vehicle, then access.
     let r = ("highway", "residential");
-    assert_eq!(bike(&[r, ("bicycle", "no")]), (false, false));
-    assert_eq!(bike(&[r, ("bicycle", "use_sidepath")]), (false, false));
-    assert_eq!(bike(&[r, ("bicycle", "dismount")]), (false, false));
-    assert_eq!(bike(&[r, ("vehicle", "no")]), (false, false));
-    assert_eq!(bike(&[r, ("access", "private")]), (false, false));
-    assert_eq!(bike(&[r, ("access", "no"), ("bicycle", "designated")]), (true, true));
-    assert_eq!(bike(&[r, ("motor_vehicle", "no")]), (true, true), "a car key binds no bike");
-    assert_eq!(bike(&[("highway", "footway"), ("bicycle", "yes")]), (true, true));
-    assert_eq!(bike(&[("highway", "trunk"), ("motorroad", "yes")]), (false, false));
-    assert_eq!(bike(&[("highway", "service"), ("service", "driveway")]), (true, true));
-    // The direction: oneway binds a bike unless oneway:bicycle says otherwise.
-    assert_eq!(bike(&[r, ("oneway", "yes")]), (true, false));
-    assert_eq!(bike(&[r, ("oneway", "yes"), ("oneway:bicycle", "no")]), (true, true));
-    assert_eq!(bike(&[r, ("oneway:bicycle", "yes")]), (true, false));
-    assert_eq!(bike(&[r, ("junction", "roundabout")]), (true, false));
-    // The car's lanes and speed are no bike's: a bike rides at bike_speed on every link.
+    assert_eq!(ride(&[r]), (true, true));
+    assert_eq!(ride(&[r, ("bicycle", "no")]), (false, false));
+    assert_eq!(ride(&[r, ("vehicle", "no")]), (true, true), "version 1: vehicle binds cars here");
+    assert_eq!(ride(&[r, ("access", "private")]), (false, false));
+    assert_eq!(ride(&[r, ("access", "no"), ("bicycle", "designated")]), (true, true));
+    assert_eq!(ride(&[r, ("motor_vehicle", "no")]), (true, true), "a car key binds no bike");
+    assert_eq!(ride(&[("highway", "footway"), ("bicycle", "dismount")]), (true, true));
+    assert_eq!(ride(&[r, ("oneway", "yes"), ("oneway:bicycle", "no")]), (true, true));
+    // A bike link carries no car field, and a bike rides it at bike_speed (15 km/h here).
     let (net, _) = read(&street(2, &[r, ("maxspeed", "30")])).unwrap();
-    let f = direction(&net, 100, "f").unwrap();
-    let bike_s = net.free_flow_time(f.links[0], openmobisim_types::mode::Mode::Bike).0;
-    assert!(close(bike_s, f.length_m / (15.0 / 3.6), 1e-9), "{bike_s} s at 15 km/h");
+    let b = direction(&net, Mode::Bike, 100, "f").unwrap();
+    assert_eq!((b.lanes, b.speed_km_h, b.capacity_veh_h), (None, None, None));
+    let seconds = net.free_flow_time(b.links[0], Mode::Bike).0;
+    assert!(close(seconds, b.length_m / (15.0 / 3.6), 1e-9), "{seconds} s at 15 km/h");
+}
+
+// --- repairs --------------------------------------------------------------------------------
+
+/// The repairs of way 100 with `pairs`, as (key, count, first ids).
+fn repairs(pairs: &[(&str, &str)]) -> Vec<(&'static str, u64, Vec<String>)> {
+    let (_, report) = read(&street(2, pairs)).expect("readable");
+    report.repairs.kinds().iter().map(|k| (k.key, k.count, k.first.clone())).collect()
+}
+
+#[test]
+fn a_tag_the_reader_cannot_read_is_read_as_absent_and_noted() {
+    let way = vec!["way 100".to_string()];
+    let residential = |extra: (&'static str, &'static str)| [("highway", "residential"), extra];
+    let car_both = |pairs: &[(&str, &str)]| {
+        let (net, _) = read(&street(2, pairs)).unwrap();
+        let of = |tag| direction(&net, Mode::Car, 100, tag).map(|d| (d.lanes, d.speed_km_h));
+        (of("f"), of("b"))
+    };
+    let plain = Some((Some(1), Some(30.0)));
+    for value in ["none", "DE:motorway", "XX:signals", "fast", "0", "-20"] {
+        let t = residential(("maxspeed", value));
+        assert_eq!(car_both(&t), (plain, plain), "{value}: the class's 30 km/h, 1 lane");
+        assert_eq!(repairs(&t), [("speeds_defaulted", 1, way.clone())], "{value}");
+    }
+    // Version 1's readings, nothing noted: `walk` 7 km/h, `NL:urban` 50, a list its first.
+    for (value, km_h) in [("walk", 7.0), ("NL:urban", 50.0), ("50;30", 50.0), ("50 km/h", 50.0)] {
+        let t = residential(("maxspeed", value));
+        assert_eq!(car_both(&t).0, Some((Some(1), Some(km_h))), "{value}");
+        assert!(repairs(&t).is_empty(), "{value}");
+    }
+    let t = residential(("maxspeed:forward", "signals"));
+    assert_eq!(car_both(&t).0, plain);
+    assert_eq!(repairs(&t), [("speeds_defaulted", 1, way.clone())]);
+    for extra in
+        [("lanes", "two"), ("lanes", "2;3"), ("lanes:forward", "1.5"), ("oneway", "no;yes")]
+    {
+        assert_eq!(car_both(&residential(extra)), (plain, plain), "{extra:?}");
+        assert_eq!(repairs(&residential(extra)), [("tags_unread", 1, way.clone())], "{extra:?}");
+    }
+    // Lane tags that leave a side no lane, or a total not the sum of the sides: repaired.
+    let p = |extra: &[(&'static str, &'static str)]| {
+        let mut t = vec![("highway", "primary")];
+        t.extend_from_slice(extra);
+        t
+    };
+    let side = |n| Some((Some(n), Some(60.0)));
+    let full = p(&[("lanes", "2"), ("lanes:forward", "2")]);
+    assert_eq!(
+        (car_both(&full), repairs(&full)),
+        ((side(2), side(1)), vec![("lanes_repaired", 1, way.clone())])
+    );
+    let sum = p(&[("lanes", "4"), ("lanes:forward", "2"), ("lanes:backward", "1")]);
+    assert_eq!(
+        (car_both(&sum), repairs(&sum)),
+        ((side(2), side(1)), vec![("lanes_repaired", 1, way.clone())])
+    );
+    let none = p(&[("lanes:forward", "0")]);
+    assert_eq!(
+        (car_both(&none).0, repairs(&none)),
+        (side(1), vec![("lanes_repaired", 1, way.clone())])
+    );
+    // `lanes=0` on a two-way road leaves each direction 0 lanes: 1 each, repaired once.
+    let zero = p(&[("lanes", "0")]);
+    assert_eq!(
+        (car_both(&zero), repairs(&zero)),
+        ((side(1), side(1)), vec![("lanes_repaired", 1, way)])
+    );
+    // A way cars do not drive: its car tags are not read, so not noted.
+    assert!(repairs(&[("highway", "footway"), ("maxspeed", "none")]).is_empty());
+    assert!(
+        repairs(&[("highway", "residential"), ("motor_vehicle", "no"), ("lanes", "two")])
+            .is_empty()
+    );
 }

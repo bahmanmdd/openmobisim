@@ -158,7 +158,9 @@ marked so in the file's schema.
   row (`openmobisim_loop::parameters::COLUMNS`). `osm_class_defaults` is never written: its one
   value is the OSM reader's one table (`crates/io-osm/README.md`).
 - `[network]`: `source` (`"osm"` or `"tables"`), `nodes`, `links`, `fingerprint`, then
-  `osm_file`, or `nodes_file` and `links_file`, each absent for a table given in memory;
+  `osm_file` and `region` (the region the extract was cut to: `[west, south, east, north]` for a
+  box, `[[lon, lat], …]` for a polygon, in degrees; absent for the whole extract), or
+  `nodes_file` and `links_file`, each absent for a table given in memory;
   `[network.osm_report]`, the OSM reader's five counts, absent for a network from tables;
   `[network.repairs]`, each kind of the network's readers' repairs with its count.
 - `[demand]`: `trips`, `trips_given` (the rows of the trips table, only when the demand dropped

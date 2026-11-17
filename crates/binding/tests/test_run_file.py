@@ -188,13 +188,15 @@ def test_delft_from_its_osm_extract_runs_again_from_its_record(tmp_path):
     trips_file = tmp_path / "trips.parquet"
     pq.write_table(pa.table(trips), trips_file)
     started = time.perf_counter()
-    network = oms.Network.from_osm(osm)
+    region = (4.315, 51.965, 4.41, 52.035)
+    network = oms.Network.from_osm(osm, region=region)
     transit = oms.Transit.from_gtfs(gtfs, network)
     demand = oms.Demand.from_table(trips_file, ["all"], network, transit)
     first = oms.run(network, demand, transit, window=(28_800, 32_400), out=tmp_path / "first",
                     iteration_cap=1)
     seconds = time.perf_counter() - started
     assert read(first.record)["network"]["source"] == "osm"
+    assert read(first.record)["network"]["region"] == list(region), "the region, run again"
     assert leads_to(first.record, "network", "osm_file", osm)
     assert leads_to(first.record, "transit", "gtfs_file", gtfs)
     started = time.perf_counter()

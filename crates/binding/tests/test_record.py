@@ -276,6 +276,7 @@ def test_delft_from_osm_records_the_readers_counts_as_the_run_returns_them(tmp_p
     seconds = time.perf_counter() - started
     record = read(result.record)
     assert record["network"]["source"] == "osm"
+    assert "region" not in record["network"], "the whole extract: no region"
     assert record["network"]["osm_report"] == result.osm_report
     assert record["transit"]["gtfs_report"] == result.gtfs_report
     assert (record["network"]["nodes"], record["network"]["links"]) == \

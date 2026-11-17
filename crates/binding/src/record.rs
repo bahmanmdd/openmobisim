@@ -209,7 +209,8 @@ fn load<'py>(py: Python<'py>, record: &Path) -> PyResult<(Bound<'py, PyDict>, Pa
 
 /// Where the record's network is read from.
 enum NetworkFiles {
-    Osm(PathBuf),
+    /// The extract, and the region it was cut to (`[network] region`, as `tomllib` reads it).
+    Osm(PathBuf, Option<Py<PyAny>>),
     Tables(PathBuf, PathBuf),
 }
 
@@ -219,7 +220,9 @@ fn network_files(net: &Bound<'_, PyDict>, folder: &Path) -> PyResult<NetworkFile
         Ok(value::<String>(net, "network", key)?.map(|f| folder.join(f)))
     };
     match (file("osm_file")?, file("nodes_file")?, file("links_file")?) {
-        (Some(osm), None, None) => Ok(NetworkFiles::Osm(osm)),
+        (Some(osm), None, None) => {
+            Ok(NetworkFiles::Osm(osm, net.get_item("region")?.map(Bound::unbind)))
+        }
         (Some(_), _, _) => Err(refuse(
             "network.osm_file and network.nodes_file or links_file are two networks; a record \
              names one",
@@ -382,7 +385,9 @@ fn build_network(
     keywords: &Bound<'_, PyDict>,
 ) -> PyResult<Network> {
     match files {
-        NetworkFiles::Osm(osm) => Network::from_osm(py, osm, Some(keywords)),
+        NetworkFiles::Osm(osm, region) => {
+            Network::from_osm(py, osm, region.as_ref().map(|r| r.bind(py)), Some(keywords))
+        }
         NetworkFiles::Tables(nodes, links) => {
             let (nodes, links) = (nodes.into_pyobject(py)?, links.into_pyobject(py)?);
             Network::from_tables(py, &nodes, &links, Some(keywords))

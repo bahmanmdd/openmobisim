@@ -9,7 +9,7 @@ runtime dependency, no `numpy`.
 
 ```python
 import openmobisim as oms
-network = oms.Network.from_osm(path, **network_parameters)
+network = oms.Network.from_osm(path, region=None, **network_parameters)
 network = oms.Network.from_tables(nodes, links, **network_parameters)
 transit = oms.Transit.from_gtfs(path, network, **transit_parameters)
 demand  = oms.Demand.from_table(trips, classes, network, transit=None, **demand_parameters)
@@ -21,7 +21,13 @@ page    = result.summary(path, title=None)
 ```
 
 ## Inputs
-- **Files.** `from_osm`: one `.osm.pbf` extract (`crates/io-osm`). `from_gtfs`: one GTFS `.zip`
+- **Files.** `from_osm`: one `.osm.pbf` extract (`crates/io-osm`), cut to `region` when given: a
+  `(west, south, east, north)` box, or a sequence of `(lon, lat)` points of a polygon, in WGS84
+  degrees, lists and tuples alike (`[[lon, lat], …]`, as a record's region reads back from TOML;
+  `None`: the whole extract); a region that is no area (not numbers, a boolean among them, west
+  not west of east, fewer than three points, or points that repeat or lie on one line so that
+  they enclose no area) is refused, `ValueError` naming it.
+  `from_gtfs`: one GTFS `.zip`
   read on a network built from longitude/latitude (`crates/io-gtfs`).
 - **Tables.** A table is in memory or the path of a Parquet file (a `str` or an
   `os.PathLike`, as `os.fspath` reads it). In memory it is anything giving a column by name,
@@ -83,6 +89,10 @@ page    = result.summary(path, title=None)
   |---|---|
   | `Network.from_osm`, `Network.from_tables` | `capacity_per_lane` (veh/h per lane), `bike_speed`, `walk_speed` (km/h) |
   | `Network.from_osm` alone | `osm_class_defaults`: only `None`, the reader's one table (`crates/io-osm/README.md`) |
+
+  From an extract every car link has its class's capacity per lane × its lanes
+  (`osm_class_defaults`), so `capacity_per_lane`, the graph's value for a car row without a
+  capacity, changes nothing there; it is accepted and recorded at both entry points.
   | `Transit.from_gtfs` | `transfer_walk_max` (m) |
   | `Demand.from_table` | `stop_walk_max` (m) |
   | `run` | `boarding_slack` (s), `max_rides`, `nearby_stops`, `choice` (`"logit"` or `"deterministic"`), `coefficients` (a dict from every class id to its sixteen, in the order of the loop's choice row: cost per minute of car driving, bike riding, walking, transit in vehicle, access walk, egress walk, first wait, transfer wait, transfer walk; per transfer; per €; per unit of ln PS; the car, bike, walk and transit constants), `nest_scale`, `iteration_cap`, `iteration_floor`, `link_bin` (s), `seed` (an integer from 0 to 2⁶³ − 1, the largest the run's record holds) |
@@ -99,7 +109,8 @@ page    = result.summary(path, title=None)
   starts from `window_end_given_s` where the record has it, the end given before a run moved it
   to a whole bin, so the run repeats that repair),
   `[parameters]` (a row absent is the default of `PARAMETERS.md`; `coefficients` one table per
-  class, by column name, all sixteen required), the input files, `[network] osm_file`, or
+  class, by column name, all sixteen required), the input files, `[network] osm_file` (with
+  `[network] region`, the region it was cut to, when the network had one), or
   `nodes_file` and `links_file`, `[demand] trips_file` (required), `[transit] gtfs_file`
   (required when `[transit]` is there), `[demand] classes` (required), and the three
   `fingerprint`s. Known and not read: `openmobisim_version`, the counts, the readers' reports
@@ -156,7 +167,8 @@ of the network, the demand and the transit, the readers' counts; its keys in
 `crates/io-parquet/README.md`),
 When an input was read from a file (an OSM extract, a GTFS feed, a nodes, links or trips table
 given as a path), the record names it (`osm_file`, `gtfs_file`, `nodes_file`, `links_file`,
-`trips_file`), relative to the record's folder from the canonical paths of both, with `/`
+`trips_file`; an extract cut to a region, `region` beside `osm_file`, as the box's four numbers
+or the polygon's points), relative to the record's folder from the canonical paths of both, with `/`
 between components (on Windows, a file on another drive than the record is recorded by its
 canonical absolute path: a known limit, untested); a table given in memory has no key, and a
 record without the files of its network and its demand cannot run again. `run_file` writes the record of the run it ran, the
@@ -350,8 +362,8 @@ Each expected value comes from outside the simulator:
   holds, run again by `run_file` into a sibling folder: `trips.parquet`, `links.parquet` and
   `run.toml` byte-identical, `iterations.parquet` equal but for its five wall-clock columns; the
   same after the whole tree is moved; at another depth the tables identical and only the four
-  file lines of the record different. The same rerun on Delft from its OSM extract and feed
-  (about a second; not gated). A hand-written record of the window, the files and the classes
+  file lines of the record different. The same rerun on Delft from its OSM extract cut to
+  version 1's box and its feed, the record holding the region (about a second; not gated). A hand-written record of the window, the files and the classes
   alone runs `test_defaults.py`'s stop case (2 475 s; no journey at 1 501 m) and records every
   parameter at the default parsed from `PARAMETERS.md`. One link, one trip or one call changed
   in its file: one `UserWarning`, for that input alone, with both fingerprints, the run
@@ -387,7 +399,12 @@ Each expected value comes from outside the simulator:
   through a two-lane link 1 s apart (1 800 veh/h per lane); a stop at 1 499 m reached and one at
   1 501 m not (1 500 m); two lines joined by a 399 m walk and not by a 401 m one (400 m).
 - `test_delft.py`: Delft's extract and feed read through Python, the feed's counts against
-  gtfs-kit's (`crates/io-gtfs/tests/fixtures/delft/expected.csv`), the read times printed.
+  gtfs-kit's (`crates/io-gtfs/tests/fixtures/delft/expected.csv`), the read times printed;
+  the extract cut to version 1's box and to the same box as a polygon of its corners: one
+  network (the same counts and fingerprint), smaller than the whole; the same polygon given as
+  lists accepted, a run cut to it run again by `run_file` and opened by `Run.open` on the same
+  link count; eight regions that are no area each refused by name (three of them polygons of
+  three points that repeat or lie on one line).
 - `test_10_delft.py`: Delft with signals ignored, the whole run through Python; release only,
   skipped unless `TEST_10=1` (about a minute; not in CI); the file's header says what it judges.
 - `test_determinism.py`: a logit run of 400 trips twice and at `RAYON_NUM_THREADS` 1 and 8:

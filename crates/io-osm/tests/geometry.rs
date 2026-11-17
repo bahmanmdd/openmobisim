@@ -1,11 +1,12 @@
 //! A link's length against pyproj (`Geod(ellps="WGS84")`, Karney's geodesic algorithm,
-//! pyproj 3.8.0): the sum of the WGS84 geodesics between the nodes of its way.
+//! pyproj 3.8.0): the sum of the WGS84 geodesics between the nodes of its way, on each layer.
 
 mod common;
 
 use common::{close, direction, read};
 use openmobisim_io_osm::geodesic::geodesic_m;
 use openmobisim_io_osm::{Osm, OsmNode, OsmWay};
+use openmobisim_types::mode::Mode;
 
 #[test]
 fn a_five_node_way_is_as_long_as_its_geodesics() {
@@ -24,9 +25,12 @@ fn a_five_node_way_is_as_long_as_its_geodesics() {
         ],
     };
     let (net, _) = read(&osm).unwrap();
-    let f = direction(&net, 100, "f").unwrap();
-    assert_eq!(f.links.len(), 1, "the inner nodes are geometry, not junctions");
-    assert!(close(f.length_m, 542.861_119_846_913, 1e-6), "{} m", f.length_m);
+    for mode in [Mode::Car, Mode::Bike, Mode::Walk] {
+        let f = direction(&net, mode, 100, "f").unwrap();
+        assert_eq!(f.links.len(), 1, "the inner nodes are geometry, not junctions");
+        assert!(close(f.length_m, 542.861_119_846_913, 1e-6), "{mode}: {} m", f.length_m);
+    }
+    let f = direction(&net, Mode::Car, 100, "f").unwrap();
     let straight = geodesic_m((4.800, 45.700), (4.804, 45.700)).unwrap();
     assert!(f.length_m > 1.7 * straight, "the zigzag, not the straight line of {straight} m");
 }

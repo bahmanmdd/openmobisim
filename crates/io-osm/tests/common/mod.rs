@@ -22,7 +22,7 @@ pub fn at(id: i64, i: i64) -> OsmNode {
 
 /// An extract of nodes 1..=n in a row, way 100 through them with `tags`, and a two-way
 /// residential street back from node n to node 1 through node 999 north of them (way 900),
-/// so that the car network is strongly connected whatever way 100's direction.
+/// so that every layer is strongly connected whatever way 100's direction.
 pub fn street(n: i64, tags: &[(&str, &str)]) -> Osm {
     let nodes: Vec<i64> = (1..=n).collect();
     let mut all: Vec<OsmNode> = (1..=n).map(|i| at(i, i)).collect();
@@ -31,52 +31,65 @@ pub fn street(n: i64, tags: &[(&str, &str)]) -> Osm {
     Osm { nodes: all, ways: vec![OsmWay::new(100, &nodes, tags), back] }
 }
 
-/// The network of `osm` at the test values.
+/// The network of `osm` (the whole extract) at the test values.
 pub fn read(osm: &Osm) -> Result<(Network, Report), OsmError> {
-    network(osm, VALUES)
+    network(osm, VALUES, None)
 }
 
-/// One direction of one way, as the network holds it.
+/// One direction of one way on one mode's layer, as the network holds it.
 #[derive(Debug, PartialEq)]
 pub struct Direction {
-    /// The modes, as letters: `c`, `b`, `w`, in that order.
-    pub modes: String,
-    /// The car's lanes (`None` without cars).
+    /// The car's lanes (`None` on a bike or walk link).
     pub lanes: Option<u8>,
-    /// The car's free-flow speed in km/h (`None` without cars).
+    /// The car's free-flow speed in km/h (`None` on a bike or walk link).
     pub speed_km_h: Option<f64>,
+    /// The car's capacity in veh/h (`None` on a bike or walk link).
+    pub capacity_veh_h: Option<f64>,
     /// The sum of its links' lengths, metres.
     pub length_m: f64,
     /// Its links.
     pub links: Vec<LinkId>,
 }
 
-/// The links of way `way` in direction `tag` (`f` along its node order, `b` against it), or
-/// `None` if it has none. Panics if its links disagree on modes, lanes or speed.
-pub fn direction(net: &Network, way: i64, tag: &str) -> Option<Direction> {
+/// The links of `mode` whose first piece is of way `way` in direction `tag` (`f` along its node
+/// order, `b` against it), or `None` if it has none. Panics if they disagree on a car field.
+pub fn direction(net: &Network, mode: Mode, way: i64, tag: &str) -> Option<Direction> {
     let links: Vec<LinkId> = LinkId::iter_space(net.link_count())
         .filter(|&l| {
             let id = net.link_ids().external(l.raw());
-            id.starts_with(&format!("{way}:")) && id.ends_with(&format!(":{tag}"))
+            id.starts_with(&format!("{mode}:{way}:")) && id.ends_with(&format!(":{tag}"))
         })
         .collect();
     let first = *links.first()?;
-    let read = |l: LinkId| {
-        let modes: String = [(Mode::Car, 'c'), (Mode::Bike, 'b'), (Mode::Walk, 'w')]
-            .iter()
-            .filter(|(m, _)| net.modes(l).contains(*m))
-            .map(|&(_, c)| c)
-            .collect();
-        let car = net.modes(l).contains(Mode::Car);
-        let speed = car.then(|| net.free_flow_speed(l, Mode::Car).0 * 3.6);
-        (modes, car.then(|| net.lanes(l)), speed)
+    let car = |l: LinkId| {
+        net.modes(l).contains(Mode::Car).then(|| {
+            let speed = net.free_flow_speed(l, Mode::Car).0 * 3.6;
+            (net.lanes(l), (speed * 1e9).round() / 1e9, net.capacity(l).0 * 3600.0)
+        })
     };
-    let (modes, lanes, speed_km_h) = read(first);
     for &l in &links {
-        assert_eq!(read(l), (modes.clone(), lanes, speed_km_h), "way {way} {tag}: links differ");
+        assert_eq!(car(l), car(first), "way {way} {tag}: links differ");
     }
     let length_m = links.iter().map(|&l| net.length(l).0).sum();
-    Some(Direction { modes, lanes, speed_km_h, length_m, links })
+    let c = car(first);
+    Some(Direction {
+        lanes: c.map(|c| c.0),
+        speed_km_h: c.map(|c| c.1),
+        capacity_veh_h: c.map(|c| c.2),
+        length_m,
+        links,
+    })
+}
+
+/// The modes with a link of way `way` in direction `tag`, as letters `c`, `b`, `w` in that
+/// order (`-` for none).
+pub fn modes(net: &Network, way: i64, tag: &str) -> String {
+    let letters: String = [(Mode::Car, 'c'), (Mode::Bike, 'b'), (Mode::Walk, 'w')]
+        .into_iter()
+        .filter(|&(m, _)| direction(net, m, way, tag).is_some())
+        .map(|(_, c)| c)
+        .collect();
+    if letters.is_empty() { "-".to_owned() } else { letters }
 }
 
 /// `a` and `b` within `tol`.

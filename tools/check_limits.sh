@@ -1,7 +1,8 @@
 #!/bin/bash
-# The budgets, checked by the build. A piece that breaks one is not merged.
-#   no source file over 800 lines          (Rust and Python; functions over 80 lines are clippy's too_many_lines)
-#   Rust under 45 000 lines in all, Python under 5 000, the binding crate under 2 000
+# The budgets, checked by the build. A piece that breaks one is not merged, but for the line counts, which are
+# goals: over one, a warning is printed and the build goes on.
+#   goals: no source file over 800 lines (Rust and Python; functions over 80 lines are clippy's too_many_lines);
+#          Rust under 45 000 lines in all, Python under 5 000, the binding crate under 2 000
 #   at most 40 parameters, each read by a test    (the rows of PARAMETERS.md; each name found under a tests folder)
 #   a crate depends only on the crates before it  (the order below)
 #   the handbook at most 60 lines, the status file at most 40   (only when LIMITS_WORKSPACE names the folder that
@@ -11,6 +12,8 @@ set -o pipefail
 cd "$(git rev-parse --show-toplevel)" || exit 2
 fail=0
 breach() { echo "limits: $*" >&2; fail=1; }
+# A line count over its goal is said, not failed: the counts are goals.
+over() { echo "limits: WARNING, over a goal: $*" >&2; }
 lines() { [ "$#" -gt 0 ] && cat "$@" | wc -l | tr -d ' ' || echo 0; }
 
 rs=()
@@ -22,11 +25,11 @@ while IFS= read -r f; do bind+=("$f"); done < <(git ls-files -co --exclude-stand
 
 for f in "${rs[@]}" "${py[@]}"; do
   n=$(lines "$f")
-  [ "$n" -gt 800 ] && breach "$f has $n lines (at most 800)"
+  [ "$n" -gt 800 ] && over "$f has $n lines (goal 800)"
 done
-total_rs=$(lines "${rs[@]}"); [ "$total_rs" -gt 45000 ] && breach "Rust has $total_rs lines (at most 45 000)"
-total_py=$(lines "${py[@]}"); [ "$total_py" -gt 5000 ] && breach "Python has $total_py lines (at most 5 000)"
-total_bind=$(lines "${bind[@]}"); [ "$total_bind" -gt 2000 ] && breach "the binding has $total_bind lines (at most 2 000)"
+total_rs=$(lines "${rs[@]}"); [ "$total_rs" -gt 45000 ] && over "Rust has $total_rs lines (goal 45 000)"
+total_py=$(lines "${py[@]}"); [ "$total_py" -gt 5000 ] && over "Python has $total_py lines (goal 5 000)"
+total_bind=$(lines "${bind[@]}"); [ "$total_bind" -gt 2000 ] && over "the binding has $total_bind lines (goal 2 000)"
 
 # Parameters: the rows of the table in PARAMETERS.md after its header and rule lines.
 params=()

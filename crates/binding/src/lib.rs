@@ -3,7 +3,7 @@
 //!
 //! ```python
 //! import openmobisim as oms
-//! network = oms.Network.from_osm(path, **network_parameters)
+//! network = oms.Network.from_osm(path, region=None, **network_parameters)
 //! network = oms.Network.from_tables(nodes, links, **network_parameters)
 //! transit = oms.Transit.from_gtfs(path, network, **transit_parameters)
 //! demand  = oms.Demand.from_table(trips, classes, network, transit=None, **demand_parameters)
@@ -142,26 +142,30 @@ struct Network {
 
 #[pymethods]
 impl Network {
-    /// Read one `.osm.pbf` extract. Keywords: `capacity_per_lane` (veh/h per lane),
-    /// `bike_speed`, `walk_speed` (km/h), `osm_class_defaults` (only `None`: the reader's one
-    /// table, `crates/io-osm/README.md`).
+    /// Read one `.osm.pbf` extract, cut to `region` if given: a `(west, south, east, north)`
+    /// box or a sequence of `(lon, lat)` points of a polygon, in WGS84 degrees, lists and tuples
+    /// alike. Keywords:
+    /// `capacity_per_lane` (veh/h per lane), `bike_speed`, `walk_speed` (km/h),
+    /// `osm_class_defaults` (only `None`: the reader's one table, `crates/io-osm/README.md`).
     #[staticmethod]
-    #[pyo3(signature = (path, **network_parameters))]
+    #[pyo3(signature = (path, region=None, **network_parameters))]
     #[allow(clippy::needless_pass_by_value, reason = "pyo3 hands the arguments over by value")]
     fn from_osm(
         py: Python<'_>,
         path: PathBuf,
+        region: Option<&Bound<'_, PyAny>>,
         network_parameters: Option<&Bound<'_, PyDict>>,
     ) -> PyResult<Self> {
         let given = Given::read(Entry::Network, "Network.from_osm", network_parameters)?;
         let values = build_values(&given)?;
+        let region = keywords::region(region)?;
         if given.raw("osm_class_defaults").is_some_and(|v| !v.is_none()) {
             return Err(PyValueError::new_err(
                 "osm_class_defaults: the OSM reader reads one class table, the one in \
                  crates/io-osm/README.md; it takes no other, so the only value is None",
             ));
         }
-        let read = py.detach(|| openmobisim_io_osm::read(&path, values));
+        let read = py.detach(|| openmobisim_io_osm::read(&path, values, region.as_ref()));
         let (network, report) = read.map_err(|e| match e {
             OsmError::Io { .. } => PyOSError::new_err(e.to_string()),
             _ => value_error(&e),

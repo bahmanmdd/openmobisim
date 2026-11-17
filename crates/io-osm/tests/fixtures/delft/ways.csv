@@ -17,5 +17,5 @@ way,case,length_m,forward_modes,forward_lanes,forward_speed_km_h,backward_modes,
 7448310,one-way cycleway,781.3894238466918,bw,,,w,,,highway=cycleway|oneway=yes
 4239388,footway,232.24088369453722,w,,,w,,,highway=footway
 4348586,footway with bicycle=yes,76.26907807276406,bw,,,bw,,,highway=footway|bicycle=yes
-7465876,path,176.9284264134812,bw,,,bw,,,highway=path
+7465876,path,176.9284264134812,w,,,w,,,highway=path
 7482919,roundabout,36.24908280984973,c,1,50.0,-,,,highway=tertiary|junction=roundabout|bicycle=use_sidepath|foot=use_sidepath|lanes=1|maxspeed=50

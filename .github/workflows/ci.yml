@@ -45,6 +45,8 @@ jobs:
           over_twenty_seeds_each_queued_link_enters_at_its_capacity_within_3_percent
       - name: Delft read in release (under 3 s; release only)
         run: cargo test --release -p openmobisim-io-osm --test delft -- --ignored --nocapture
+      - name: Delft's region against version 1's tables, every difference traced (release only)
+        run: cargo test --release -p openmobisim-io-osm --test delft_tables -- --ignored --nocapture
       - name: Delft feed read in release, footpaths included (under 3 s; release only)
         run: cargo test --release -p openmobisim-io-gtfs --test delft -- --ignored --nocapture
       - name: The hand run's Parquet files read by pyarrow 26.0.1 against the hand numbers

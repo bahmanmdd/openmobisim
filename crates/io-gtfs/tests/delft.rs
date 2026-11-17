@@ -24,6 +24,7 @@ fn delft_reads_and_its_counts_match_gtfs_kit() {
     let (net, _) = openmobisim_io_osm::read(
         Path::new("../io-osm/tests/fixtures/delft/network.osm.pbf"),
         VALUES,
+        None,
     )
     .expect("the Delft network reads");
     let network_seconds = started.elapsed().as_secs_f64();

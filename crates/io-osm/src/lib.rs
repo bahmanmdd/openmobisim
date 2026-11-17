@@ -1,29 +1,30 @@
-//! Reading one OpenStreetMap extract into the network: every street way becomes directed links
-//! between junction nodes, each with the modes (car, bike, walk) the wiki's access rules give
-//! it in its own direction, and, for a car link, its lanes and free-flow speed.
+//! Reading one OpenStreetMap extract, or the part of it a region holds, into the network: three
+//! layers of one mode each, the car links, the bike links and the walk links, each from the ways
+//! its rules admit, split at its junctions, trimmed to its largest strongly connected
+//! component and contracted (version 1's reader). A car link carries its lanes, free-flow speed
+//! and capacity from its tags and its road class; every link its shape and road class, for
+//! drawing.
 //!
 //! | Module | What it holds |
 //! |---|---|
 //! | [`source`] | the input ([`Osm`]: nodes and ways as plain lists) and the errors |
 //! | [`pbf`] | the `.osm.pbf` decoder, which fills an [`Osm`] |
-//! | [`class`] | the street classes: default modes, the car's default speed and lanes |
-//! | [`access`] | who may use a way, in which direction |
-//! | [`car`] | a car link's lanes and free-flow speed from the tags |
+//! | [`tags`] | the road classes and their car defaults; who may use a way, which way; lanes, speeds |
+//! | [`region`] | a study area cut out of the extract |
 //! | [`geodesic`] | a segment's length on the WGS84 ellipsoid |
-//! | [`mod@import`] | splitting, measuring, the car network's strong component, the build |
+//! | [`mod@import`] | the three layers: splitting, the strong component, contraction, the build |
 //!
-//! A bike is a mode on the same links as a car and a walker: a cycleway is a link for bikes
-//! and walkers with no car field; a street a bike may ride carries bike in its mode set. Units
-//! are metric: metres, km/h (as the graph's rows take them).
+//! A bike is a mode with links of its own: a bike link runs where version 1's bike rules let a
+//! bike ride (a street, a cycleway, a footway with a `bicycle` tag), in the directions they give.
+//! Units are metric: metres, km/h, vehicles per hour.
 
-pub mod access;
-pub mod car;
-pub mod class;
 pub mod geodesic;
 pub mod import;
 pub mod pbf;
+pub mod region;
 pub mod source;
 mod strong;
+pub mod tags;
 
 use std::path::Path;
 
@@ -31,15 +32,21 @@ use openmobisim_graph::network::{BuildValues, Network};
 
 pub use import::{Report, network};
 pub use pbf::read_pbf;
+pub use region::{Region, RegionError};
 pub use source::{Osm, OsmError, OsmNode, OsmWay};
 
-/// Read the `.osm.pbf` file at `path` into the network, built with `values` (the caller's:
-/// `capacity_per_lane`, `bike_speed`, `walk_speed`, see `PARAMETERS.md`), and its counts.
+/// Read the `.osm.pbf` file at `path` (cut to `region`, if given) into the network, built with
+/// `values` (the caller's: `capacity_per_lane`, `bike_speed`, `walk_speed`, see
+/// `PARAMETERS.md`), and its counts.
 ///
 /// # Errors
 ///
-/// An [`OsmError`]: the file cannot be read or decoded, a tag cannot be read (naming the way),
-/// a way names a node the file lacks, no way is a street, or the builder refuses a row.
-pub fn read(path: &Path, values: BuildValues) -> Result<(Network, Report), OsmError> {
-    network(&read_pbf(path)?, values)
+/// An [`OsmError`]: the file cannot be read or decoded, no way is a street, or the builder
+/// refuses (no node left, a build value out of range).
+pub fn read(
+    path: &Path,
+    values: BuildValues,
+    region: Option<&Region>,
+) -> Result<(Network, Report), OsmError> {
+    network(&read_pbf(path)?, values, region)
 }

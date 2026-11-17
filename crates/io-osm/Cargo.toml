@@ -15,3 +15,7 @@ workspace = true
 openmobisim-types = { workspace = true }
 openmobisim-graph = { workspace = true }
 osmpbf = { workspace = true }
+
+[dev-dependencies]
+# Reading the gzip-compressed tables of the Delft comparison (`tests/delft_tables.rs`).
+flate2 = { workspace = true }

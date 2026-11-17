@@ -19,8 +19,9 @@
 //! car_drive_min = 1.0
 //! ...                          (one table per class, a key per column of the choice row)
 //!
-//! [network]                    source, nodes, links, fingerprint; osm_file, or nodes_file and
-//!                              links_file, each absent for a table given in memory
+//! [network]                    source, nodes, links, fingerprint; osm_file and region (the
+//!                              region the extract was cut to, absent for the whole extract), or
+//!                              nodes_file and links_file, each absent for a table given in memory
 //! [network.osm_report]         the OSM reader's counts; absent for a network from tables
 //! [network.repairs]            what the network's readers set right, by kind
 //! [demand]                     trips, trips_given (only when it differs from trips), classes,
@@ -64,6 +65,7 @@ use std::path::{Component, Path};
 
 use openmobisim_demand::demand::Demand;
 use openmobisim_graph::network::Network;
+use openmobisim_io_osm::{Region, Report};
 use openmobisim_loop::parameters::{COLUMNS, ChoiceModel};
 use openmobisim_loop::run::Run;
 use openmobisim_types::repairs::Repairs;
@@ -144,6 +146,7 @@ pub const KEYS: [(&str, &[&str]); 8] = [
             "links",
             "fingerprint",
             "osm_file",
+            "region",
             "nodes_file",
             "links_file",
             "osm_report",
@@ -188,6 +191,8 @@ enum Value<'a> {
     Str(&'a str),
     Flag(bool),
     Strs(Vec<&'a str>),
+    /// A region: `[west, south, east, north]` for a box, `[[lon, lat], …]` for a polygon.
+    Region(&'a Region),
 }
 
 /// The text being written, and the table it is in (for the name of a refused key).
@@ -227,6 +232,14 @@ impl Toml {
             Value::Flag(b) => b.to_string(),
             Value::Strs(v) => {
                 format!("[{}]", v.iter().map(|s| string(s)).collect::<Vec<_>>().join(", "))
+            }
+            Value::Region(Region::BBox { west, south, east, north }) => {
+                format!("[{west:?}, {south:?}, {east:?}, {north:?}]")
+            }
+            Value::Region(Region::Polygon(points)) => {
+                let points: Vec<String> =
+                    points.iter().map(|(lon, lat)| format!("[{lon:?}, {lat:?}]")).collect();
+                format!("[{}]", points.join(", "))
             }
         };
         self.text.push_str(&format!("{key} = {text}"));
@@ -404,8 +417,11 @@ fn inputs(
         ("links", Value::Int(u64::from(network.link_count()))),
         ("fingerprint", Value::Str(&fingerprint)),
     ])?;
-    let network_files = [("osm_file", f.osm), ("nodes_file", f.nodes), ("links_file", f.links)];
-    files(t, &network_files, folder)?;
+    files(t, &[("osm_file", f.osm)], folder)?;
+    if let Source::Osm(Report { region: Some(region), .. }) = given.source {
+        t.key("region", &Value::Region(region), None)?;
+    }
+    files(t, &[("nodes_file", f.nodes), ("links_file", f.links)], folder)?;
     if let Source::Osm(r) = given.source {
         t.table("network.osm_report");
         let n = |x: u32| Value::Int(u64::from(x));

@@ -1,5 +1,5 @@
-//! The `.osm.pbf` decoder: fills an [`Osm`] with the ways that carry a `highway` tag and the
-//! nodes they name, and nothing else.
+//! The `.osm.pbf` decoder: fills an [`Osm`] with the ways that carry a `highway` tag or are a
+//! ferry crossing (`route=ferry`) and the nodes they name, and nothing else.
 //!
 //! Two passes over the file, ways first: an extract's nodes are mostly buildings and
 //! coastlines, so learning which nodes the streets use before reading any keeps a city's
@@ -13,7 +13,8 @@ use osmpbf::{Element, ElementReader};
 
 use crate::source::{Osm, OsmError, OsmNode, OsmWay};
 
-/// Read the file at `path`: every way with a `highway` tag, and every node those ways name
+/// Read the file at `path`: every way with a `highway` tag or `route=ferry`, and every node those
+/// ways name
 /// (plain and dense nodes both), with their tags. Ways and nodes are sorted by id.
 ///
 /// # Errors
@@ -25,7 +26,7 @@ pub fn read_pbf(path: &Path) -> Result<Osm, OsmError> {
     reader(path)?
         .for_each(|element| {
             if let Element::Way(way) = element {
-                if way.tags().any(|(k, _)| k == "highway") {
+                if way.tags().any(|(k, v)| k == "highway" || (k, v) == ("route", "ferry")) {
                     ways.push(OsmWay {
                         id: way.id(),
                         nodes: way.refs().collect(),
