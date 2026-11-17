@@ -690,6 +690,12 @@ fn parameters(given: &Given<'_>, demand: &RustDemand) -> PyResult<Parameters> {
     })
 }
 
+/// `run`'s `window`, two seconds of the clock; a boolean in it is refused.
+fn window_pair(v: &Bound<'_, PyAny>) -> PyResult<(u32, u32)> {
+    let pair = v.extract()?;
+    keywords::not_boolean("window", v).map(|()| pair)
+}
+
 /// Run the loop on `network`, `demand` (built on that network and that transit) and `transit`
 /// over `window`, two seconds of the clock, and write `trips.parquet`, `links.parquet`,
 /// `iterations.parquet`, `routes.parquet` and `run.toml` into `out`. Keywords: the loop's rows of `PARAMETERS.md`.
@@ -701,7 +707,7 @@ fn run(
     network: &Bound<'_, Network>,
     demand: &Bound<'_, Demand>,
     transit: Option<&Bound<'_, Transit>>,
-    window: (u32, u32),
+    #[pyo3(from_py_with = window_pair)] window: (u32, u32),
     out: PathBuf,
     parameters: Option<&Bound<'_, PyDict>>,
 ) -> PyResult<Run> {

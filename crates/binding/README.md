@@ -233,6 +233,9 @@ degrees or metres; times of day in seconds of the clock.
   a class without coefficients or a coefficient row for no class, `osm_class_defaults` other
   than `None`), a missing column, a demand built on another network or transit: `ValueError`
   naming it.
+- A boolean given for a keyword or inside one (a coefficient, a second of `window`): no keyword
+  is a boolean, and Python would read `True` as 1; `ValueError` naming it, the value and what
+  to give instead (`seed: True is a boolean; this parameter is a number, give 1 instead`).
 - A table's Parquet file: a column of a type not read (not text or a number), a column
   name held twice, a codec other than snappy, a file that is not Parquet: `ValueError` naming
   the table, the file and the column or the codec; a file that cannot be opened or read, or a
@@ -374,10 +377,11 @@ Each expected value comes from outside the simulator:
   one-way for bikes: each `travel_time_s` is `ceil(g_o / w) + L / v + g_d / w` with `L`
   networkx's shortest length, within 1e-6 s (the derivation in the test).
 - `test_parameters.py`: every row of `PARAMETERS.md`, parsed, accepted at exactly its entry
-  point and refused at the others; the refusals by name; an extra column ignored and a mode name
-  read trimmed and lower-cased, an unknown one left out (`bicycle`: the trip dropped with no
-  mode), each counted and warned; a crate's message unchanged;
-  `bike_speed=30` gives 180 s for the 1 500 m that take 360 s at 15 km/h.
+  point and refused at the others; the refusals by name, a boolean's with what to give instead
+  (for a keyword of three entry points, a coefficient and the window); an extra column ignored
+  and a mode name read trimmed and lower-cased, an unknown one left out (`bicycle`: the trip
+  dropped with no mode), each counted and warned; a crate's message unchanged; `bike_speed=30`
+  gives 180 s for the 1 500 m that take 360 s at 15 km/h.
 - `test_defaults.py`: the five defaults held in `src/lib.rs`, each by a hand case run with no
   keyword: a 1 500 m ride in 360 s (15 km/h); a 1 000 m walk in 750 s (4.8 km/h); three cars
   through a two-lane link 1 s apart (1 800 veh/h per lane); a stop at 1 499 m reached and one at

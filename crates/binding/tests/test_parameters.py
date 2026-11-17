@@ -1,6 +1,6 @@
 """The keywords and the tables: every row of PARAMETERS.md (parsed here) is accepted at exactly one
-entry point and refused at the others; an unknown keyword, a missing column and a missing
-window are refused by name; a column the table does not read is ignored and a mode name read
+entry point and refused at the others; an unknown keyword, a missing column, a missing window
+and a boolean (with what to give instead) are refused by name; a column the table does not read is ignored and a mode name read
 trimmed and lower-cased, an unknown one left out, each counted and warned; a crate's error comes
 through unchanged; a non-default value takes effect.
 
@@ -181,3 +181,27 @@ def ride_seconds(tmp_path, **network_parameters):
 def test_bike_speed_30_halves_a_ride(tmp_path):
     assert ride_seconds(tmp_path / "15", bike_speed=15.0) == [360.0]
     assert ride_seconds(tmp_path / "30", bike_speed=30.0) == [180.0]
+
+
+@pytest.mark.parametrize("entry, name, number", [
+    ("Network.from_tables", "bike_speed", 15), ("Demand.from_table", "stop_walk_max", 1_000.0),
+    ("run", "seed", 1),
+])
+def test_a_boolean_is_refused_saying_what_to_give(tmp_path, entry, name, number):
+    call = entry_points(tmp_path)[entry]
+    for given, instead in ((True, 1), (False, 0)):
+        with pytest.raises(ValueError) as e:
+            call(**{name: given})
+        want = f"{name}: {given} is a boolean; this parameter is a number, give {instead} instead"
+        assert str(e.value) == want
+    call(**{name: number})  # a number, integer or float, is read as before
+
+
+def test_a_boolean_inside_coefficients_or_the_window_is_refused(tmp_path):
+    network = oms.Network.from_tables(NODES, LINKS)
+    demand = oms.Demand.from_table(TRIPS, ["all"], network)
+    with pytest.raises(ValueError, match=re.escape("coefficients['all'][8]: False is a boolean")):
+        oms.run(network, demand, window=(0, 3_600), out=tmp_path,
+                coefficients={"all": TIME_ONLY[:8] + (False,) + TIME_ONLY[9:]})
+    with pytest.raises(ValueError, match=re.escape("window[1]: True is a boolean")):
+        oms.run(network, demand, window=(0, True), out=tmp_path)

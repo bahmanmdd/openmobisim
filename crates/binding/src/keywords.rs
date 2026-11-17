@@ -7,7 +7,7 @@ use std::collections::BTreeMap;
 use pyo3::conversion::FromPyObjectOwned;
 use pyo3::exceptions::{PyTypeError, PyValueError};
 use pyo3::prelude::*;
-use pyo3::types::PyDict;
+use pyo3::types::{PyBool, PyDict, PyList, PyTuple};
 
 /// Where a keyword is read.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -104,13 +104,31 @@ impl<'py> Given<'py> {
     }
 
     /// The value given for `name` read as a `T`, else `default`. A value that cannot be read
-    /// as a `T` is a `ValueError` naming the keyword.
+    /// as a `T`, or is a boolean (in it or inside it), is a `ValueError` naming the keyword.
     pub(crate) fn get<T: FromPyObjectOwned<'py>>(&self, name: &str, default: T) -> PyResult<T> {
         match self.0.get(name) {
             None => Ok(default),
-            Some(value) => value
-                .extract::<T>()
-                .map_err(|e| PyValueError::new_err(format!("{name}: {}", Into::<PyErr>::into(e)))),
+            Some(value) => match value.extract::<T>() {
+                Ok(read) => not_boolean(name, value).map(|()| read),
+                Err(e) => Err(PyValueError::new_err(format!("{name}: {}", Into::<PyErr>::into(e)))),
+            },
         }
+    }
+}
+
+/// Refuse a boolean given for `name`, or inside it (a dict's value, a list's or tuple's item,
+/// named by its key or index): no parameter is a boolean, and Python reads `True` as 1.
+pub(crate) fn not_boolean(name: &str, v: &Bound<'_, PyAny>) -> PyResult<()> {
+    if let Ok(b) = v.cast::<PyBool>() {
+        let instead = u8::from(b.is_true());
+        let why = format!("{v} is a boolean; this parameter is a number, give {instead} instead");
+        return Err(PyValueError::new_err(format!("{name}: {why}")));
+    }
+    if let Ok(d) = v.cast::<PyDict>() {
+        d.iter().try_for_each(|(k, x)| not_boolean(&format!("{name}[{k:?}]"), &x))
+    } else if v.is_instance_of::<PyList>() || v.is_instance_of::<PyTuple>() {
+        v.try_iter()?.enumerate().try_for_each(|(i, x)| not_boolean(&format!("{name}[{i}]"), &x?))
+    } else {
+        Ok(())
     }
 }
