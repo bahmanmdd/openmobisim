@@ -1,7 +1,8 @@
 """The keywords and the tables: every row of PARAMETERS.md (parsed here) is accepted at exactly one
-entry point and refused at the others; an unknown keyword, a missing or unknown column and a
-missing window are refused by name; a crate's error comes through unchanged; a non-default value
-takes effect.
+entry point and refused at the others; an unknown keyword, a missing column and a missing
+window are refused by name; a column the table does not read is ignored and a mode name read
+trimmed and lower-cased, an unknown one left out, each counted and warned; a crate's error comes
+through unchanged; a non-default value takes effect.
 
 The entry points by the crate that reads each row (crates/binding/README.md): the graph's three
 build values at Network.from_osm and Network.from_tables (one entry point, the network's two
@@ -116,31 +117,56 @@ def test_an_unknown_keyword_and_a_missing_window_are_refused_by_name(tmp_path):
                 coefficients={"all": TIME_ONLY, "other": TIME_ONLY})
 
 
-def test_a_missing_or_unknown_column_is_refused_by_name():
+def test_a_missing_column_is_refused_and_another_ignored_counted_and_warned():
     with pytest.raises(ValueError, match="nodes: missing column y_m"):
         oms.Network.from_tables({k: v for k, v in NODES.items() if k != "y_m"}, LINKS)
-    with pytest.raises(ValueError, match="links: unknown column speed"):
-        oms.Network.from_tables(NODES, {**LINKS, "speed": [30.0]})
-    # Both kinds of position: longitude/latitude is told by its names, so x_m is the other one.
-    with pytest.raises(ValueError, match="nodes: unknown column x_m"):
-        oms.Network.from_tables({**NODES, "lon_deg": [4.0, 4.1], "lat_deg": [52.0, 52.0]}, LINKS)
+    with pytest.warns(UserWarning, match=re.escape("(columns_ignored; first: links: speed)")):
+        network = oms.Network.from_tables(NODES, {**LINKS, "speed": [30.0]})
+    assert network.repairs == {"columns_ignored": 1}
+    # Both kinds of position: longitude/latitude is told by its names, so x_m and y_m are the
+    # other kind's, ignored.
+    lon_lat = {**NODES, "lon_deg": [4.0, 4.1], "lat_deg": [52.0, 52.0]}
+    with pytest.warns(UserWarning, match=re.escape("first: nodes: x_m, nodes: y_m)")):
+        network = oms.Network.from_tables(lon_lat, LINKS)
+    assert network.repairs == {"columns_ignored": 2}
     network = oms.Network.from_tables(NODES, LINKS)
     with pytest.raises(ValueError, match="trips: missing column class_id"):
         oms.Demand.from_table({k: v for k, v in TRIPS.items() if k != "class_id"}, ["all"],
                               network)
-    with pytest.raises(ValueError, match="trips: trip ride: \"bicycle\" is not a mode"):
-        oms.Demand.from_table({**TRIPS, "modes": ["bicycle"]}, ["all"], network)
+
+
+def test_a_mode_name_is_read_trimmed_and_lower_cased_and_an_unknown_one_left_out():
+    network = oms.Network.from_tables(NODES, LINKS)
+    demand = oms.Demand.from_table({**TRIPS, "modes": [" Bike ; WALK"]}, ["all"], network)
+    assert demand.repairs == {}
+    with pytest.warns(UserWarning) as caught:
+        demand = oms.Demand.from_table({**TRIPS, "modes": ["bicycle"]}, ["all"], network)
+    shown = sorted(str(w.message) for w in caught)
+    assert shown == [
+        "Demand.from_table: 1 rows naming a mode that is not car, bike, walk or transit: the name "
+        "left out (mode_names_unknown; first: ride (bicycle))",
+        "Demand.from_table: 1 trips with no mode (given, or left): dropped (trips_without_mode; "
+        "first: ride)",
+        # The one trip dropped: nothing is left, said plainly.
+        "Demand.from_table: no trip is left: 1 given, all dropped (by reason: 1 trips_without_mode)",
+    ]
+    assert demand.repairs == {"mode_names_unknown": 1, "trips_without_mode": 1}
+    assert demand.trips_given == 1
 
 
 def test_a_crates_error_comes_through_unchanged(tmp_path):
-    # The graph crate's message for a link to an undeclared node (its BuildError::UnknownNode).
+    # The graph crate's message for a build value not above zero (its BuildError::BadValue).
     with pytest.raises(ValueError) as e:
-        oms.Network.from_tables(NODES, {**LINKS, "downstream": ["z"]})
-    assert str(e.value) == "link ab names node z, which is never declared"
-    # The demand crate's message for a trip of a class not given (DemandError).
+        oms.Network.from_tables(NODES, LINKS, bike_speed=-1.0)
+    assert str(e.value) == "bike_speed must be a finite number above zero, got -1"
+    # The demand crate's message for a position of another kind than the network's.
     network = oms.Network.from_tables(NODES, LINKS)
-    with pytest.raises(ValueError, match="ride"):
-        oms.Demand.from_table(TRIPS, ["other"], network)
+    lon_lat = {k: v for k, v in TRIPS.items() if not k.endswith(("_x_m", "_y_m"))}
+    lon_lat |= {"origin_lon_deg": [4.0], "origin_lat_deg": [52.0],
+                "destination_lon_deg": [4.1], "destination_lat_deg": [52.0]}
+    with pytest.raises(ValueError) as e:
+        oms.Demand.from_table(lon_lat, ["all"], network)
+    assert str(e.value).startswith("trip ride: a position of another kind than the network's")
     with pytest.raises(OSError):
         oms.Network.from_osm(tmp_path / "absent.osm.pbf")
 

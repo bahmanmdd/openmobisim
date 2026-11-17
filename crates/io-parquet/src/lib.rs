@@ -1,11 +1,14 @@
-//! Writing the three tables of a run (trips, links by time bin, iterations) as three Parquet
-//! files in a folder, and the run's record, `run.toml`, beside them, and nothing else.
+//! Writing the four tables of a run (trips, links by time bin, iterations, routes) as four
+//! Parquet files in a folder, and the run's record, `run.toml`, beside them; and reading them back.
 //!
 //! [`write`] takes the `Run` the loop returned, the `Network` and the `Demand` it ran on (for the
 //! external ids), what else the run was given ([`Given`]: the values its network, transit and
 //! demand were built with, the loop's parameters, the readers' counts), and a folder; it writes
-//! `trips.parquet`, `links.parquet`, `iterations.parquet` and `run.toml` there and returns their
-//! paths and the tables' row counts ([`Written`]). The record's layout is in `src/record.rs`.
+//! `trips.parquet`, `links.parquet`, `iterations.parquet`, `routes.parquet` and `run.toml` there
+//! and returns their paths and the tables' row counts ([`Written`]). [`read`] and
+//! [`read_iterations`] read back what the run's pages need of such a folder, refusing only a file
+//! that cannot be read and warning on the rest (`src/read.rs`). The record's layout is in
+//! `src/record.rs`.
 //! One row per
 //! entity, external ids as strings, every column named with its unit; null, never `NaN`, where
 //! the loop's `NaN` means "no value". Every time of day is a second of the clock (seconds after
@@ -30,17 +33,25 @@ use openmobisim_loop::parameters::Parameters;
 use openmobisim_loop::run::Run;
 use openmobisim_transit::timetable::Timetable;
 use openmobisim_types::ids::EntityId;
+use openmobisim_types::repairs::Repairs;
 use openmobisim_types::units::Speed;
 use parquet::arrow::ArrowWriter;
 
 mod input;
 mod iterations;
 mod links;
+mod read;
 mod record;
+mod routes;
 mod trips;
 
-pub use input::{Cells, InputTable, Kind, ReadError, read_table};
+pub use input::{Cells, InputTable, ReadError, read_table};
+pub use read::{
+    Links, OutputError, Routes, Tables, TripRows, agrees, read, read_iterations, read_links,
+    read_routes, read_trips,
+};
 pub use record::KEYS;
+pub use routes::RouteLeg;
 
 /// Where the network came from.
 #[derive(Clone, Copy, Debug)]
@@ -96,6 +107,14 @@ pub struct Given<'a> {
     pub transit: Option<Transit<'a>>,
     /// The loop's parameters.
     pub parameters: &'a Parameters,
+    /// What the network's readers set right (the OSM reader's, or the tables' reader's and the
+    /// network build's), by kind.
+    pub network_repairs: &'a Repairs,
+    /// How many trip rows were given, the dropped ones with them.
+    pub trips_given: u64,
+    /// What the demand's readers set right or dropped (the trips table's reader's and the
+    /// demand build's), by kind.
+    pub demand_repairs: &'a Repairs,
 }
 
 /// Why a write was refused or failed.
@@ -130,6 +149,9 @@ pub enum WriteError {
         /// The walk speed given, km/h.
         walk_km_h: f64,
     },
+    /// A journey taken rides a run, or calls at a stop, that the transit given does not have:
+    /// the trip.
+    NotTheRunsJourney(String),
     /// The parameters given are not the run's: a coefficient row per class, or the link bin of
     /// the run's links table, differs.
     NotTheRunsParameters(String),
@@ -170,6 +192,11 @@ impl fmt::Display for WriteError {
                 f,
                 "a bike speed of {bike_km_h} km/h and a walk speed of {walk_km_h} km/h are not \
                  the network's: not the build values it was built with"
+            ),
+            Self::NotTheRunsJourney(trip) => write!(
+                f,
+                "trip {trip} rides a run, or calls at a stop, the transit given does not have: \
+                 not the run's transit"
             ),
             Self::NotTheRunsParameters(why) => write!(f, "not the run's parameters: {why}"),
             Self::NotWritable { key, value } => {
@@ -232,13 +259,19 @@ pub struct Written {
     pub links: Table,
     /// `iterations.parquet`: one row per iteration.
     pub iterations: Table,
+    /// `routes.parquet`: one row per trip and leg of what each trip took.
+    pub routes: Table,
     /// `run.toml`: the record of the run, its path.
     pub record: PathBuf,
 }
 
-/// Write the three tables of `run` as `trips.parquet`, `links.parquet` and
-/// `iterations.parquet`, and its record as `run.toml`, in `folder`, created if missing; a file
-/// already there is replaced. Every refusal comes before anything is written.
+/// Write the four tables of `run` as `trips.parquet`, `links.parquet`, `iterations.parquet` and
+/// `routes.parquet`, and its record as `run.toml`, in `folder`, created if missing; a file
+/// already there is replaced. Every refusal comes before anything is written: the inputs
+/// checked against the run, every journey against the timetable given, the record and the three
+/// small tables built. Then the earlier record is removed, the three tables written, the routes
+/// table streamed from the run (only an input or output failure can stop it), and the record
+/// written last.
 ///
 /// # Errors
 ///
@@ -254,9 +287,12 @@ pub fn write(
 ) -> Result<Written, WriteError> {
     check(run, network, demand, given)?;
     replaces_no_input(&given.files, folder)?;
-    // Everything that can be refused is built first: the record and the three batches. The
-    // record is built again once the folder exists, since an input file's path is written
-    // relative to the folder's canonical path; the paths themselves are never refused.
+    // Everything that can be refused is checked or built first: the journeys against the
+    // timetable, the record and the three batches of trips, links and iterations. The routes
+    // table is streamed from the run once they are written; it refuses nothing. The record is
+    // built again once the folder exists, since an input file's path is written relative to the
+    // folder's canonical path; the paths themselves are never refused.
+    routes::check(run, demand, given.transit.map(|t| t.timetable))?;
     record::text(run, network, demand, given, None)?;
     let start = run.links.window().origin();
     let trips = trips::batch(&run.trips, demand, start)?;
@@ -276,6 +312,13 @@ pub fn write(
         trips: file(folder, "trips.parquet", &trips)?,
         links: file(folder, "links.parquet", &links)?,
         iterations: file(folder, "iterations.parquet", &iterations)?,
+        routes: routes::file(
+            &folder.join("routes.parquet"),
+            run,
+            demand,
+            network,
+            given.transit.map(|t| t.timetable),
+        )?,
         record: record_path,
     };
     std::fs::write(&written.record, record)?;
@@ -328,8 +371,8 @@ fn check(
     Ok(())
 }
 
-/// Refuse a write into `folder` whose `trips.parquet`, `links.parquet`, `iterations.parquet` or
-/// `run.toml` is one of the run's input files `files`, canonical paths compared: a file of those
+/// Refuse a write into `folder` whose `trips.parquet`, `links.parquet`, `iterations.parquet`,
+/// `routes.parquet` or `run.toml` is one of the run's input files `files`, canonical paths compared: a file of those
 /// names that does not exist yet (or a folder that does not exist yet) is no input. Paths are
 /// compared, not files: a hard link of an input under one of those names is not recognised.
 ///
@@ -342,7 +385,9 @@ fn check(
 /// [`WriteError::WouldReplaceInput`], naming the file.
 pub fn replaces_no_input(files: &Files<'_>, folder: &Path) -> Result<(), WriteError> {
     let inputs = [files.osm, files.nodes, files.links, files.trips, files.gtfs];
-    for name in ["trips.parquet", "links.parquet", "iterations.parquet", "run.toml"] {
+    for name in
+        ["trips.parquet", "links.parquet", "iterations.parquet", "routes.parquet", "run.toml"]
+    {
         let Ok(output) = std::fs::canonicalize(folder.join(name)) else { continue };
         if inputs.iter().flatten().any(|input| *input == output) {
             return Err(WriteError::WouldReplaceInput(output));

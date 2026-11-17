@@ -36,16 +36,6 @@ pub(crate) fn batch(links: &LinkBins, network: &Network) -> Result<RecordBatch, 
         let values = v.iter().zip(cars).map(|(x, &n)| (n > 0).then_some(offset + x.get()));
         column(values.collect::<Float64Array>())
     };
-    let schema = Schema::new(vec![
-        Field::new("link_id", DataType::Utf8, false),
-        Field::new("bin_start_s", DataType::UInt32, false),
-        Field::new("cars", DataType::UInt32, false),
-        Field::new("car_time_s", DataType::Float64, true),
-        Field::new("first_exit_s", DataType::Float64, true),
-        Field::new("last_exit_s", DataType::Float64, true),
-        Field::new("bikes", DataType::UInt32, false),
-        Field::new("walkers", DataType::UInt32, false),
-    ]);
     let columns = vec![
         column(StringArray::from_iter_values(
             links.links().iter().map(|l| network.link_ids().external(l.raw())),
@@ -60,5 +50,19 @@ pub(crate) fn batch(links: &LinkBins, network: &Network) -> Result<RecordBatch, 
         column(UInt32Array::from(links.bikes().to_vec())),
         column(UInt32Array::from(links.walkers().to_vec())),
     ];
-    Ok(RecordBatch::try_new(Arc::new(schema), columns)?)
+    Ok(RecordBatch::try_new(Arc::new(schema()), columns)?)
+}
+
+/// The file's columns, in order: the writer writes them and the reader asks for exactly them.
+pub(crate) fn schema() -> Schema {
+    Schema::new(vec![
+        Field::new("link_id", DataType::Utf8, false),
+        Field::new("bin_start_s", DataType::UInt32, false),
+        Field::new("cars", DataType::UInt32, false),
+        Field::new("car_time_s", DataType::Float64, true),
+        Field::new("first_exit_s", DataType::Float64, true),
+        Field::new("last_exit_s", DataType::Float64, true),
+        Field::new("bikes", DataType::UInt32, false),
+        Field::new("walkers", DataType::UInt32, false),
+    ])
 }

@@ -33,19 +33,6 @@ pub(crate) fn batch(rows: &[Iteration]) -> Result<RecordBatch, WriteError> {
     };
     let count =
         |f: fn(&Iteration) -> u64| column(UInt64Array::from_iter_values(rows.iter().map(f)));
-    let mut fields = vec![
-        Field::new("iteration", DataType::UInt32, false),
-        Field::new("mean_trip_time_s", DataType::Float64, true),
-        Field::new("finished", DataType::UInt64, false),
-        Field::new("unfinished", DataType::UInt64, false),
-        Field::new("without_alternative", DataType::UInt64, false),
-        Field::new("without_transit", DataType::UInt64, false),
-        Field::new("without_stop", DataType::UInt64, false),
-        Field::new("offered_share", DataType::Float64, true),
-        Field::new("switch_share", DataType::Float64, true),
-        Field::new("found_share", DataType::Float64, true),
-        Field::new("gap", DataType::Float64, true),
-    ];
     let mut columns = vec![
         column(UInt32Array::from_iter_values(rows.iter().map(|r| r.iteration))),
         nullable(|r| r.mean_trip_time),
@@ -59,10 +46,30 @@ pub(crate) fn batch(rows: &[Iteration]) -> Result<RecordBatch, WriteError> {
         nullable(|r| r.found_share),
         nullable(|r| r.gap),
     ];
-    for (k, name) in STAGES.iter().enumerate() {
-        fields.push(Field::new(*name, DataType::Float64, false));
+    for k in 0..STAGES.len() {
         columns
             .push(column(Float64Array::from_iter_values(rows.iter().map(|r| r.stage_seconds[k]))));
     }
-    Ok(RecordBatch::try_new(Arc::new(Schema::new(fields)), columns)?)
+    Ok(RecordBatch::try_new(Arc::new(schema()), columns)?)
+}
+
+/// The file's columns, in order: the writer writes them and the reader asks for exactly them.
+pub(crate) fn schema() -> Schema {
+    let mut fields = vec![
+        Field::new("iteration", DataType::UInt32, false),
+        Field::new("mean_trip_time_s", DataType::Float64, true),
+        Field::new("finished", DataType::UInt64, false),
+        Field::new("unfinished", DataType::UInt64, false),
+        Field::new("without_alternative", DataType::UInt64, false),
+        Field::new("without_transit", DataType::UInt64, false),
+        Field::new("without_stop", DataType::UInt64, false),
+        Field::new("offered_share", DataType::Float64, true),
+        Field::new("switch_share", DataType::Float64, true),
+        Field::new("found_share", DataType::Float64, true),
+        Field::new("gap", DataType::Float64, true),
+    ];
+    for name in STAGES {
+        fields.push(Field::new(name, DataType::Float64, false));
+    }
+    Schema::new(fields)
 }

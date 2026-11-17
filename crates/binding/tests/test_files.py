@@ -10,13 +10,20 @@ written by pyarrow 26.0.1 (another tool) from hand values, in place of a table i
    run.toml (a fingerprint hashes what the network or demand was built from).
 3. The column types read (strings Utf8 or LargeUtf8; integers Int32, Int64, UInt32, UInt64;
    floats Float64 or those integers), each in a file, give the fingerprints of the plain table;
-   an integer too large for its field (lanes 300, a UInt64 above 2^63 - 1) is refused.
+   so do a text column of numbers for a float, a Float32 and a float column of whole numbers
+   for an integer (the binding's cell rules).
 4. Compression: pyarrow's default (snappy, checked in the file's metadata) and none both read,
    with equal fingerprints; zstd refused by name.
-5. Refusals by name, one case each: a wrong type, a missing column, an extra column, a null
-   where none is allowed (a column of nulls alone included), a column name held twice (refused
-   in memory too, by pyarrow); a file that is not Parquet (ValueError); a file that does not
-   exist, a directory, an empty path and an unreadable file (OSError).
+5. Refusals by name, one case each: a type that is not text or a number (a boolean), a missing
+   column, a column name held twice (refused in memory too, by pyarrow); a file that is not
+   Parquet (ValueError); a file that does not exist, a directory, an empty path and an
+   unreadable file (OSError). Repaired, counted and warned once, one case each, by hand: an
+   integer too large for its field (lanes 300, a UInt64 above 2^63 - 1) and a null where none is
+   allowed (a column of nulls alone included) leave their row out (`links_unread`,
+   `trips_unread`, naming the row and the column: the network then has the hand run's 3 links
+   less those, the demand its 7 trips less those); an extra column is ignored
+   (`columns_ignored`). A node row whose x_m is null leaves node b out (`nodes_unread`) and every
+   link naming it: ab and st1 run a->b, st2 b->c, so all three (`links_to_no_node` 3).
 6. A column of nulls alone (pyarrow's `null` type) where nulls are allowed reads as the same
    table in memory: the same fingerprint, and the bike's hand 360 s.
 7. Files of more than 1 024 rows in several row groups (a 33 x 33 grid: 1 089 nodes, 4 224
@@ -28,6 +35,7 @@ files, and a link's bike permission is a string cell read like any other.
 """
 
 import os
+import re
 import time
 import tomllib
 from pathlib import Path
@@ -156,32 +164,12 @@ def test_snappy_and_no_compression_read_and_zstd_is_refused(tmp_path):
 
 NODES, LINKS, TRIPS = hand_tables()
 REFUSED = {  # case: (the table, its columns, the message)
-    "a string for a float": (
-        "links", lambda: {**LINKS, "length_m": ["1500", "2000", "1000"]},
-        "links: column length_m has type Utf8"),
-    "a Float32": (
-        "links", lambda: pa.table({**LINKS, "length_m": pa.array(LINKS["length_m"], pa.float32())}),
-        "links: column length_m has type Float32"),
-    "a float for an integer": (
-        "trips", lambda: {**TRIPS, "departure_s": [float(d) for d in TRIPS["departure_s"]]},
-        "trips: column departure_s has type Float64"),
-    "300 lanes": ("links", lambda: {**LINKS, "lanes": [None, 300, 1]}, "links: column lanes, row 1"),
-    "a UInt64 above 2^63 - 1": (
-        "trips", lambda: pa.table({**TRIPS, "departure_s": pa.array(
-            [2**63] + TRIPS["departure_s"][1:], pa.uint64())}),
-        "column departure_s, row 0: 9223372036854775808 is above"),
+    "a boolean for a float": (
+        "links", lambda: pa.table({**LINKS, "length_m": [True, False, True]}),
+        "links: column length_m has type Boolean"),
     "a missing column": (
         "trips", lambda: {k: v for k, v in TRIPS.items() if k != "class_id"},
         "trips: missing column class_id"),
-    "an extra column": ("links", lambda: {**LINKS, "speed": [30.0] * 3},
-                        "links: unknown column speed"),
-    "a null departure": (
-        "trips", lambda: {**TRIPS, "departure_s": [None] + TRIPS["departure_s"][1:]},
-        "trips: column departure_s, row 0"),
-    "a null mode set": ("links", lambda: {**LINKS, "modes": ["bike;walk", None, "car"]},
-                        "links: column modes, row 1"),
-    "a column of nulls alone where none is allowed": (
-        "links", lambda: pa.table({**LINKS, "modes": pa.nulls(3)}), "links: column modes, row 0"),
     "a column name twice": (
         "links", lambda: pa.table({k: v for k, v in LINKS.items() if k != "length_m"})
         .append_column("length_m", pa.array(LINKS["length_m"]))
@@ -190,16 +178,94 @@ REFUSED = {  # case: (the table, its columns, the message)
 }
 
 
+def from_file(path, what):
+    """The network (links) or the demand (trips) built from the file `path`."""
+    network = oms.Network.from_tables(NODES, LINKS)
+    if what == "trips":
+        return oms.Demand.from_table(path, ["commute", "leisure"], network)
+    return oms.Network.from_tables(NODES, path)
+
+
 @pytest.mark.parametrize("case", list(REFUSED))
 def test_a_table_file_is_refused_by_name(tmp_path, case):
     what, columns, match = REFUSED[case]
     path = write(tmp_path, f"{what}.parquet", columns())
-    network = oms.Network.from_tables(NODES, LINKS)
     with pytest.raises(ValueError, match=match):
-        if what == "trips":
-            oms.Demand.from_table(path, ["commute", "leisure"], network)
-        else:
-            oms.Network.from_tables(NODES, path)
+        from_file(path, what)
+
+
+READ_AS_PLAIN = {  # case: (the table, its columns)
+    "a string for a float": ("links", lambda: {**LINKS, "length_m": ["1500", "2000", "1000"]}),
+    "a Float32": (
+        "links", lambda: pa.table({**LINKS, "length_m": pa.array(LINKS["length_m"], pa.float32())})),
+    "a float for an integer": (
+        "trips", lambda: {**TRIPS, "departure_s": [float(d) for d in TRIPS["departure_s"]]}),
+}
+
+
+@pytest.mark.parametrize("case", list(READ_AS_PLAIN))
+def test_a_number_of_another_type_reads_as_the_plain_table(tmp_path, case):
+    what, columns = READ_AS_PLAIN[case]
+    tables = dict(zip(("nodes", "links", "trips"), hand_tables()))
+    plain = built(tmp_path, "plain", *tables.values())
+    tables[what] = write(tmp_path, f"{what}.parquet", columns())
+    assert built(tmp_path, "typed", *tables.values()) == plain
+
+
+REPAIRED = {  # case: (the table, its columns, the repair's key, its first ids, the counts left)
+    "300 lanes": ("links", lambda: {**LINKS, "lanes": [None, 300, 1]},
+                  "links_unread", ["st1 (lanes)"], {"links": 2, "trips": 7}),
+    "a UInt64 above 2^63 - 1": (
+        "trips", lambda: pa.table({**TRIPS, "departure_s": pa.array(
+            [2**63] + TRIPS["departure_s"][1:], pa.uint64())}),
+        "trips_unread", ["car1 (departure_s)"], {"links": 3, "trips": 6}),
+    "an extra column": ("links", lambda: {**LINKS, "speed": [30.0] * 3},
+                        "columns_ignored", ["links: speed"], {"links": 3, "trips": 7}),
+    "a null departure": (
+        "trips", lambda: {**TRIPS, "departure_s": [None] + TRIPS["departure_s"][1:]},
+        "trips_unread", ["car1 (departure_s)"], {"links": 3, "trips": 6}),
+    "a null mode set": ("links", lambda: {**LINKS, "modes": ["bike;walk", None, "car"]},
+                        "links_unread", ["st1 (modes)"], {"links": 2, "trips": 7}),
+}
+
+
+@pytest.mark.parametrize("case", list(REPAIRED))
+def test_a_cell_that_cannot_be_read_leaves_its_row_out_counted_and_warned(tmp_path, case):
+    what, columns, key, first, left = REPAIRED[case]
+    tables = dict(zip(("nodes", "links", "trips"), hand_tables()))
+    tables[what] = write(tmp_path, f"{what}.parquet", columns())
+    entry = "Demand.from_table" if what == "trips" else "Network.from_tables"
+    with pytest.warns(UserWarning) as caught:
+        network = oms.Network.from_tables(tables["nodes"], tables["links"])
+        demand = oms.Demand.from_table(tables["trips"], ["commute", "leisure"], network)
+    shown = [str(w.message) for w in caught if str(w.message).startswith(entry)]
+    assert len(shown) == 1 and shown[0].startswith(f"{entry}: 1 ")
+    assert shown[0].endswith(f"({key}; first: {', '.join(first)})")
+    assert (network if what == "links" else demand).repairs == {key: 1}
+    assert demand.trips_given == 7
+    result = oms.run(network, demand, window=(HAND_START, HAND_START + 3_600),
+                     out=tmp_path / "run", iteration_cap=1)
+    with open(result.record, "rb") as f:
+        record = tomllib.load(f)
+    assert {"links": record["network"]["links"], "trips": record["demand"]["trips"]} == left
+    # trips_given is written only when the demand dropped some: else it is the trips.
+    assert record["demand"].get("trips_given", record["demand"]["trips"]) == 7
+
+
+def test_a_node_row_that_cannot_be_read_leaves_the_node_and_its_links_out():
+    # Node b's x_m null: b left out; ab and st1 run a->b, st2 b->c: all three name b.
+    nodes = {**NODES, "x_m": [0.0, None, 2_500.0]}
+    with pytest.warns(UserWarning, match=re.escape("(nodes_unread; first: b (x_m))")):
+        network = oms.Network.from_tables(nodes, LINKS)
+    assert network.repairs == {"nodes_unread": 1, "links_to_no_node": 3}
+
+
+def test_a_column_of_nulls_alone_where_none_is_allowed_leaves_every_row_out(tmp_path):
+    path = write(tmp_path, "links.parquet", pa.table({**LINKS, "modes": pa.nulls(3)}))
+    with pytest.warns(UserWarning, match=r"Network.from_tables: 3 .*\(links_unread; first: ab \(modes\), "
+                                         r"st1 \(modes\), st2 \(modes\)\)"):
+        network = oms.Network.from_tables(NODES, path)
+    assert network.repairs == {"links_unread": 3}
 
 
 def test_the_same_column_name_twice_is_refused_in_memory_too():

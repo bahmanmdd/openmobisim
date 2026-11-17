@@ -1,4 +1,4 @@
-"""The hand run's three Parquet files, read by another tool (pyarrow 26.0.1), checked against the
+"""The hand run's four Parquet files, read by another tool (pyarrow 26.0.1), checked against the
 hand numbers written below: the column names in order, their Arrow types, their nullability,
 every value, no NaN anywhere, and every finished trip's arrival_s equal to its departure_s plus
 its travel_time_s. Every time of day is in seconds of the clock; the window starts at 07:00:00
@@ -45,6 +45,12 @@ ITERATIONS_SCHEMA = [
     ("offered_share", F64, True), ("switch_share", F64, True), ("found_share", F64, True),
     ("gap", F64, True),
 ] + [(s, F64, False) for s in STAGES]
+ROUTES_SCHEMA = [
+    ("trip_id", STR, False), ("leg", U32, False), ("kind", STR, False), ("seconds", F64, True),
+    ("links", pa.list_(STR), True), ("run_id", STR, True), ("board_stop", STR, True),
+    ("alight_stop", STR, True), ("board_s", U32, True), ("alight_s", U32, True),
+    ("from_stop", STR, True), ("to_stop", STR, True),
+]
 
 # Every time of day is in seconds of the clock: the window starts at 07:00:00, S = 25 200 s, and
 # each instant is S plus the seconds after the start derived in `hand_run.rs`.
@@ -91,8 +97,26 @@ ITERATIONS = [
 ]
 
 
+# Routes: per trip with an alternative, in id order, what it took: a walk gap of 0 s (every door
+# is at a node), its route's links in order, a walk gap of 0 s. The cars a->c by st1 then st2; the
+# bike, the walker and the late walker a->b by the path ab; `lost` (no alternative) no row. A
+# route's seconds are null (the loop keeps the trip's time, not the route's); no ride, no stops.
+# A route's links are a tuple below: the list read must be exactly those, in order.
+def legs(trip, kind, links):
+    gap = lambda k: (trip, k, "walk_gap", 0.0, N, N, N, N, N, N, N, N)
+    return [gap(0), (trip, 1, kind, N, links, N, N, N, N, N, N, N), gap(2)]
+
+
+ROUTES = (legs("bike", "bike", ("ab",)) + legs("car1", "car", ("st1", "st2"))
+          + legs("car2", "car", ("st1", "st2")) + legs("car3", "car", ("st1", "st2"))
+          + legs("walk", "walk", ("ab",)) + legs("walk-late", "walk", ("ab",)))
+
+
 def same(got, want):
-    """Equal, or both null, or floats within 1e-9 s; a list of wants: equal to any of them."""
+    """Equal, or both null, or floats within 1e-9 s; a list of wants: equal to any of them; a
+    tuple: a list of exactly those (the links of a route)."""
+    if isinstance(want, tuple):
+        return isinstance(got, list) and tuple(got) == want
     if isinstance(want, list):
         return any(same(got, w) for w in want)
     if want is None or got is None:
@@ -148,9 +172,10 @@ def main():
     check_arrivals(folder, errors)
     check(folder, "links.parquet", LINKS_SCHEMA, LINKS, errors)
     check(folder, "iterations.parquet", ITERATIONS_SCHEMA, ITERATIONS, errors)
+    check(folder, "routes.parquet", ROUTES_SCHEMA, ROUTES, errors)
     for e in errors:
         print(e)
-    print(f"pyarrow {pa.__version__}: {'FAILED' if errors else 'the three files match the hand run'}")
+    print(f"pyarrow {pa.__version__}: {'FAILED' if errors else 'the four files match the hand run'}")
     sys.exit(1 if errors else 0)
 
 

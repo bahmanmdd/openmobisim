@@ -1,4 +1,19 @@
 //! The run: the five stages iterated to the stopping rule, and its three tables.
+//!
+//! # Repairs
+//!
+//! What the window cannot hold is set right, never refused, and noted in [`Run::repairs`] by
+//! kind (the key, then what it completes "N …" with):
+//!
+//! | Key | What | What is done |
+//! |---|---|---|
+//! | `window_end_moved` | a window that is not a whole number of `link_bin` | its end moved up to the next whole bin; the id is the end used, a second of the clock ([`Run::window`]) |
+//! | `trips_outside_window` | a trip departing before the window's start or at or after its end | dropped |
+//! | `modes_after_window` | a trip whose walk to the network by car, bike or walk would end at or after the window's end (noted once per trip) | each such mode taken out of its set for this run |
+//! | `trips_after_window` | a trip left with no mode by the row above | dropped |
+//!
+//! A trip dropped is not run: it has no alternative, is in no count of the iterations table,
+//! and its row in [`Trips`] says so (`kept` false), so that the outputs leave it out.
 
 use core::fmt;
 use std::time::Instant;
@@ -12,7 +27,8 @@ use openmobisim_loading::link_times::LinkTimes;
 use openmobisim_loading::point_queue;
 use openmobisim_transit::timetable::Timetable;
 use openmobisim_types::ids::{EntityId, TripId, UserClassId};
-use openmobisim_types::mode::Mode;
+use openmobisim_types::mode::{Mode, ModeSet};
+use openmobisim_types::repairs::Repairs;
 use openmobisim_types::time::{Second, StepGrid, StepGridError};
 
 use crate::alternative::Alternative;
@@ -49,12 +65,8 @@ pub enum RunError {
         /// The column.
         column: &'static str,
     },
-    /// The window is not a whole number of bins, is empty, or runs past the clock.
+    /// The window is empty, or runs past the clock.
     Window(StepGridError),
-    /// A trip's departure is outside the window.
-    DepartureOutsideWindow(String),
-    /// A trip would reach the network, by this mode, at or after the window's end.
-    StartsAfterWindow(String, Mode),
     /// The choice model refused its coefficients or a cost.
     Choice(ChoiceError),
     /// The loading refused a vehicle.
@@ -75,10 +87,6 @@ impl fmt::Display for RunError {
                 write!(f, "class {class}: the coefficient of {column} is negative or not finite")
             }
             Self::Window(e) => write!(f, "the window: {e}"),
-            Self::DepartureOutsideWindow(t) => write!(f, "trip {t} departs outside the window"),
-            Self::StartsAfterWindow(t, m) => {
-                write!(f, "trip {t} would reach the network by {m} at or after the window's end")
-            }
             Self::Choice(e) => write!(f, "the choice: {e}"),
             Self::Load(e) => write!(f, "the loading: {e}"),
         }
@@ -119,6 +127,9 @@ pub struct Trips {
     pub cost: Vec<f64>,
     /// How many alternatives its set holds.
     pub alternatives: Vec<u32>,
+    /// Whether it was run: false for a trip the window could not hold, dropped (noted in
+    /// [`Run::repairs`]), which the outputs leave out.
+    pub kept: Vec<bool>,
 }
 
 /// What a run returns: the three tables, whether the rule stopped it, and the sets.
@@ -132,6 +143,12 @@ pub struct Run {
     pub iterations: Vec<Iteration>,
     /// Whether the stopping rule stopped the run (else the cap did).
     pub stopped_by_rule: bool,
+    /// The window run, `(start, end)`: the end moved up to a whole bin when it was not one.
+    pub window: (Second, Second),
+    /// The window as given, before any repair.
+    pub window_given: (Second, Second),
+    /// What the run set right instead of refusing (the module's table).
+    pub repairs: Repairs,
     sets: Vec<Vec<Alternative>>,
     chosen: Vec<Option<u32>>,
 }
@@ -148,17 +165,21 @@ impl Run {
     pub fn taken(&self, trip: TripId) -> Option<&Alternative> {
         self.chosen[trip.index()].map(|j| &self.sets[trip.index()][j as usize])
     }
+    /// How many trips the run dropped: `trips_outside_window` and `trips_after_window`.
+    #[must_use]
+    pub fn dropped(&self) -> u64 {
+        self.repairs.count("trips_outside_window") + self.repairs.count("trips_after_window")
+    }
 }
 
-/// Check the parameters, build the window and the context, and refuse the trips the loading
-/// could not take.
+/// Check the parameters, then build the window and the context.
 fn context<'a>(
     network: &'a Network,
     demand: &'a Demand,
     timetable: Option<&'a Timetable>,
     window: (Second, Second),
     parameters: &'a Parameters,
-) -> Result<Context<'a>, RunError> {
+) -> Result<(Context<'a>, Repairs), RunError> {
     if parameters.link_bin == 0 {
         return Err(RunError::LinkBinZero);
     }
@@ -182,29 +203,65 @@ fn context<'a>(
             }
         }
     }
-    let (start, end) = window;
-    let length = end.saturating_sub(start);
-    let grid = StepGrid::new(start, parameters.link_bin, length).map_err(RunError::Window)?;
+    let mut repairs = Repairs::new();
+    let grid = grid(window, parameters.link_bin, &mut repairs)?;
+    let (start, length) = (grid.origin(), grid.end().get() - grid.origin().get());
     let n = demand.trip_count() as usize;
-    let mut departure = Vec::with_capacity(n);
-    let mut class = Vec::with_capacity(n);
+    let (mut departure, mut class, mut modes) =
+        (Vec::with_capacity(n), Vec::with_capacity(n), Vec::with_capacity(n));
     for i in 0..n {
         let trip = TripId::from_index(i);
-        let name = || demand.trip_ids().external(trip.raw()).to_string();
-        if !grid.contains(demand.departure(trip)) {
-            return Err(RunError::DepartureOutsideWindow(name()));
-        }
+        let name = || demand.trip_ids().external(trip.raw()).to_owned();
         let since = f64::from(demand.departure(trip).saturating_sub(start));
-        for mode in [Mode::Car, Mode::Bike, Mode::Walk] {
-            let Some(o) = demand.origin_end(trip, mode) else { continue };
-            if since + (o.gap / network.walk_speed()).get() >= f64::from(length) {
-                return Err(RunError::StartsAfterWindow(name(), mode));
+        let mut open = demand.modes(trip);
+        if grid.contains(demand.departure(trip)) {
+            // Transit's walk to a stop is the search's (a journey within the timetable).
+            let late = |mode| {
+                mode != Mode::Transit
+                    && demand.origin_end(trip, mode).is_some_and(|o| {
+                        since + (o.gap / network.walk_speed()).get() >= f64::from(length)
+                    })
+            };
+            let kept = open.iter().filter(|&m| !late(m)).fold(ModeSet::EMPTY, ModeSet::with);
+            if kept != open {
+                let what = "trips that would reach the network by a mode at or after the window's end: the mode taken out";
+                repairs.note("modes_after_window", what, name());
+                open = kept;
             }
+            if open.is_empty() {
+                let what = "trips left with no mode the window can hold: dropped";
+                repairs.note("trips_after_window", what, name());
+            }
+        } else {
+            let what = "trips departing before the window's start or at or after its end: dropped";
+            repairs.note("trips_outside_window", what, name());
+            open = ModeSet::EMPTY;
         }
         departure.push(since);
         class.push(demand.class(trip).index());
+        modes.push(open);
     }
-    Ok(Context { network, demand, timetable, parameters, window: grid, departure, class })
+    let ctx =
+        Context { network, demand, timetable, parameters, window: grid, departure, class, modes };
+    Ok((ctx, repairs))
+}
+
+/// The window's grid of `link_bin` steps; a window that is not a whole number of them has its
+/// end moved up to the next whole bin, noted.
+fn grid(
+    window: (Second, Second),
+    link_bin: u32,
+    repairs: &mut Repairs,
+) -> Result<StepGrid, RunError> {
+    let (start, end) = window;
+    let mut length = end.saturating_sub(start);
+    let part = length % link_bin;
+    if part != 0 {
+        length = length.saturating_add(link_bin - part);
+        let what = "windows not a whole number of link_bin: the end moved up to the next whole bin";
+        repairs.note("window_end_moved", what, start.get().saturating_add(length).to_string());
+    }
+    StepGrid::new(start, link_bin, length).map_err(RunError::Window)
 }
 
 /// The trips table of a run's last iteration.
@@ -224,6 +281,7 @@ fn trips(
         finished: realised.finished.clone(),
         cost: Vec::with_capacity(n),
         alternatives: Vec::with_capacity(n),
+        kept: (0..n).map(|i| ctx.runs(i)).collect(),
     };
     for i in 0..n {
         let taken = chosen[i].map(|j| &sets[i][j as usize]);
@@ -242,9 +300,9 @@ fn trips(
 ///
 /// # Errors
 ///
-/// [`RunError`]: a parameter out of range, a window that is not whole bins, a trip departing
-/// outside the window or reaching the network at or after its end; the choice model's or the
-/// loading's refusals.
+/// [`RunError`]: a parameter out of range, an empty window or one running past the clock; the
+/// choice model's or the loading's refusals. What the window cannot hold is repaired and noted
+/// (the module's "Repairs").
 ///
 /// # Panics
 ///
@@ -257,7 +315,7 @@ pub fn run(
     window: (Second, Second),
     parameters: &Parameters,
 ) -> Result<Run, RunError> {
-    let ctx = context(network, demand, timetable, window, parameters)?;
+    let (ctx, repairs) = context(network, demand, timetable, window, parameters)?;
     let model = Model::new(parameters)?;
     let n = ctx.trip_count();
     let mut sets: Vec<Vec<Alternative>> = vec![Vec::new(); n];
@@ -291,5 +349,16 @@ pub fn run(
     }
     let realised = realised.expect("the cap is at least one iteration");
     let trips = trips(&ctx, &sets, &chosen, &realised);
-    Ok(Run { trips, links: loading.links, iterations, stopped_by_rule, sets, chosen })
+    let (window_given, window) = (window, (ctx.start(), ctx.window.end()));
+    Ok(Run {
+        trips,
+        links: loading.links,
+        iterations,
+        stopped_by_rule,
+        window,
+        window_given,
+        repairs,
+        sets,
+        chosen,
+    })
 }

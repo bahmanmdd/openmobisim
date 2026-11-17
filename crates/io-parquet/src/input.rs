@@ -1,17 +1,17 @@
 //! Reading one input table, nodes, links or trips, from a Parquet file: its column names and,
-//! by name, one column as cells of a kind (text, integer or float), null where the file holds
-//! null. Which columns a table holds, which may be null and what each row means is the caller's
-//! contract (the Python binding's, `crates/binding/README.md`), the same for a file as for a
-//! table in memory; this module decodes the file and checks each column's type against the kind
-//! asked for.
+//! by name, one column as cells of its own kind (text, integer or float), null where the file
+//! holds null. Which columns a table holds, which may be null, how a cell of one kind is read
+//! as a field of another (an integer id as text, a whole float as an integer) and what each row
+//! means is the caller's contract (the Python binding's, `crates/binding/README.md`), the same
+//! for a file as for a table in memory; this module decodes the file.
 //!
-//! Types read: text from `Utf8` or `LargeUtf8`; integers from `Int32`, `Int64`, `UInt32` or
-//! `UInt64` (a `UInt64` above 2⁶³ − 1 is refused as out of range); floats from `Float64` or one
-//! of those four integer types; a column of Arrow's `Null` type (pyarrow's type for a column of
-//! nulls alone) as nulls of any kind. Any other type is refused, naming the column and its type.
-//! A column name the file holds twice is refused by name.
-//! Compression read: none and snappy (pyarrow's default); any other codec is refused, naming it,
-//! before a page is decoded.
+//! Kinds read: text from `Utf8` or `LargeUtf8`; integers from `Int8`, `Int16`, `Int32`,
+//! `Int64`, `UInt8`, `UInt16`, `UInt32` or `UInt64` (as `i128`, so every value is exact);
+//! floats from `Float32` (widened exactly) or `Float64`; a column of Arrow's `Null` type
+//! (pyarrow's type for a column of nulls alone) as nulls. Any other type (a boolean, a date, a
+//! list) is refused, naming the column and its type. A column name the file holds twice is
+//! refused by name. Compression read: none and snappy (pyarrow's default); any other codec is
+//! refused, naming it, before a page is decoded.
 //!
 //! For bikes: a bike permission is text (`bike` in a link's or a trip's `modes`), read as any
 //! other text; nothing here knows a mode.
@@ -21,41 +21,22 @@ use std::fs::File;
 use std::path::Path;
 
 use arrow_array::cast::AsArray;
-use arrow_array::types::{Float64Type, Int32Type, Int64Type, UInt32Type, UInt64Type};
+use arrow_array::types::{
+    Float32Type, Float64Type, Int8Type, Int16Type, Int32Type, Int64Type, UInt8Type, UInt16Type,
+    UInt32Type, UInt64Type,
+};
 use arrow_array::{Array, ArrayRef, RecordBatch};
 use arrow_schema::{DataType, SchemaRef};
 use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 use parquet::basic::Compression;
 
-/// The kind of cell a column is read as.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Kind {
-    /// Text: `Utf8` or `LargeUtf8`.
-    Text,
-    /// An integer: `Int32`, `Int64`, `UInt32` or `UInt64`.
-    Integer,
-    /// A float: `Float64`, or one of the four integer types.
-    Float,
-}
-
-impl Kind {
-    /// The Arrow types read as this kind, for a message.
-    fn types(self) -> &'static str {
-        match self {
-            Self::Text => "a text column is Utf8 or LargeUtf8",
-            Self::Integer => "an integer column is Int32, Int64, UInt32 or UInt64",
-            Self::Float => "a float column is Float64, Int32, Int64, UInt32 or UInt64",
-        }
-    }
-}
-
-/// One column's cells in row order, `None` where the file holds null.
+/// One column's cells in row order, of the column's own kind, `None` where the file holds null.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Cells {
     /// Text cells.
     Text(Vec<Option<String>>),
-    /// Integer cells.
-    Integer(Vec<Option<i64>>),
+    /// Integer cells, exact.
+    Integer(Vec<Option<i128>>),
     /// Float cells.
     Float(Vec<Option<f64>>),
 }
@@ -71,23 +52,12 @@ pub enum ReadError {
     NoColumn(String),
     /// The file has two columns of this name.
     TwoColumns(String),
-    /// A column's type is not one read as the kind asked for.
+    /// A column's type is not one read: not text, an integer or a float.
     Type {
         /// The column.
         column: String,
-        /// Its Arrow type, as Arrow writes it (`Float32`, `Boolean`).
+        /// Its Arrow type, as Arrow writes it (`Boolean`, `Date32`).
         data_type: String,
-        /// The kind asked for.
-        kind: Kind,
-    },
-    /// A `UInt64` cell above 2⁶³ − 1.
-    OutOfRange {
-        /// The column.
-        column: String,
-        /// The row, from 0.
-        row: usize,
-        /// The value.
-        value: u64,
     },
     /// The Parquet or Arrow decoder's refusal: not a Parquet file, or a damaged one.
     Parquet(String),
@@ -103,13 +73,10 @@ impl fmt::Display for ReadError {
             ),
             Self::NoColumn(column) => write!(f, "the file has no column {column}"),
             Self::TwoColumns(column) => write!(f, "the file has two columns {column}"),
-            Self::Type { column, data_type, kind } => {
-                write!(f, "column {column} has type {data_type}; {}", kind.types())
-            }
-            Self::OutOfRange { column, row, value } => write!(
+            Self::Type { column, data_type } => write!(
                 f,
-                "column {column}, row {row}: {value} is above 9223372036854775807 (2^63 - 1), the \
-                 largest integer read"
+                "column {column} has type {data_type}; a column is text (Utf8, LargeUtf8), an \
+                 integer (Int8 to Int64, UInt8 to UInt64) or a float (Float32, Float64)"
             ),
             Self::Parquet(m) => write!(f, "not a readable Parquet file: {m}"),
         }
@@ -189,90 +156,64 @@ impl InputTable {
         self.schema.fields().iter().map(|f| f.name().clone()).collect()
     }
 
-    /// The column `name` read as cells of `kind`, in row order.
+    /// The column `name` as cells of its own kind, in row order.
     ///
     /// # Errors
     ///
     /// [`ReadError::NoColumn`] when there is no such column; [`ReadError::Type`] when its type
-    /// is not read as `kind`; [`ReadError::OutOfRange`] for a `UInt64` cell above 2⁶³ − 1.
-    pub fn column(&self, name: &str, kind: Kind) -> Result<Cells, ReadError> {
+    /// is not text, an integer or a float.
+    pub fn column(&self, name: &str) -> Result<Cells, ReadError> {
         let index =
             self.schema.index_of(name).map_err(|_| ReadError::NoColumn(name.to_string()))?;
         let data_type = self.schema.field(index).data_type();
         let arrays: Vec<&ArrayRef> = self.batches.iter().map(|b| b.column(index)).collect();
-        let text = |a: &&ArrayRef| -> Vec<Option<String>> {
-            let owned = |s: Option<&str>| s.map(str::to_string);
-            match data_type {
-                DataType::Utf8 => a.as_string::<i32>().iter().map(owned).collect(),
-                _ => a.as_string::<i64>().iter().map(owned).collect(),
-            }
-        };
         let rows = arrays.iter().map(|a| a.len()).sum();
-        match (kind, data_type) {
-            (Kind::Text, DataType::Null) => Ok(Cells::Text(vec![None; rows])),
-            (Kind::Integer, DataType::Null) => Ok(Cells::Integer(vec![None; rows])),
-            (Kind::Float, DataType::Null) => Ok(Cells::Float(vec![None; rows])),
-            (Kind::Text, DataType::Utf8 | DataType::LargeUtf8) => {
-                Ok(Cells::Text(arrays.iter().flat_map(text).collect()))
-            }
-            (Kind::Float, DataType::Float64) => {
-                let floats = arrays.iter().flat_map(|a| a.as_primitive::<Float64Type>().iter());
-                Ok(Cells::Float(floats.collect()))
-            }
-            (Kind::Integer, t) if is_integer(t) => {
-                Ok(Cells::Integer(integers(name, data_type, &arrays)?))
-            }
-            // An integer read as a float rounds to the nearest, as Python's `float(int)` does:
-            // exact up to 2⁵³.
-            #[allow(clippy::cast_precision_loss, reason = "rounded to the nearest, as Python does")]
-            (Kind::Float, t) if is_integer(t) => {
-                let integers = integers(name, data_type, &arrays)?;
-                Ok(Cells::Float(integers.into_iter().map(|v| v.map(|v| v as f64)).collect()))
-            }
-            _ => Err(ReadError::Type {
+        let owned = |s: Option<&str>| s.map(str::to_string);
+        Ok(match data_type {
+            DataType::Null => Cells::Float(vec![None; rows]),
+            DataType::Utf8 => Cells::Text(
+                arrays.iter().flat_map(|a| a.as_string::<i32>().iter().map(owned)).collect(),
+            ),
+            DataType::LargeUtf8 => Cells::Text(
+                arrays.iter().flat_map(|a| a.as_string::<i64>().iter().map(owned)).collect(),
+            ),
+            DataType::Float32 => Cells::Float(
+                arrays
+                    .iter()
+                    .flat_map(|a| a.as_primitive::<Float32Type>().iter().map(|v| v.map(f64::from)))
+                    .collect(),
+            ),
+            DataType::Float64 => Cells::Float(
+                arrays.iter().flat_map(|a| a.as_primitive::<Float64Type>().iter()).collect(),
+            ),
+            t => Cells::Integer(integers(t, &arrays).ok_or_else(|| ReadError::Type {
                 column: name.to_string(),
                 data_type: data_type.to_string(),
-                kind,
-            }),
-        }
+            })?),
+        })
     }
 }
 
-/// Whether `data_type` is one of the four integer types read.
-fn is_integer(data_type: &DataType) -> bool {
-    matches!(data_type, DataType::Int32 | DataType::Int64 | DataType::UInt32 | DataType::UInt64)
-}
-
-/// The cells of an integer column of `data_type` (one of the four) as `i64`: a `UInt64` above
-/// 2⁶³ − 1 is refused.
-fn integers(
-    name: &str,
-    data_type: &DataType,
-    arrays: &[&ArrayRef],
-) -> Result<Vec<Option<i64>>, ReadError> {
-    let mut cells = Vec::with_capacity(arrays.iter().map(|a| a.len()).sum());
-    for a in arrays {
-        match data_type {
-            DataType::Int32 => {
-                cells.extend(a.as_primitive::<Int32Type>().iter().map(|v| v.map(i64::from)));
-            }
-            DataType::Int64 => cells.extend(a.as_primitive::<Int64Type>().iter()),
-            DataType::UInt32 => {
-                cells.extend(a.as_primitive::<UInt32Type>().iter().map(|v| v.map(i64::from)));
-            }
-            _ => {
-                for value in a.as_primitive::<UInt64Type>().iter() {
-                    let cell = value.map(|v| {
-                        i64::try_from(v).map_err(|_| ReadError::OutOfRange {
-                            column: name.to_string(),
-                            row: cells.len(),
-                            value: v,
-                        })
-                    });
-                    cells.push(cell.transpose()?);
-                }
-            }
-        }
+/// The cells of an integer column of `data_type`, exact; `None` when it is not an integer type.
+fn integers(data_type: &DataType, arrays: &[&ArrayRef]) -> Option<Vec<Option<i128>>> {
+    fn all<T: arrow_array::ArrowPrimitiveType>(arrays: &[&ArrayRef]) -> Vec<Option<i128>>
+    where
+        T::Native: Into<i128>,
+    {
+        arrays
+            .iter()
+            .flat_map(|a| a.as_primitive::<T>().iter().map(|v| v.map(Into::into)))
+            .collect()
     }
-    Ok(cells)
+    Some(match data_type {
+        DataType::Int8 => all::<Int8Type>(arrays),
+        DataType::Int16 => all::<Int16Type>(arrays),
+        DataType::Int32 => all::<Int32Type>(arrays),
+        DataType::Int64 => all::<Int64Type>(arrays),
+        DataType::UInt8 => all::<UInt8Type>(arrays),
+        DataType::UInt16 => all::<UInt16Type>(arrays),
+        DataType::UInt32 => all::<UInt32Type>(arrays),
+        DataType::UInt64 => all::<UInt64Type>(arrays),
+        _ => return None,
+    })
 }

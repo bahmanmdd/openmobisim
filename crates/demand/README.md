@@ -77,14 +77,28 @@ a node by straight line, ties to the lower node id; the gap is that straight lin
   from its own row alone, and the results are filed in id order.
 
 ## Errors
-`build` refuses, never repairs, with a `DemandError` naming the trip, class or stop by
-external id, the first fault in this order: `stop_walk_max` not a finite number at or above
-zero; a class given twice; a trip given twice; then trip by trip in id order, a class not
-given, an empty mode set, a position of another kind than the first trip's origin,
-a position the network cannot take (not of the network's kind: longitude/latitude on a
-network built in metres, or metres on a network built from longitude/latitude; out of the
-projectable range; or a coordinate that is not finite), a mode of the set that no link allows
-(transit: walking); then a stop when no link allows walking.
+`build` refuses only what no demand can be built from, with a `DemandError` naming the trip:
+`stop_walk_max` not a finite number at or above zero; then trip by trip in id order, a
+position of another kind than the first trip's origin (`MixedKinds`), or of another kind than
+the network's (`PositionNotTaken`: longitude/latitude on a network built in metres, or metres
+on a network built from longitude/latitude; no projection converts them).
+
+## Repairs
+Every other row is used, set right or dropped, and noted in `Demand::repairs` by kind, with its
+count and the first five ids; `Demand::trips_given` counts the rows given. A trip dropped is not
+in the demand (no id, in no output).
+
+| Key | Rows | What is done |
+|---|---|---|
+| `classes_repeated` | a class given twice | read once |
+| `trips_repeated` | a trip id given twice | the first row given kept, the others dropped |
+| `trips_of_unknown_class` | a trip naming a class not given | dropped |
+| `trips_unplaced` | a coordinate not finite, or a longitude/latitude not projectable | dropped |
+| `trips_without_car_network`, `trips_without_bike_network`, `trips_without_walk_network`, `trips_without_transit_network` | a mode of the set that no link allows (transit: walking, by which its ends are linked) | the mode taken out of the set |
+| `trips_without_mode` | no mode, given so or left so | dropped |
+
+With a timetable and no link allowing walking, no stop is linked (every transit trip has lost
+transit above); `stop_count` is still the timetable's.
 
 ## Bikes
 A bike's end is its own: the nearest node with a link a bike may use (its mode set holds
@@ -104,7 +118,8 @@ egress lists equal to networkx's bounded Dijkstra by length plus the gaps on a 2
 with one-way walk links, 6 stops off the nodes and 50 trip ends (`tests/networkx_access.py`
 writes the fixture; networkx 3.7; seconds within 1e-9 of metres over 4.8 km/h); the gaps by
 hand (30 m + 1 000 m + 40 m = 1 070 m in 802.5 s at 4.8 km/h; at `stop_walk_max` 1 500 m a
-walk of 1 500 m in, 1 501 m out); the refusals, each naming its row; the fingerprint as a property (`tests/fingerprint.rs`): two
+walk of 1 500 m in, 1 501 m out); each repair by hand, counted and naming its trip, and the
+refusals; the fingerprint as a property (`tests/fingerprint.rs`): two
 builds of the same rows equal, and one value changed, all else equal, in each of the 9 input
 columns (class id; trip id, class, departure, modes, origin x and y, destination x and y), each
 a named case, changes it; the same rows in reverse order give the same fingerprint; one class

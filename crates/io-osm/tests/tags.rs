@@ -1,5 +1,5 @@
 //! The tags against the OpenStreetMap wiki, by hand: who may use a way and in which direction,
-//! the lanes and the free-flow speed of each car direction, and the values the reader refuses.
+//! the lanes and the free-flow speed of each car direction, and the values the reader repairs.
 //!
 //! Each case is a two-node street (way 100 from node 1 to node 2, about 69 m) with the tags
 //! the wiki page names, and a two-way street back (way 900) so that cars can always return; the expected modes, lanes and speeds are read off the page. Directions:
@@ -11,7 +11,6 @@
 mod common;
 
 use common::{close, direction, read, street};
-use openmobisim_io_osm::OsmError;
 use openmobisim_io_osm::car::KM_PER_MILE;
 use openmobisim_io_osm::class::{CLASSES, class_of};
 
@@ -170,36 +169,101 @@ fn maxspeed_by_direction_is_read_first() {
     assert_eq!(car(&[("highway", "secondary")]).0.unwrap().1, 50.0);
 }
 
+/// The way's repairs, as (key, count, first ids).
+fn repairs(tags: &[(&str, &str)]) -> Vec<(&'static str, u64, Vec<String>)> {
+    let (_, report) = read(&street(2, tags)).expect("readable");
+    report.repairs.kinds().iter().map(|k| (k.key, k.count, k.first.clone())).collect()
+}
+
 #[test]
-fn a_tag_the_reader_cannot_read_is_an_error_naming_the_way() {
-    // Bug fixed: nothing is silently replaced by a default.
-    let refused = |extra: (&str, &str)| {
-        let err = read(&street(2, &[("highway", "residential"), extra])).unwrap_err();
-        match &err {
-            OsmError::Tag { way: 100, key, value, .. } => {
-                assert_eq!((key.as_str(), value.as_str()), extra);
-            }
-            other => panic!("{extra:?}: {other:?}"),
-        }
-        assert!(err.to_string().contains("way 100"), "{err}");
-    };
-    for value in ["none", "walk", "NL:urban", "50;30", "fast", "0", "-20", "50 km/h"] {
-        refused(("maxspeed", value));
+fn a_tag_the_reader_cannot_read_is_read_as_absent_and_noted() {
+    // A residential street: 30 km/h, 1 lane each way, cars, bikes and walkers both ways.
+    let way = vec!["way 100".to_string()];
+    fn residential<'a>(extra: (&'a str, &'a str)) -> [(&'a str, &'a str); 2] {
+        [("highway", "residential"), extra]
     }
-    refused(("maxspeed:forward", "signals"));
-    refused(("lanes", "two"));
-    refused(("lanes", "2;3"));
-    refused(("lanes:forward", "1.5"));
-    refused(("oneway", "true"));
-    refused(("bicycle", "maybe"));
-    refused(("access", "residents"));
-    let lanes = read(&street(2, &[("highway", "primary"), ("lanes", "2"), ("lanes:forward", "2")]));
-    assert!(matches!(lanes, Err(OsmError::Lanes { way: 100, .. })), "{lanes:?}");
+    for value in ["none", "walk", "NL:urban", "50;30", "fast", "0", "-20", "50 km/h"] {
+        let tags = residential(("maxspeed", value));
+        assert_eq!(car(&tags), (Some((1, 30.0)), Some((1, 30.0))), "{value}");
+        assert_eq!(repairs(&tags), [("speeds_defaulted", 1, way.clone())], "{value}");
+    }
+    let tags = residential(("maxspeed:forward", "signals"));
+    assert_eq!(car(&tags).0, Some((1, 30.0)));
+    assert_eq!(repairs(&tags), [("speeds_defaulted", 1, way.clone())]);
+    for extra in [("lanes", "two"), ("lanes", "2;3"), ("lanes:forward", "1.5")] {
+        assert_eq!(car(&residential(extra)), (Some((1, 30.0)), Some((1, 30.0))), "{extra:?}");
+        assert_eq!(repairs(&residential(extra)), [("tags_unread", 1, way.clone())], "{extra:?}");
+    }
+    for extra in
+        [("oneway", "true"), ("oneway", "no;yes"), ("bicycle", "maybe"), ("access", "yes|no")]
+    {
+        assert_eq!(modes(&residential(extra)), pair("cbw", "cbw"), "{extra:?}");
+        assert_eq!(repairs(&residential(extra)), [("tags_unread", 1, way.clone())], "{extra:?}");
+    }
+    // A restricted group is read as `private`: closed, nothing noted.
+    for extra in [("access", "residents"), ("access", "employees"), ("access", "emergency")] {
+        assert_eq!(modes(&residential(extra)), pair("-", "-"), "{extra:?}");
+        assert!(repairs(&residential(extra)).is_empty(), "{extra:?}");
+    }
+    assert_eq!(modes(&residential(("foot", "emergency"))), pair("cb", "cb"));
+    // A list: the most restrictive known part decides.
+    assert_eq!(modes(&residential(("motor_vehicle", "destination;permit"))), pair("bw", "bw"));
+    assert_eq!(modes(&residential(("access", "private;customers"))), pair("-", "-"));
+    assert_eq!(modes(&residential(("bicycle", "optional_sidepath;maybe"))), pair("cbw", "cbw"));
+    // Lane tags that leave a side no lane, or a total not the sum: repaired, noted.
+    let lanes = [("highway", "primary"), ("lanes", "2"), ("lanes:forward", "2")];
+    assert_eq!(car(&lanes), (Some((2, 60.0)), Some((1, 60.0))));
+    assert_eq!(repairs(&lanes), [("lanes_repaired", 1, way.clone())]);
     let sum =
         [("highway", "primary"), ("lanes", "4"), ("lanes:forward", "2"), ("lanes:backward", "1")];
-    assert!(matches!(read(&street(2, &sum)), Err(OsmError::Lanes { way: 100, .. })));
+    assert_eq!(car(&sum), (Some((2, 60.0)), Some((1, 60.0))));
+    assert_eq!(repairs(&sum), [("lanes_repaired", 1, way.clone())]);
+    let none = [("highway", "primary"), ("lanes:forward", "0")];
+    assert_eq!(car(&none).0, Some((1, 60.0)));
+    assert_eq!(repairs(&none), [("lanes_repaired", 1, way)]);
     // A way without cars does not read the car tags.
-    assert!(read(&street(2, &[("highway", "footway"), ("maxspeed", "walk")])).is_ok());
+    assert!(repairs(&[("highway", "footway"), ("maxspeed", "walk")]).is_empty());
+    assert!(
+        repairs(&[("highway", "cycleway"), ("motor_vehicle", "agricultural;whatever")]).is_empty()
+    );
+}
+
+/// A value naming a mode or a group of vehicles is "only these": on a residential street (cars,
+/// bikes and walkers both ways by default), `access=foot` leaves walkers alone, `bicycle` bikes
+/// alone, `vehicle` cars and bikes, `motor_vehicle` cars, `bus` (no mode of ours) none;
+/// `foot;bicycle` is one group, walkers and bikes; `access=bus;destination` closes (the group
+/// refuses every mode, the most restrictive part). `bicycle=separate` and `foot=separate` are
+/// `use_sidepath`: that mode closed. `access=visitors` admits, as `customers`. `construction`
+/// and `service` are not read: noted, the default kept. A lane value on a way no car drives
+/// (`motor_vehicle=no`, `lanes=two`) is not read, so not noted. Nothing else noted.
+#[test]
+fn a_mode_or_vehicle_group_admits_it_alone() {
+    let residential =
+        |key: &'static str, value: &'static str| [("highway", "residential"), (key, value)];
+    for (value, want) in [
+        ("foot", "w"),
+        ("bicycle", "b"),
+        ("vehicle", "cb"),
+        ("motor_vehicle", "c"),
+        ("bus", "-"),
+        ("foot;bicycle", "bw"),
+        ("bus;destination", "-"),
+        ("visitors", "cbw"),
+    ] {
+        let tags = residential("access", value);
+        assert_eq!(modes(&tags), pair(want, want), "{value}");
+        assert!(repairs(&tags).is_empty(), "{value}");
+    }
+    assert_eq!(modes(&residential("bicycle", "separate")), pair("cw", "cw"));
+    assert_eq!(modes(&residential("foot", "separate")), pair("cb", "cb"));
+    for value in ["construction", "service"] {
+        let tags = residential("access", value);
+        assert_eq!(modes(&tags), pair("cbw", "cbw"), "{value}");
+        assert_eq!(repairs(&tags), [("tags_unread", 1, vec!["way 100".to_string()])], "{value}");
+    }
+    let no_cars = [("highway", "residential"), ("motor_vehicle", "no"), ("lanes", "two")];
+    assert_eq!(modes(&no_cars), pair("bw", "bw"));
+    assert!(repairs(&no_cars).is_empty());
 }
 
 #[test]

@@ -1,30 +1,38 @@
-//! `run_file(record, *, out)`: a run's record, `run.toml`, run again.
+//! A run's record, `run.toml`, read back: `run_file(record, *, out)` runs it again;
+//! `Run.open(record, network=None, demand=None, transit=None)` opens the finished run beside it.
 //!
-//! The record is read with Python's standard `tomllib`. Every key and table it holds must be one
-//! the writer writes (`openmobisim_io_parquet::KEYS`; a coefficient table's keys are the columns
-//! of the choice row): any other is refused by name. Read: `format` (only 1, when present),
-//! `window_start_s` and `window_end_s` (required), `[parameters]` (an absent row is the default
+//! The record is read with Python's standard `tomllib`. A key or table under `[parameters]`
+//! the writer never writes is refused by name (a parameter mistyped would run on its default);
+//! one elsewhere is ignored, all of them named in one `UserWarning` (`openmobisim_io_parquet::KEYS`;
+//! a coefficient table's keys are the columns of the choice row; a `repairs` table's keys are
+//! not checked); `stop_walk_max` or `transfer_walk_max` without `[transit]` is ignored, warned.
+//! Read: `format` (only 1, when present),
+//! `window_start_s` and `window_end_s` (required; `run_file` runs from `window_end_given_s`
+//! where the record has it, the end given before the run moved it to a whole bin), `[parameters]` (an absent row is the default
 //! of `PARAMETERS.md`; each class's coefficients by column name, all sixteen), the input files
 //! (`[network] osm_file`, or `nodes_file` and `links_file`; `[demand] trips_file`; `[transit]
-//! gtfs_file`), `[demand] classes`, and the three fingerprints. Known and not read: the version,
-//! the counts, the readers' reports, `[result]`. Each file's path is joined to the folder of the
-//! record's canonical path (the folder it was written in). The network, the transit and the
-//! demand are built by the same functions as `Network.from_osm` or `Network.from_tables`,
+//! gtfs_file`), `[demand] classes`, and the three fingerprints; for `Run.open` also `[result]
+//! stopped_by_rule` (absent: the run's end is not recorded, which the pages say) and
+//! `[result.repairs]`. Known and not read: the version, the counts, the readers' reports. Each
+//! file's path is joined to the folder of the record's canonical path (the folder it was written
+//! in). Both build their inputs by one function, [`inputs`]: the network, the transit and the
+//! demand by the same functions as `Network.from_osm` or `Network.from_tables`,
 //! `Transit.from_gtfs` and `Demand.from_table`, each given the rows of `[parameters]` its entry
-//! point reads, and the run by `run` with the rest, written into `out`. An input whose
-//! fingerprint differs from the record's raises a `UserWarning` naming it and both fingerprints,
-//! and the run goes on: its new record carries the new fingerprint.
+//! point reads; `run_file` then runs `run` with the rest, written into `out`, and `Run.open`
+//! reads the run's tables. An input whose fingerprint differs from the record's, or that the
+//! record has no fingerprint of, raises a `UserWarning` naming it (and both fingerprints), and
+//! the work goes on: `run_file`'s new record carries the new fingerprint.
 //!
 //! For bikes: `bike_speed` is read from `[parameters]` and given to the network as at
 //! `Network.from_tables`; the links' and trips' bike permissions come with their files.
 
-use std::ffi::CString;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use openmobisim_io_parquet::KEYS;
 use openmobisim_loop::parameters::COLUMNS;
 use pyo3::conversion::FromPyObjectOwned;
-use pyo3::exceptions::{PyOSError, PyUserWarning, PyValueError};
+use pyo3::exceptions::{PyOSError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyBool, PyDict, PyList};
 
@@ -47,18 +55,33 @@ fn table<'py>(toml: &Bound<'py, PyDict>, name: &str) -> PyResult<Option<Bound<'p
     Ok(Some(at))
 }
 
-/// Refuse any key or table of `toml` the writer never writes: the tables and keys of `KEYS`,
-/// and in each class's coefficient table the columns of the choice row.
+/// The keys and tables of `toml` the writer never writes: under `[parameters]` refused by name
+/// (in each class's coefficient table, a column that is not one of the choice row's); elsewhere
+/// ignored, all named in one `UserWarning`. A `repairs` table's keys are kinds of repair, not
+/// checked.
 fn known(toml: &Bound<'_, PyDict>) -> PyResult<()> {
+    let mut ignored = Vec::new();
     for (name, keys) in KEYS {
         let Some(t) = table(toml, name)? else { continue };
         for key in t.keys() {
             let key: String = key.extract()?;
-            if !keys.contains(&key.as_str()) {
-                let at = if name.is_empty() { String::new() } else { format!(" [{name}]") };
+            if keys.contains(&key.as_str()) {
+                continue;
+            }
+            let at = if name.is_empty() { String::new() } else { format!(" [{name}]") };
+            if name == "parameters" {
                 return Err(refuse(&format!("{key} is not a key of the record{at}")));
             }
+            ignored.push(format!("{key}{at}"));
         }
+    }
+    if !ignored.is_empty() {
+        let message = format!(
+            "run.toml: {} keys the writer never writes, ignored: {}",
+            ignored.len(),
+            ignored.join(", ")
+        );
+        crate::warn(toml.py(), &[message])?;
     }
     let Some(classes) = table(toml, "parameters.coefficients")? else { return Ok(()) };
     for (class, row) in classes.iter() {
@@ -115,8 +138,9 @@ fn required<'py, T: FromPyObjectOwned<'py>>(
 
 /// The keywords of each entry point from `[parameters]`: the rows each reads, `coefficients` as
 /// the dict from class to its sixteen in the order of the choice row. A boolean is refused;
-/// `stop_walk_max` and `transfer_walk_max` without transit are refused (the writer writes them
-/// only with transit). Each other value is checked where its entry point reads it.
+/// `stop_walk_max` and `transfer_walk_max` without transit are ignored, warned (the writer
+/// writes them only with transit, and nothing reads them without). Each other value is checked
+/// where its entry point reads it.
 fn keywords<'py>(
     py: Python<'py>,
     toml: &Bound<'py, PyDict>,
@@ -134,9 +158,12 @@ fn keywords<'py>(
         let at = match entry(&name) {
             Some(Entry::Network) => &network,
             Some(Entry::Transit | Entry::Demand) if !with_transit => {
-                return Err(refuse(&format!(
-                    "parameters.{name} is read only with a transit, [transit] gtfs_file"
-                )));
+                let message = format!(
+                    "run.toml: parameters.{name} is ignored: it is read only with a transit, \
+                     [transit] gtfs_file, and the record has none"
+                );
+                crate::warn(py, &[message])?;
+                continue;
             }
             Some(Entry::Transit) => &transit,
             Some(Entry::Demand) => &demand,
@@ -162,22 +189,6 @@ fn coefficients<'py>(py: Python<'py>, toml: &Bound<'py, PyDict>) -> PyResult<Bou
         rows.set_item(class, PyList::new(py, values)?)?;
     }
     Ok(rows)
-}
-
-/// Warn when an input's fingerprint differs from the one recorded (none recorded: no warning).
-fn compare(py: Python<'_>, input: &str, recorded: Option<String>, built: u64) -> PyResult<()> {
-    let built = format!("{built:016x}");
-    match recorded {
-        Some(recorded) if recorded != built => {
-            let message = format!(
-                "run.toml: the {input} changed since the record was written: its fingerprint is \
-                 {built}, the record's {recorded}; the run goes on with the {input} as it is"
-            );
-            let message = CString::new(message).map_err(|e| refuse(&e.to_string()))?;
-            PyErr::warn(py, &py.get_type::<PyUserWarning>(), &message, 1)
-        }
-        _ => Ok(()),
-    }
 }
 
 /// The record at `record` read with `tomllib`, every key known and `format`, if given, 1; and
@@ -220,27 +231,107 @@ fn network_files(net: &Bound<'_, PyDict>, folder: &Path) -> PyResult<NetworkFile
     }
 }
 
-/// Run again from the record at `record`, a `run.toml`, writing the run into `out`, and return
-/// its `Run`. The inputs are the files the record names, joined to its folder; the parameters
-/// are its `[parameters]`, a row absent there taking the default of `PARAMETERS.md`. The keys,
-/// the window, the files, the classes, the fingerprints and the booleans are checked before an
-/// input is built; each parameter's value is checked by the entry point that reads it, so a
-/// value the run refuses is refused after the inputs before it are built.
-#[pyfunction]
-#[pyo3(signature = (record, *, out))]
-#[allow(clippy::needless_pass_by_value, reason = "pyo3 hands the arguments over by value")]
-pub(crate) fn run_file(py: Python<'_>, record: PathBuf, out: PathBuf) -> PyResult<Run> {
-    let (toml, folder) = load(py, &record)?;
+/// What an input the record names no file of means: for `run_file`, a key the record lacks,
+/// refused naming it; for `Run.open`, an input the caller must pass, refused naming the keyword
+/// when it is not passed.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum NoFile {
+    MissingKey,
+    PassIt,
+}
+
+/// The run's inputs as its record names them (rebuilt from its files, or passed), and what else
+/// `run` reads from it.
+struct Rebuilt<'py> {
+    network: Bound<'py, Network>,
+    demand: Bound<'py, Demand>,
+    transit: Option<Bound<'py, Transit>>,
+    run_keywords: Bound<'py, PyDict>,
+    window: (u32, u32),
+    /// The window as given to the run: `window_end_given_s` where the record has it.
+    window_given: (u32, u32),
+}
+
+/// The inputs passed to `Run.open` (none to `run_file`): network, demand, transit.
+pub(crate) type Passed<'a, 'py> = (
+    Option<&'a Bound<'py, Network>>,
+    Option<&'a Bound<'py, Demand>>,
+    Option<&'a Bound<'py, Transit>>,
+);
+
+/// An input of the record compared with the one built or passed: a `UserWarning` naming it and
+/// both fingerprints when they differ, or saying it cannot be compared when the record has no
+/// fingerprint of it; the work goes on in both.
+fn compare(py: Python<'_>, input: &str, recorded: Option<String>, built: u64) -> PyResult<()> {
+    let built = format!("{built:016x}");
+    let message = match recorded {
+        Some(recorded) if recorded == built => return Ok(()),
+        Some(recorded) => format!(
+            "run.toml: the {input} changed since the record was written: its fingerprint is \
+             {built}, the record's {recorded}; the work goes on with the {input} as it is"
+        ),
+        None => format!(
+            "run.toml: the record has no fingerprint of the {input}: the {input} given or \
+             rebuilt ({built}) cannot be compared with the run's; the work goes on with it"
+        ),
+    };
+    crate::warn(py, &[message])
+}
+
+/// The inputs the record `toml` (its files joined to `folder`) names: each one `passed` taken as
+/// it is, each other built from the record's file exactly as `Network.from_osm` or
+/// `Network.from_tables`, `Transit.from_gtfs` and `Demand.from_table` build it, with the rows of
+/// `[parameters]` its entry point reads. An input the record has no file for is met as `no_file`
+/// says; a transit passed to a run that had none is set aside with a warning; passed inputs
+/// must be built on one another (a demand on the network and transit used, a transit on the
+/// network). Then each fingerprint is compared with the record's ([`compare`]).
+fn inputs<'py>(
+    py: Python<'py>,
+    toml: &Bound<'py, PyDict>,
+    folder: &Path,
+    passed: Passed<'_, 'py>,
+    no_file: NoFile,
+) -> PyResult<Rebuilt<'py>> {
     let window: (u32, u32) =
-        (required(&toml, "", "window_start_s")?, required(&toml, "", "window_end_s")?);
+        (required(toml, "", "window_start_s")?, required(toml, "", "window_end_s")?);
+    let given_end: Option<u32> = value(toml, "", "window_end_given_s")?;
+    let window_given = (window.0, given_end.unwrap_or(window.1));
     let missing = |name: &str| refuse(&format!("[{name}] is missing; it is required"));
-    let net = table(&toml, "network")?.ok_or_else(|| missing("network"))?;
-    let dem = table(&toml, "demand")?.ok_or_else(|| missing("demand"))?;
-    let tra = table(&toml, "transit")?;
-    let [network_kw, transit_kw, demand_kw, run_kw] = keywords(py, &toml, tra.is_some())?;
-    let network_files = network_files(&net, &folder)?;
-    let feed = tra.as_ref().map(|t| required::<String>(t, "transit", "gtfs_file")).transpose()?;
-    let trips = folder.join(required::<String>(&dem, "demand", "trips_file")?);
+    let net = table(toml, "network")?.ok_or_else(|| missing("network"))?;
+    let dem = table(toml, "demand")?.ok_or_else(|| missing("demand"))?;
+    let tra = table(toml, "transit")?;
+    let [network_kw, transit_kw, demand_kw, run_keywords] = keywords(py, toml, tra.is_some())?;
+    let pass_it = |input: &str| {
+        refuse(&format!(
+            "the {input} was given in memory when the run was made (the record names no file of \
+             it); pass it: {input}="
+        ))
+    };
+    let unfiled =
+        ["osm_file", "nodes_file", "links_file"].iter().all(|k| !net.contains(k).unwrap_or(false));
+    if passed.0.is_none() && unfiled && no_file == NoFile::PassIt {
+        return Err(pass_it("network"));
+    }
+    let network_files =
+        passed.0.map_or_else(|| network_files(&net, folder).map(Some), |_| Ok(None))?;
+    let passed_transit = match (&tra, passed.2) {
+        (None, Some(_)) => {
+            crate::warn(py, &["the transit passed is set aside: the run had none".to_owned()])?;
+            None
+        }
+        (_, t) => t,
+    };
+    let feed = match (&tra, passed_transit) {
+        (Some(t), None) => Some(required::<String>(t, "transit", "gtfs_file")?),
+        _ => None,
+    };
+    let trips = match passed.1 {
+        Some(_) => None,
+        None if no_file == NoFile::PassIt && !dem.contains("trips_file")? => {
+            return Err(pass_it("demand"));
+        }
+        None => Some(folder.join(required::<String>(&dem, "demand", "trips_file")?)),
+    };
     let classes: Vec<String> = required(&dem, "demand", "classes")?;
     let recorded = [
         value::<String>(&net, "network", "fingerprint")?,
@@ -248,30 +339,132 @@ pub(crate) fn run_file(py: Python<'_>, record: PathBuf, out: PathBuf) -> PyResul
         tra.as_ref().map(|t| value::<String>(t, "transit", "fingerprint")).transpose()?.flatten(),
     ];
 
-    let network = match network_files {
-        NetworkFiles::Osm(osm) => Network::from_osm(py, osm, Some(&network_kw))?,
+    let network = match (passed.0, network_files) {
+        (Some(n), _) => n.clone(),
+        (None, Some(files)) => Bound::new(py, build_network(py, files, &network_kw)?)?,
+        (None, None) => unreachable!("a network passed or its files"),
+    };
+    let transit = match (passed_transit, feed) {
+        (Some(t), _) => Some(t.clone()),
+        (None, Some(feed)) => Some(Bound::new(
+            py,
+            Transit::from_gtfs(py, folder.join(feed), &network, Some(&transit_kw))?,
+        )?),
+        (None, None) => None,
+    };
+    if transit.as_ref().is_some_and(|t| !Arc::ptr_eq(&t.get().network, &network.get().network)) {
+        return Err(PyValueError::new_err("the transit was read on another network"));
+    }
+    let demand = match (passed.1, trips) {
+        (Some(d), _) => d.clone(),
+        (None, Some(trips)) => {
+            let trips = trips.into_pyobject(py)?;
+            let built = Demand::from_table(
+                py,
+                &trips,
+                classes,
+                &network,
+                transit.as_ref(),
+                Some(&demand_kw),
+            )?;
+            Bound::new(py, built)?
+        }
+        (None, None) => unreachable!("a demand passed or its file"),
+    };
+    agree(py, (&network, &demand, transit.as_ref()), recorded)?;
+    Ok(Rebuilt { network, demand, transit, run_keywords, window, window_given })
+}
+
+/// The network read from its record's files, with the keywords of `[parameters]` it reads.
+fn build_network(
+    py: Python<'_>,
+    files: NetworkFiles,
+    keywords: &Bound<'_, PyDict>,
+) -> PyResult<Network> {
+    match files {
+        NetworkFiles::Osm(osm) => Network::from_osm(py, osm, Some(keywords)),
         NetworkFiles::Tables(nodes, links) => {
             let (nodes, links) = (nodes.into_pyobject(py)?, links.into_pyobject(py)?);
-            Network::from_tables(py, &nodes, &links, Some(&network_kw))?
+            Network::from_tables(py, &nodes, &links, Some(keywords))
         }
-    };
-    let network = Bound::new(py, network)?;
-    let transit = match feed {
-        None => None,
-        Some(feed) => {
-            let transit = Transit::from_gtfs(py, folder.join(feed), &network, Some(&transit_kw))?;
-            Some(Bound::new(py, transit)?)
-        }
-    };
-    let trips = trips.into_pyobject(py)?;
-    let demand =
-        Demand::from_table(py, &trips, classes, &network, transit.as_ref(), Some(&demand_kw))?;
-    let demand = Bound::new(py, demand)?;
+    }
+}
+
+/// Refuse a demand not built on the network and transit used (`built_on`); then compare each
+/// fingerprint with the record's (`recorded`: network, demand, transit).
+fn agree(
+    py: Python<'_>,
+    (network, demand, transit): crate::RunInputs<'_, '_>,
+    recorded: [Option<String>; 3],
+) -> PyResult<()> {
+    let d = demand.get();
+    crate::built_on(network.get(), d, transit.map(Bound::get))?;
     let [network_print, demand_print, transit_print] = recorded;
     compare(py, "network", network_print, network.get().network.fingerprint())?;
-    compare(py, "demand", demand_print, demand.get().demand.fingerprint())?;
-    if let Some(t) = &transit {
+    compare(py, "demand", demand_print, d.demand.fingerprint())?;
+    if let Some(t) = transit {
         compare(py, "transit", transit_print, t.get().timetable.fingerprint())?;
     }
-    crate::run(py, &network, &demand, transit.as_ref(), window, out, Some(&run_kw))
+    Ok(())
+}
+
+/// Run again from the record at `record`, a `run.toml`, writing the run into `out`, and return
+/// its `Run`. The inputs are the files the record names, joined to its folder ([`inputs`]); the
+/// parameters are its `[parameters]`, a row absent there taking the default of `PARAMETERS.md`.
+/// The keys, the window, the files, the classes, the fingerprints and the booleans are checked
+/// before an input is built; each parameter's value is checked by the entry point that reads it,
+/// so a value the run refuses is refused after the inputs before it are built. An input whose
+/// fingerprint differs from the record's raises a `UserWarning`, and the run goes on.
+#[pyfunction]
+#[pyo3(signature = (record, *, out))]
+#[allow(clippy::needless_pass_by_value, reason = "pyo3 hands the arguments over by value")]
+pub(crate) fn run_file(py: Python<'_>, record: PathBuf, out: PathBuf) -> PyResult<Run> {
+    let (toml, folder) = load(py, &record)?;
+    let i = inputs(py, &toml, &folder, (None, None, None), NoFile::MissingKey)?;
+    let (network, demand, transit) = (&i.network, &i.demand, i.transit.as_ref());
+    crate::run(py, network, demand, transit, i.window_given, out, Some(&i.run_keywords))
+}
+
+/// Open the finished run whose record is `record`, a `run.toml`, its four tables beside it,
+/// without running anything. The inputs are `passed`, or rebuilt from the record's files
+/// ([`inputs`]; one the record names no file of must be passed); an input whose fingerprint
+/// differs from the record's, or that it has no fingerprint of, is shown in a warning and the
+/// opening goes on. The window, `link_bin` (absent there: its default), `[result]
+/// stopped_by_rule` (a boolean; absent, the run's end is not recorded, which the pages say) and
+/// `[result.repairs]` (each an integer) come from the record. The three tables the pages read
+/// and the iterations are read once here: a table that cannot be read is refused naming it, and
+/// what the readers set aside is shown in warnings.
+pub(crate) fn open(py: Python<'_>, record: &Path, passed: Passed<'_, '_>) -> PyResult<Run> {
+    let (toml, folder) = load(py, record)?;
+    let i = inputs(py, &toml, &folder, passed, NoFile::PassIt)?;
+    let bin = match i.run_keywords.get_item("link_bin")? {
+        Some(b) => b.extract::<u32>().map_err(|e| refuse(&format!("parameters.link_bin: {e}")))?,
+        None => openmobisim_loop::parameters::Parameters::defaults(0).link_bin,
+    };
+    let stopped = match table(&toml, "result")? {
+        Some(result) => result.get_item("stopped_by_rule")?,
+        None => None,
+    };
+    let stopped_by_rule = stopped
+        .map(|v| {
+            let flag = v.cast_into::<PyBool>().map_err(|e| {
+                refuse(&format!("result.stopped_by_rule is {}, not a boolean", e.into_inner()))
+            })?;
+            Ok::<_, PyErr>(flag.is_true())
+        })
+        .transpose()?;
+    let mut repairs = Vec::new();
+    if let Some(t) = table(&toml, "result.repairs")? {
+        for key in t.keys() {
+            let key: String = key.extract()?;
+            repairs.push((key.clone(), required::<u64>(&t, "result.repairs", &key)?));
+        }
+    }
+    let window = crate::Window { start: i.window.0, end: i.window.1, bin };
+    let inputs = (&i.network, &i.demand, i.transit.as_ref());
+    let ended = crate::Ended { stopped_by_rule, repairs };
+    let opened = Run::of(record, window, ended, inputs)?;
+    let read = py.detach(|| opened.read(None))?;
+    crate::warn(py, &read.warnings)?;
+    Ok(opened)
 }

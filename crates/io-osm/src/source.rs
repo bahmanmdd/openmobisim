@@ -82,8 +82,8 @@ fn owned(tags: &[(&str, &str)]) -> Vec<(String, String)> {
     tags.iter().map(|&(k, v)| (k.to_owned(), v.to_owned())).collect()
 }
 
-/// Why an extract could not be read into a network. Each names what it refuses; nothing is
-/// replaced by a default in its place.
+/// Why an extract could not be read into a network: nothing to read, or nothing to build. Each
+/// names what it refuses; everything else is repaired and noted in the `Report`.
 #[derive(Debug)]
 pub enum OsmError {
     /// The file could not be opened or read.
@@ -100,30 +100,6 @@ pub enum OsmError {
         /// What the decoder said.
         message: String,
     },
-    /// A tag the reader reads has a value it cannot read.
-    Tag {
-        /// The way carrying it.
-        way: i64,
-        /// The key.
-        key: String,
-        /// The value.
-        value: String,
-        /// What the reader expects.
-        expected: &'static str,
-    },
-    /// A way's lane tags contradict each other or leave a direction cars drive with no lane.
-    Lanes {
-        /// The way.
-        way: i64,
-        /// What is wrong.
-        why: String,
-    },
-    /// A segment between two nodes whose WGS84 geodesic could not be computed (nearly
-    /// antipodal points, or a position that is not finite).
-    Geodesic {
-        /// The way.
-        way: i64,
-    },
     /// No way of the extract is a street of any mode.
     NoStreets,
     /// The network builder refused a row (see [`BuildError`]).
@@ -136,13 +112,6 @@ impl fmt::Display for OsmError {
             Self::Io { path, source } => write!(f, "cannot read {}: {source}", path.display()),
             Self::Decode { path, message } => {
                 write!(f, "{} is not a valid .osm.pbf file: {message}", path.display())
-            }
-            Self::Tag { way, key, value, expected } => {
-                write!(f, "way {way}: {key}={value} cannot be read; expected {expected}")
-            }
-            Self::Lanes { way, why } => write!(f, "way {way}: {why}"),
-            Self::Geodesic { way } => {
-                write!(f, "way {way}: a segment's WGS84 geodesic does not converge")
             }
             Self::NoStreets => f.write_str("no way of the extract is a street of any mode"),
             Self::Build(e) => write!(f, "the network builder refused the extract: {e}"),

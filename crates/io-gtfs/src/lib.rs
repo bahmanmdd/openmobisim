@@ -8,6 +8,7 @@
 //! | `calendar` | the services, the dates they run on, the busiest weekday |
 //! | `stop_times` | the stops, the runs of the day and the night runs of the day before |
 //! | `footpaths` | the walks between stops within `transfer_walk_max`, and `transfers.txt` |
+//! | `lines` | beside the timetable: the stops' names, the runs' lines and kinds (`lines`) |
 //!
 //! Nothing here is a bike: a run carries passengers on its timetable, and the footpaths are
 //! walks. Units are metric: metres and seconds.
@@ -15,6 +16,7 @@
 mod calendar;
 mod csv;
 mod footpaths;
+mod lines;
 mod source;
 mod stop_times;
 
@@ -24,9 +26,11 @@ use std::path::Path;
 
 use openmobisim_graph::network::Network;
 use openmobisim_transit::timetable::{Timetable, TimetableBuilder, TimetableError};
+use openmobisim_types::repairs::Repairs;
 use openmobisim_types::units::{Duration, Metres};
 
 use crate::csv::Csv;
+pub use crate::lines::{Kind, Line, Lines, lines};
 
 /// What a read found, kept and skipped. Every count is over the whole feed.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -65,6 +69,8 @@ pub struct Report {
     pub transfers_applied: u32,
     /// Rows of `transfers.txt` skipped.
     pub transfers_skipped: u32,
+    /// What the reader set right instead of refusing, by kind (the crate's README lists them).
+    pub repairs: Repairs,
 }
 
 /// Why a feed could not be read.
@@ -91,45 +97,8 @@ pub enum GtfsError {
         /// The column.
         column: &'static str,
     },
-    /// A value of a row cannot be read: a bad number, time, date or position.
-    BadValue {
-        /// The file.
-        file: &'static str,
-        /// The row's id: its trip, stop or service.
-        id: String,
-        /// The column.
-        column: &'static str,
-        /// The value as written.
-        value: String,
-    },
-    /// An id is given twice: a stop, a trip, a service's calendar, or a service's exception
-    /// on one date.
-    RepeatedId {
-        /// The file.
-        file: &'static str,
-        /// The id (for an exception, the service and the date).
-        id: String,
-    },
-    /// A row of `stop_times.txt` names a trip that `trips.txt` does not hold (the reference
-    /// requires every stop time's trip to exist).
-    UnknownTrip {
-        /// The trip named.
-        trip: String,
-        /// The row's `stop_sequence`, as written.
-        stop_sequence: String,
-    },
-    /// A row of `stop_times.txt` names a stop that `stops.txt` does not hold as a stop or
-    /// platform with a position.
-    UnknownStop {
-        /// The trip.
-        trip: String,
-        /// The stop named.
-        stop: String,
-    },
-    /// No Monday to Friday of the feed's dates has a trip in service.
-    NoWeekdayService,
-    /// No link of the network allows walking: no stop can be linked to it.
-    NoWalkLinks,
+    /// No day of the feed's dates has a trip in service.
+    NoService,
     /// The timetable's builder refused the runs or the footpaths.
     Timetable(TimetableError),
 }
@@ -150,20 +119,7 @@ impl fmt::Display for GtfsError {
             Self::Zip(e) => write!(f, "reading the feed's zip: {e}"),
             Self::MissingFile(name) => write!(f, "the feed has no {name}"),
             Self::MissingColumn { file, column } => write!(f, "{file} has no {column} column"),
-            Self::BadValue { file, id, column, value } => {
-                write!(f, "{file}: row {id}: {column} {value:?} cannot be read")
-            }
-            Self::RepeatedId { file, id } => write!(f, "{file}: {id} is given twice"),
-            Self::UnknownTrip { trip, stop_sequence } => write!(
-                f,
-                "stop_times.txt: the row of stop_sequence {stop_sequence:?} names trip {trip:?}, \
-                 which trips.txt does not hold"
-            ),
-            Self::UnknownStop { trip, stop } => {
-                write!(f, "stop_times.txt: trip {trip} calls at unknown stop {stop:?}")
-            }
-            Self::NoWeekdayService => write!(f, "no Monday to Friday of the feed has a trip"),
-            Self::NoWalkLinks => write!(f, "no link of the network allows walking"),
+            Self::NoService => write!(f, "no day of the feed has a trip in service"),
             Self::Timetable(e) => write!(f, "building the timetable: {e}"),
         }
     }
@@ -187,11 +143,11 @@ fn required<R: Read>(
 /// # Errors
 ///
 /// A [`GtfsError`]: `transfer_walk_max` not a finite number at or above zero; a network built
-/// in metres; the feed cannot be opened or read; a required file or column is missing; a row
-/// of `stops.txt`, `trips.txt`, `calendar.txt`, `calendar_dates.txt` or `stop_times.txt`
-/// cannot be read (a bad value, an id given twice, an unknown trip or stop), naming its file, id and
-/// value; no weekday has a trip; no link allows walking; the timetable's builder refuses a run (a call
-/// out of order, naming the run).
+/// in metres; the feed cannot be opened or read; a required file or column is missing; no day
+/// has a trip. Every row that cannot be read is repaired or skipped and noted in the report's
+/// `repairs` (the crate's README lists them): a stop, a call, a time, a run out of order; a
+/// feed with no weekday service is read on its busiest day of all seven, noted; a network with
+/// no walk link gives no footpath, noted.
 pub fn read(
     path: &Path,
     network: &Network,
@@ -205,8 +161,17 @@ pub fn read(
     let mut feed = source::Feed::open(path)?;
     let mut report = Report::default();
     let stops = stop_times::read_stops(&mut feed, &projection, &mut report)?;
-    let services = calendar::Services::read(&mut feed)?;
-    let day = services.busiest_weekday().ok_or(GtfsError::NoWeekdayService)?;
+    let services = calendar::Services::read(&mut feed, &mut report.repairs)?;
+    let day = match services.busiest_day(true) {
+        Some(day) => day,
+        None => {
+            let day = services.busiest_day(false).ok_or(GtfsError::NoService)?;
+            let what =
+                "feeds with no Monday to Friday in service: their busiest day of all seven read";
+            report.repairs.note("weekday_absent", what, calendar::date_of(day).to_string());
+            day
+        }
+    };
     report.date = calendar::date_of(day);
     let runs = stop_times::read_runs(&mut feed, &services, day, &stops, &mut report)?;
     let footpaths = footpaths::derive(&mut feed, network, &stops, max, &mut report)?;

@@ -1,5 +1,17 @@
-//! The rows of a demand and what is refused in them: trip and class ids, classes, mode sets and
-//! positions, checked before anything is linked.
+//! The rows of a demand, checked before anything is linked: what cannot be used is set right or
+//! left out and noted in the demand's [`Repairs`] by kind (the key, then what it completes "N …"
+//! with); only what no repair exists for is refused ([`DemandError`]).
+//!
+//! | Key | Rows | What is done |
+//! |---|---|---|
+//! | `classes_repeated` | a class given twice | read once |
+//! | `trips_repeated` | a trip id given twice | the first row given kept, the others dropped |
+//! | `trips_of_unknown_class` | a trip naming a class not given | dropped |
+//! | `trips_unplaced` | a trip with a coordinate not finite, or a longitude/latitude not projectable (beyond ±180°, ±84°) | dropped |
+//! | `trips_without_car_network`, `…_bike_…`, `…_walk_…`, `…_transit_…` | a trip whose set holds a mode no link of the network allows (for transit, walking, by which its ends are linked) | the mode taken out of its set |
+//! | `trips_without_mode` | a trip with no mode, given so or left so by the row above | dropped |
+//!
+//! A trip dropped is not in the demand: it has no id, and no output names it.
 
 use core::fmt;
 
@@ -7,7 +19,10 @@ use openmobisim_graph::geometry::{Position, Xy};
 use openmobisim_graph::network::Network;
 use openmobisim_types::ids::{ExternalIdTable, ExternalIdTableBuilder, UserClassId};
 use openmobisim_types::mode::{Mode, ModeSet};
+use openmobisim_types::repairs::Repairs;
 use openmobisim_types::time::Second;
+
+use crate::index::{Joins, NodeIndex};
 
 /// One trip as given: one row of a trip table.
 #[derive(Clone, Debug, PartialEq)]
@@ -28,36 +43,13 @@ pub struct TripRow {
     pub modes: ModeSet,
 }
 
-/// Why a demand could not be built. Each names the trip, class or stop at fault by its
-/// external id.
+/// Why a demand could not be built: what no repair exists for. Each names the trip at fault by
+/// its external id.
 #[derive(Clone, Debug, PartialEq)]
 pub enum DemandError {
-    /// Two trips share an external id.
-    DuplicateTrip {
-        /// The external id.
-        trip: String,
-    },
-    /// A class is given twice.
-    DuplicateClass {
-        /// The external id.
-        class: String,
-    },
-    /// A trip names a class that is not given.
-    UnknownClass {
-        /// The trip.
-        trip: String,
-        /// The class it names.
-        class: String,
-    },
-    /// A trip's mode set is empty.
-    NoMode {
-        /// The trip.
-        trip: String,
-    },
-    /// A trip's position cannot be placed on the network: not of the network's kind
-    /// (longitude/latitude on a network built in metres, or metres on a network built from
-    /// longitude/latitude), longitude/latitude outside the projectable range, or a coordinate
-    /// that is not a finite number.
+    /// A trip's position is not of the network's kind: longitude/latitude on a network built in
+    /// metres, or metres on a network built from longitude/latitude (no projection converts
+    /// them).
     PositionNotTaken {
         /// The trip.
         trip: String,
@@ -66,19 +58,6 @@ pub enum DemandError {
     MixedKinds {
         /// The trip.
         trip: String,
-    },
-    /// A trip's mode set holds a mode no link of the network allows (for transit, walking,
-    /// by which its ends are linked).
-    NoNode {
-        /// The trip.
-        trip: String,
-        /// The mode.
-        mode: Mode,
-    },
-    /// No link of the network allows walking, so a stop cannot be linked.
-    StopNoNode {
-        /// The stop.
-        stop: String,
     },
     /// The walk to a stop at most, `stop_walk_max`, is not a finite number of metres at or
     /// above zero.
@@ -91,29 +70,16 @@ pub enum DemandError {
 impl fmt::Display for DemandError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::DuplicateTrip { trip } => write!(f, "trip {trip} is given twice"),
-            Self::DuplicateClass { class } => write!(f, "class {class} is given twice"),
-            Self::UnknownClass { trip, class } => {
-                write!(f, "trip {trip} names class {class}, which is not given")
-            }
-            Self::NoMode { trip } => write!(f, "trip {trip} has no mode"),
             Self::PositionNotTaken { trip } => write!(
                 f,
-                "trip {trip}: a position the network cannot take (not of the network's kind, \
-                 longitude/latitude or metres; out of range; or not finite)"
+                "trip {trip}: a position of another kind than the network's (longitude/latitude \
+                 on a network in metres, or metres on a network from longitude/latitude)"
             ),
             Self::MixedKinds { trip } => write!(
                 f,
                 "trip {trip}: a position of another kind than the first trip's (longitude/latitude \
                  and metres mixed)"
             ),
-            Self::NoNode { trip, mode: Mode::Transit } => {
-                write!(f, "trip {trip}: no link allows walking, by which transit's ends are linked")
-            }
-            Self::NoNode { trip, mode } => write!(f, "trip {trip}: no link allows {mode}"),
-            Self::StopNoNode { stop } => {
-                write!(f, "stop {stop}: no link allows walking, so it cannot be linked")
-            }
             Self::StopWalkMax { metres } => {
                 write!(f, "stop_walk_max is {metres} m: not a finite number at or above zero")
             }
@@ -136,69 +102,110 @@ pub(crate) struct Trips {
     pub destination: Vec<Xy>,
 }
 
-/// The first id given twice, in sorted order.
-fn twice<'a>(ids: impl Iterator<Item = &'a str>) -> Option<String> {
-    let mut sorted: Vec<&str> = ids.collect();
-    sorted.sort_unstable();
-    sorted.windows(2).find(|w| w[0] == w[1]).map(|w| w[0].to_owned())
+/// The key under which a trip losing `mode` (no link allows it) is noted.
+fn without_network(mode: Mode) -> &'static str {
+    match mode {
+        Mode::Car => "trips_without_car_network",
+        Mode::Bike => "trips_without_bike_network",
+        Mode::Walk => "trips_without_walk_network",
+        Mode::Transit => "trips_without_transit_network",
+    }
 }
 
-/// Check the rows and the classes and place every position in metres. The first fault, in
-/// this order, is returned: a class given twice, a trip given twice; then trip by trip in id
-/// order, an unknown class, an empty mode set, a position of another kind than the first
-/// trip's origin, a position the network cannot take.
+/// The modes some link of `network` allows; transit when walking is (its ends are walked to).
+fn modes_on(network: &Network) -> ModeSet {
+    let mut on = ModeSet::EMPTY;
+    for mode in [Mode::Car, Mode::Bike, Mode::Walk] {
+        if !NodeIndex::new(network, mode, Joins::Either).is_empty() {
+            on = on.with(mode);
+        }
+    }
+    if on.contains(Mode::Walk) { on.with(Mode::Transit) } else { on }
+}
+
+/// Check the rows and the classes and place every position in metres, each row used, set right
+/// or dropped and noted in `repairs` (the module's table). Rows are sorted by trip id, stably,
+/// so that of a repeated id the first given is kept.
+///
+/// # Errors
+///
+/// Trip by trip in id order, the first position of another kind than the first trip's origin
+/// ([`DemandError::MixedKinds`]), or of another kind than the network's
+/// ([`DemandError::PositionNotTaken`]).
 pub(crate) fn check(
     rows: &[TripRow],
     classes: &[String],
     network: &Network,
+    repairs: &mut Repairs,
 ) -> Result<Trips, DemandError> {
-    if let Some(class) = twice(classes.iter().map(String::as_str)) {
-        return Err(DemandError::DuplicateClass { class });
+    let mut class_list: Vec<&str> = classes.iter().map(String::as_str).collect();
+    class_list.sort_unstable();
+    for w in class_list.windows(2).filter(|w| w[0] == w[1]) {
+        repairs.note("classes_repeated", "classes given twice: read once", w[0]);
     }
-    if let Some(trip) = twice(rows.iter().map(|r| r.id.as_str())) {
-        return Err(DemandError::DuplicateTrip { trip });
-    }
-    let table = |ids: Vec<&str>| {
+    class_list.dedup();
+    let table = |ids: &[&str]| {
         let mut b = ExternalIdTableBuilder::new();
-        b.extend(ids);
+        b.extend(ids.iter().copied());
         b.build()
     };
-    let class_ids = table(classes.iter().map(String::as_str).collect());
+    let class_ids = table(&class_list);
     let mut order: Vec<&TripRow> = rows.iter().collect();
-    order.sort_unstable_by(|a, b| a.id.cmp(&b.id));
+    order.sort_by(|a, b| a.id.cmp(&b.id));
     let kind = order.first().map(|r| is_lon_lat(r.origin));
-    let n = order.len();
+    let on = modes_on(network);
     let mut trips = Trips {
-        ids: table(order.iter().map(|r| r.id.as_str()).collect()),
+        ids: ExternalIdTable::default(),
         classes: class_ids,
-        class: Vec::with_capacity(n),
-        departure: Vec::with_capacity(n),
-        modes: Vec::with_capacity(n),
-        origin: Vec::with_capacity(n),
-        destination: Vec::with_capacity(n),
+        class: Vec::new(),
+        departure: Vec::new(),
+        modes: Vec::new(),
+        origin: Vec::new(),
+        destination: Vec::new(),
     };
+    let mut kept: Vec<&str> = Vec::with_capacity(order.len());
     for row in order {
-        let trip = || row.id.clone();
-        let Some(class) = trips.classes.typed_id_of::<UserClassId>(&row.class) else {
-            return Err(DemandError::UnknownClass { trip: trip(), class: row.class.clone() });
-        };
-        if row.modes.is_empty() {
-            return Err(DemandError::NoMode { trip: trip() });
+        let id = row.id.as_str();
+        if kept.last() == Some(&id) {
+            let what = "trip ids given twice: the first row given kept, the others dropped";
+            repairs.note("trips_repeated", what, id);
+            continue;
         }
         if [row.origin, row.destination].iter().any(|&p| Some(is_lon_lat(p)) != kind) {
-            return Err(DemandError::MixedKinds { trip: trip() });
+            return Err(DemandError::MixedKinds { trip: id.to_owned() });
         }
+        if is_lon_lat(row.origin) != network.projection().is_some() {
+            return Err(DemandError::PositionNotTaken { trip: id.to_owned() });
+        }
+        let Some(class) = trips.classes.typed_id_of::<UserClassId>(&row.class) else {
+            repairs.note("trips_of_unknown_class", "trips naming a class not given: dropped", id);
+            continue;
+        };
         let (Some(origin), Some(destination)) =
             (place(network, row.origin), place(network, row.destination))
         else {
-            return Err(DemandError::PositionNotTaken { trip: trip() });
+            let what = "trips with a position not finite or not projectable: dropped";
+            repairs.note("trips_unplaced", what, id);
+            continue;
         };
+        let mut modes = row.modes;
+        for mode in row.modes.iter().filter(|&m| !on.contains(m)) {
+            let what = "trips whose set holds a mode no link allows: the mode taken out";
+            repairs.note(without_network(mode), what, id);
+            modes = modes.iter().filter(|&m| m != mode).fold(ModeSet::EMPTY, ModeSet::with);
+        }
+        if modes.is_empty() {
+            repairs.note("trips_without_mode", "trips with no mode (given, or left): dropped", id);
+            continue;
+        }
+        kept.push(id);
         trips.class.push(class);
         trips.departure.push(row.departure);
-        trips.modes.push(row.modes);
+        trips.modes.push(modes);
         trips.origin.push(origin);
         trips.destination.push(destination);
     }
+    trips.ids = table(&kept);
     Ok(trips)
 }
 
@@ -207,15 +214,12 @@ fn is_lon_lat(p: Position) -> bool {
     matches!(p, Position::LonLat(_))
 }
 
-/// A position in the network's plane: metres as given on a network built in metres,
-/// longitude/latitude projected with the projection of a network built from them; `None` when
-/// the network cannot take it (the other kind, out of range, not finite).
+/// A position in the network's plane, of the network's kind (checked before): metres as given,
+/// longitude/latitude projected with the network's projection; `None` when a coordinate is not
+/// finite or a longitude/latitude not projectable.
 fn place(network: &Network, p: Position) -> Option<Xy> {
     match p {
-        Position::Metres(xy) => {
-            let taken = network.projection().is_none() && xy.x.is_finite() && xy.y.is_finite();
-            taken.then_some(xy)
-        }
+        Position::Metres(xy) => (xy.x.is_finite() && xy.y.is_finite()).then_some(xy),
         Position::LonLat(ll) => {
             let projection = network.projection()?;
             ll.is_projectable().then(|| projection.project(ll))

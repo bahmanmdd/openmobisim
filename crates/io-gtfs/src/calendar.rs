@@ -20,6 +20,7 @@ use std::io::Read;
 use crate::csv::Csv;
 use crate::source::Feed;
 use crate::{GtfsError, required};
+use openmobisim_types::repairs::Repairs;
 
 /// The day number (days since 1970-01-01) of a `YYYYMMDD` date, if it is one.
 pub(crate) fn day_of(text: &str) -> Option<i64> {
@@ -86,26 +87,19 @@ pub(crate) struct Services {
     exceptions: HashMap<(u32, i64), bool>,
 }
 
-/// The value at `column` as a day number, or the error naming the row's service and the value.
-fn date_at<R: Read>(
-    csv: &Csv<R>,
-    file: &'static str,
-    (service, column, name): (usize, usize, &'static str),
-) -> Result<i64, GtfsError> {
-    day_of(csv.field(column)).ok_or_else(|| GtfsError::BadValue {
-        file,
-        id: csv.field(service).to_owned(),
-        column: name,
-        value: csv.field(column).to_owned(),
-    })
+/// A row of `calendar.txt` or `calendar_dates.txt` set aside or read in part, noted.
+fn skipped(repairs: &mut Repairs, id: String) {
+    let what = "calendar rows with a date, flag or exception type that cannot be read, or given twice: skipped (a bad flag read as 0, the first of two kept)";
+    repairs.note("calendar_rows_skipped", what, id);
 }
 
 impl Services {
     /// Count the trips of each service (`trips.txt`) and read `calendar.txt` and
-    /// `calendar_dates.txt`, whichever the feed has. A date that is not one, a weekday flag
-    /// or an exception type the reference does not define, a service's calendar given twice
-    /// or its exception on one date given twice is an error naming the service and the value.
-    pub fn read(feed: &mut Feed) -> Result<Self, GtfsError> {
+    /// `calendar_dates.txt`, whichever the feed has. A row with a date that is not one, or an
+    /// exception type the reference does not define, is skipped; a weekday flag other than 0 or
+    /// 1 is read as 0; of a service's two calendars, or two exceptions on one date, the first is
+    /// kept: each noted in `repairs`.
+    pub fn read(feed: &mut Feed, repairs: &mut Repairs) -> Result<Self, GtfsError> {
         let mut services = Self::default();
         let mut csv = feed.csv("trips.txt")?;
         let service = required(&csv, "trips.txt", "service_id")?;
@@ -115,10 +109,10 @@ impl Services {
         }
         drop(csv);
         if let Some(csv) = feed.optional_csv("calendar.txt")? {
-            services.read_calendar(csv)?;
+            services.read_calendar(csv, repairs)?;
         }
         if let Some(csv) = feed.optional_csv("calendar_dates.txt")? {
-            services.read_exceptions(csv)?;
+            services.read_exceptions(csv, repairs)?;
         }
         Ok(services)
     }
@@ -134,7 +128,11 @@ impl Services {
         s
     }
 
-    fn read_calendar<R: Read>(&mut self, mut csv: Csv<R>) -> Result<(), GtfsError> {
+    fn read_calendar<R: Read>(
+        &mut self,
+        mut csv: Csv<R>,
+        repairs: &mut Repairs,
+    ) -> Result<(), GtfsError> {
         let f = "calendar.txt";
         let service = required(&csv, f, "service_id")?;
         let (start, end) = (required(&csv, f, "start_date")?, required(&csv, f, "end_date")?);
@@ -144,58 +142,63 @@ impl Services {
             *c = required(&csv, f, name)?;
         }
         while csv.next()? {
-            let a = date_at(&csv, f, (service, start, "start_date"))?;
-            let b = date_at(&csv, f, (service, end, "end_date"))?;
+            let id = csv.field(service).to_owned();
+            let (Some(a), Some(b)) = (day_of(csv.field(start)), day_of(csv.field(end))) else {
+                skipped(repairs, id);
+                continue;
+            };
             let mut days = [false; 7];
-            for ((day, &c), name) in days.iter_mut().zip(&columns).zip(names) {
+            let mut flags_read = true;
+            for (day, &c) in days.iter_mut().zip(&columns) {
                 *day = match csv.field(c) {
                     "1" => true,
                     "0" => false,
-                    v => {
-                        let id = csv.field(service).to_owned();
-                        return Err(GtfsError::BadValue {
-                            file: f,
-                            id,
-                            column: name,
-                            value: v.to_owned(),
-                        });
+                    _ => {
+                        flags_read = false;
+                        false
                     }
                 };
             }
-            let s = self.id(csv.field(service));
+            let s = self.id(&id);
             let slot = &mut self.calendar[s as usize];
-            if slot.is_some() {
-                return Err(GtfsError::RepeatedId { file: f, id: csv.field(service).to_owned() });
+            if slot.is_some() || !flags_read {
+                skipped(repairs, id);
             }
-            *slot = Some(Calendar { days, start: a, end: b });
+            if slot.is_none() {
+                *slot = Some(Calendar { days, start: a, end: b });
+            }
         }
         Ok(())
     }
 
-    fn read_exceptions<R: Read>(&mut self, mut csv: Csv<R>) -> Result<(), GtfsError> {
+    fn read_exceptions<R: Read>(
+        &mut self,
+        mut csv: Csv<R>,
+        repairs: &mut Repairs,
+    ) -> Result<(), GtfsError> {
         let f = "calendar_dates.txt";
         let service = required(&csv, f, "service_id")?;
         let (date, kind) = (required(&csv, f, "date")?, required(&csv, f, "exception_type")?);
         while csv.next()? {
+            let id = format!("{} on {}", csv.field(service), csv.field(date));
             let added = match csv.field(kind) {
                 "1" => true,
                 "2" => false,
-                v => {
-                    let (id, value) = (csv.field(service).to_owned(), v.to_owned());
-                    return Err(GtfsError::BadValue {
-                        file: f,
-                        id,
-                        column: "exception_type",
-                        value,
-                    });
+                _ => {
+                    skipped(repairs, id);
+                    continue;
                 }
             };
-            let day = date_at(&csv, f, (service, date, "date"))?;
+            let Some(day) = day_of(csv.field(date)) else {
+                skipped(repairs, id);
+                continue;
+            };
             let s = self.id(csv.field(service));
-            if self.exceptions.insert((s, day), added).is_some() {
-                let id = format!("{} on {}", csv.field(service), csv.field(date));
-                return Err(GtfsError::RepeatedId { file: f, id });
+            if self.exceptions.contains_key(&(s, day)) {
+                skipped(repairs, id);
+                continue;
             }
+            self.exceptions.insert((s, day), added);
         }
         Ok(())
     }
@@ -215,9 +218,10 @@ impl Services {
             .collect()
     }
 
-    /// The busiest weekday over the feed's whole range of dates (see the module documentation),
-    /// or `None` when no weekday has a trip.
-    pub fn busiest_weekday(&self) -> Option<i64> {
+    /// The busiest day over the feed's whole range of dates (see the module documentation):
+    /// of the weekdays (Monday to Friday) when `weekdays`, else of all seven; `None` when no such
+    /// day has a trip.
+    pub fn busiest_day(&self, weekdays: bool) -> Option<i64> {
         let calendars = self.calendar.iter().flatten();
         let exception_days = self.exceptions.keys().map(|k| k.1);
         let first = calendars.clone().map(|c| c.start).chain(exception_days.clone()).min()?;
@@ -245,7 +249,7 @@ impl Services {
             }
         }
         (first..=last)
-            .filter(|&day| weekday(day) < 5 && count[slot(day)] > 0)
+            .filter(|&day| (!weekdays || weekday(day) < 5) && count[slot(day)] > 0)
             // The most trips; on a tie, the earliest date.
             .max_by(|&a, &b| count[slot(a)].cmp(&count[slot(b)]).then(b.cmp(&a)))
     }

@@ -1,10 +1,11 @@
 //! What every stage reads about the run: the inputs, the window and, per trip, its departure
-//! on the window's clock and its class.
+//! on the window's clock, its class and the modes open to it in this run.
 
-use openmobisim_demand::demand::Demand;
+use openmobisim_demand::demand::{Demand, End};
 use openmobisim_graph::network::Network;
 use openmobisim_transit::timetable::Timetable;
 use openmobisim_types::ids::{EntityId, TripId, UserClassId};
+use openmobisim_types::mode::{Mode, ModeSet};
 use openmobisim_types::time::{Second, StepGrid};
 use openmobisim_types::units::Duration;
 
@@ -26,6 +27,9 @@ pub(crate) struct Context<'a> {
     pub departure: Vec<f64>,
     /// Per trip, its class as an index.
     pub class: Vec<usize>,
+    /// Per trip, the modes of its set the window can hold: none for a trip the run dropped
+    /// (`crate::run`, "Repairs").
+    pub modes: Vec<ModeSet>,
 }
 
 impl Context<'_> {
@@ -52,6 +56,20 @@ impl Context<'_> {
     /// Trip `i`'s id.
     pub fn trip(&self, i: usize) -> TripId {
         TripId::from_index(i)
+    }
+
+    /// Whether trip `i` is run: it has a mode the window can hold.
+    pub fn runs(&self, i: usize) -> bool {
+        !self.modes[i].is_empty()
+    }
+
+    /// Trip `i`'s two ends by `mode`, if the mode is open to it in this run.
+    pub fn ends(&self, i: usize, mode: Mode) -> Option<(End, End)> {
+        if !self.modes[i].contains(mode) {
+            return None;
+        }
+        let trip = self.trip(i);
+        Some((self.demand.origin_end(trip, mode)?, self.demand.destination_end(trip, mode)?))
     }
 
     /// Trip `i`'s class id.

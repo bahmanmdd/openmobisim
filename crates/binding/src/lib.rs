@@ -1,5 +1,5 @@
 //! The Python binding: the module `openmobisim`, with `Network`, `Transit`, `Demand`, `run`,
-//! `run_file` and `Run`, and nothing else.
+//! `run_file`, `Run` and its methods `Run.map`, `Run.summary` and `Run.open`, and nothing else.
 //!
 //! ```python
 //! import openmobisim as oms
@@ -9,6 +9,9 @@
 //! demand  = oms.Demand.from_table(trips, classes, network, transit=None, **demand_parameters)
 //! result  = oms.run(network, demand, transit=None, window=(start_s, end_s), out=folder, **parameters)
 //! result  = oms.run_file(record, out=folder)
+//! result  = oms.Run.open(record, network=None, demand=None, transit=None)
+//! page    = result.map(path)
+//! page    = result.summary(path)
 //! ```
 //!
 //! Every keyword is a row of `PARAMETERS.md`, read at the one entry point whose crate reads it
@@ -18,9 +21,15 @@
 //! lock is released while a file is read, a network, timetable or demand is built, and a run
 //! runs and is written. A crate's error is a `ValueError` carrying its message unchanged (an
 //! input or output failure an `OSError`); a panic is pyo3's `PanicException`, never an abort.
+//!
+//! What a reader or the run set right instead of refusing (`openmobisim_types::repairs`) is
+//! shown (`reports.rs`) as one `UserWarning` per kind and call, naming the entry point, the count, what was
+//! done, the key and the first five ids; and kept as a dict, key to count, on the object
+//! (`Network.repairs`, `Transit.repairs`, `Demand.repairs`) and on the run (`Run.repairs`).
 
 mod keywords;
 mod record;
+mod reports;
 mod tables;
 
 use std::collections::BTreeMap;
@@ -29,18 +38,25 @@ use std::sync::Arc;
 
 use openmobisim_demand::demand::Demand as RustDemand;
 use openmobisim_graph::network::{BuildValues, Network as RustNetwork};
-use openmobisim_io_gtfs::{GtfsError, Report as GtfsReport};
+use openmobisim_io_gtfs::{GtfsError, Lines, Report as GtfsReport};
 use openmobisim_io_osm::{OsmError, Report as OsmReport};
-use openmobisim_io_parquet::{Files, Given as RunGiven, Source, Transit as RunTransit, WriteError};
+use openmobisim_io_parquet::{
+    Files, Given as RunGiven, OutputError, Source, Transit as RunTransit, WriteError,
+};
+use openmobisim_loop::assess::Iteration;
 use openmobisim_loop::parameters::{ChoiceModel, Parameters};
+use openmobisim_map::{Kept, MapError, Mapped};
+use openmobisim_summary::{Summarised, SummaryError};
 use openmobisim_transit::timetable::Timetable;
-use openmobisim_types::time::Second;
+use openmobisim_types::repairs::Repairs;
+use openmobisim_types::time::{Second, StepGrid};
 use openmobisim_types::units::Metres;
 use pyo3::exceptions::{PyOSError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
 use keywords::{Entry, Given};
+use reports::{counts, gtfs_report, osm_report, repairs_dict, warn, warn_no_trip, warn_repairs};
 
 /// The defaults of `PARAMETERS.md` that no crate holds, since the graph, the GTFS reader and the
 /// demand crate take these values from their caller: veh/h per lane, km/h, km/h, m, m.
@@ -53,6 +69,30 @@ const STOP_WALK_MAX: f64 = 1_500.0;
 fn value_error(e: &impl ToString) -> PyErr {
     PyValueError::new_err(e.to_string())
 }
+
+/// Refuse a demand not built on `network` and `transit`, naming which.
+fn built_on(network: &Network, demand: &Demand, transit: Option<&Transit>) -> PyResult<()> {
+    if !Arc::ptr_eq(&network.network, &demand.network) {
+        return Err(PyValueError::new_err("the demand was built on another network"));
+    }
+    let same = match (transit, &demand.transit) {
+        (None, None) => true,
+        (Some(t), Some(d)) => Arc::ptr_eq(&t.timetable, d),
+        _ => false,
+    };
+    if !same {
+        return Err(PyValueError::new_err("the demand was built on another transit"));
+    }
+    Ok(())
+}
+
+/// A run's network, demand and transit, as the caller holds them.
+type RunInputs<'a, 'py> =
+    (&'a Bound<'py, Network>, &'a Bound<'py, Demand>, Option<&'a Bound<'py, Transit>>);
+
+/// The four tables a run writes, beside its record.
+const TABLES: [&str; 4] =
+    ["trips.parquet", "links.parquet", "iterations.parquet", "routes.parquet"];
 
 /// The canonical path of a file just read (absolute, symbolic links resolved), for the record;
 /// an `OSError` naming it if it cannot be resolved.
@@ -69,6 +109,19 @@ fn build_values(given: &Given<'_>) -> PyResult<BuildValues> {
     })
 }
 
+/// One `UserWarning` when `network` holds no link: no trip can travel on it.
+fn no_link(py: Python<'_>, method: &str, network: &RustNetwork) -> PyResult<()> {
+    if network.link_count() > 0 {
+        return Ok(());
+    }
+    let message = format!(
+        "{method}: no link is left: the network holds {} nodes and no link (each left out is \
+         counted above), so no trip can travel on it",
+        network.node_count()
+    );
+    warn(py, &[message])
+}
+
 /// A network: built once, from an OpenStreetMap extract or from two tables, then immutable.
 #[pyclass(frozen, module = "openmobisim")]
 struct Network {
@@ -77,6 +130,9 @@ struct Network {
     values: BuildValues,
     /// The OSM reader's counts; none for a network from tables.
     report: Option<OsmReport>,
+    /// What its readers set right: the OSM reader's (the build's among them), or the tables'
+    /// reader's and the build's.
+    repairs: Repairs,
     /// The files it was read from, canonical: the extract, or the nodes and the links tables
     /// each when given as a file.
     osm_file: Option<PathBuf>,
@@ -110,9 +166,12 @@ impl Network {
             OsmError::Io { .. } => PyOSError::new_err(e.to_string()),
             _ => value_error(&e),
         })?;
+        warn_repairs(py, "Network.from_osm", &report.repairs)?;
+        no_link(py, "Network.from_osm", &network)?;
         Ok(Self {
             network: Arc::new(network),
             values,
+            repairs: report.repairs.clone(),
             report: Some(report),
             osm_file: Some(canonical(&path)?),
             nodes_file: None,
@@ -140,16 +199,27 @@ impl Network {
             ));
         }
         let values = build_values(&given)?;
-        let builder = tables::network(nodes, links)?;
+        let (builder, mut repairs) = tables::network(nodes, links)?;
         let network = py.detach(|| builder.build(values)).map_err(|e| value_error(&e))?;
+        repairs.extend(network.repairs());
+        warn_repairs(py, "Network.from_tables", &repairs)?;
+        no_link(py, "Network.from_tables", &network)?;
         Ok(Self {
             network: Arc::new(network),
             values,
+            repairs,
             report: None,
             osm_file: None,
             nodes_file: tables::path(nodes).map(|p| canonical(&p)).transpose()?,
             links_file: tables::path(links).map(|p| canonical(&p)).transpose()?,
         })
+    }
+
+    /// What its readers set right, as a dict: each kind's key to its count (the keys in
+    /// `crates/io-osm/README.md`, `crates/graph/README.md` and this crate's README).
+    #[getter]
+    fn repairs(&self, py: Python<'_>) -> PyResult<Py<PyDict>> {
+        repairs_dict(py, counts(&self.repairs))
     }
 }
 
@@ -164,6 +234,8 @@ struct Transit {
     transfer_walk_max: f64,
     /// The feed it was read from, canonical.
     gtfs_file: PathBuf,
+    /// Beside the timetable: the stops' names, the runs' lines and kinds, for the run's pages.
+    lines: Arc<Lines>,
 }
 
 #[pymethods]
@@ -182,14 +254,30 @@ impl Transit {
         let given = Given::read(Entry::Transit, "Transit.from_gtfs", transit_parameters)?;
         let transfer_walk_max = given.get("transfer_walk_max", TRANSFER_WALK_MAX)?;
         let network = Arc::clone(&network.get().network);
-        let read =
-            py.detach(|| openmobisim_io_gtfs::read(&path, &network, Metres(transfer_walk_max)));
-        let (timetable, report) = read.map_err(|e| match e {
+        let read = py.detach(|| {
+            let read = openmobisim_io_gtfs::read(&path, &network, Metres(transfer_walk_max))?;
+            Ok::<_, GtfsError>((read, openmobisim_io_gtfs::lines(&path)?))
+        });
+        let ((timetable, report), lines) = read.map_err(|e| match e {
             GtfsError::Io(_) => PyOSError::new_err(e.to_string()),
             _ => value_error(&e),
         })?;
+        warn_repairs(py, "Transit.from_gtfs", &report.repairs)?;
+        if report.runs == 0 {
+            let message = "Transit.from_gtfs: no run is left: the timetable holds no run of its \
+                           day, so transit carries nobody";
+            warn(py, &[message.to_owned()])?;
+        }
         let gtfs_file = canonical(&path)?;
-        Ok(Self { timetable: Arc::new(timetable), network, report, transfer_walk_max, gtfs_file })
+        let (timetable, lines) = (Arc::new(timetable), Arc::new(lines));
+        Ok(Self { timetable, network, report, transfer_walk_max, gtfs_file, lines })
+    }
+
+    /// What the GTFS reader set right, as a dict: each kind's key to its count
+    /// (`crates/io-gtfs/README.md`).
+    #[getter]
+    fn repairs(&self, py: Python<'_>) -> PyResult<Py<PyDict>> {
+        repairs_dict(py, counts(&self.report.repairs))
     }
 }
 
@@ -204,6 +292,11 @@ struct Demand {
     stop_walk_max: f64,
     /// The trips table's file, canonical, when it was given as one.
     trips_file: Option<PathBuf>,
+    /// What its readers set right or dropped: the trips table's reader's and the build's.
+    repairs: Repairs,
+    /// How many rows the trips table held, the dropped ones with them.
+    #[pyo3(get)]
+    trips_given: u64,
 }
 
 #[pymethods]
@@ -232,34 +325,318 @@ impl Demand {
             return Err(PyValueError::new_err("the transit was read on another network"));
         }
         let transit = transit.map(|t| Arc::clone(&t.timetable));
-        let rows = tables::trips(trips)?;
+        let (rows, mut repairs, trips_given) = tables::trips(trips)?;
         let max = Metres(stop_walk_max);
         let build = || RustDemand::build(&rows, &classes, &network, transit.as_deref(), max);
         let demand = py.detach(build).map_err(|e| value_error(&e))?;
+        repairs.extend(demand.repairs());
+        warn_repairs(py, "Demand.from_table", &repairs)?;
+        if demand.trip_count() == 0 {
+            warn_no_trip(py, "Demand.from_table", trips_given, &[&repairs])?;
+        }
+        let carless = repairs.count("trips_without_car_network");
+        if carless > 0 {
+            warn(
+                py,
+                &[format!(
+                    "Demand.from_table: the network has no car link: {carless} trips that ask for a car \
+                 cannot drive (trips_without_car_network)"
+                )],
+            )?;
+        }
         let trips_file = tables::path(trips).map(|p| canonical(&p)).transpose()?;
-        Ok(Self { demand, network, transit, stop_walk_max, trips_file })
+        Ok(Self { demand, network, transit, stop_walk_max, trips_file, repairs, trips_given })
+    }
+
+    /// What its readers set right or dropped, as a dict: each kind's key to its count
+    /// (`crates/demand/README.md` and this crate's README).
+    #[getter]
+    fn repairs(&self, py: Python<'_>) -> PyResult<Py<PyDict>> {
+        repairs_dict(py, counts(&self.repairs))
     }
 }
 
-/// What a run returns: the paths of its three Parquet files and of its record, `run.toml`,
-/// whether the stopping rule (else the iteration cap) ended it, and the readers' counts (`None`
-/// for a network from tables or a run without transit).
-#[pyclass(frozen, get_all, module = "openmobisim")]
-struct Run {
+/// How a run ended, from the run or its record: whether the stopping rule (else the cap) ended
+/// it, `None` when the record does not say; and what the run set right or dropped, by kind,
+/// `(key, count)` in the order first met.
+#[derive(Clone, Debug)]
+pub(crate) struct Ended {
+    pub(crate) stopped_by_rule: Option<bool>,
+    pub(crate) repairs: Vec<(String, u64)>,
+}
+
+impl Ended {
+    /// How many trips the run dropped: `trips_outside_window` and `trips_after_window`.
+    fn dropped(&self) -> u64 {
+        let dropping = ["trips_outside_window", "trips_after_window"];
+        self.repairs.iter().filter(|(k, _)| dropping.contains(&k.as_str())).map(|r| r.1).sum()
+    }
+}
+
+/// A run's window: the two seconds of the clock it ran between, and the bin of its links table.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Window {
+    /// The window's first second, a second of the clock.
+    pub(crate) start: u32,
+    /// The second it ends at, a second of the clock.
+    pub(crate) end: u32,
+    /// The bin of the links table, s (`link_bin`).
+    pub(crate) bin: u32,
+}
+
+/// The two pages of a run.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Page {
+    /// `Run.map`, the interactive map.
+    Map,
+    /// `Run.summary`, the page of its numbers.
+    Summary,
+}
+
+impl Page {
+    /// The method's name, for a message.
+    fn method(self) -> &'static str {
+        match self {
+            Self::Map => "Run.map",
+            Self::Summary => "Run.summary",
+        }
+    }
+}
+
+/// What a run returns: the paths of its four Parquet files and of its record, `run.toml`,
+/// whether the stopping rule (else the iteration cap) ended it (`None` when an opened record
+/// does not say), the readers' counts (`None` for a network from tables or a run without
+/// transit) and every repair; and, hidden, the files of the run, its window and its inputs, by
+/// reference. Nothing of the run itself is kept: its map and its
+/// summary read its files.
+#[pyclass(frozen, module = "openmobisim")]
+pub(crate) struct Run {
     /// `trips.parquet`: one row per trip.
+    #[pyo3(get)]
     trips: PathBuf,
     /// `links.parquet`: one row per link and bin of entry that someone entered.
+    #[pyo3(get)]
     links: PathBuf,
     /// `iterations.parquet`: one row per iteration.
+    #[pyo3(get)]
     iterations: PathBuf,
+    /// `routes.parquet`: one row per trip and leg of what each trip took.
+    #[pyo3(get)]
+    routes: PathBuf,
     /// `run.toml`: the record of what was run.
+    #[pyo3(get)]
     record: PathBuf,
-    /// Whether the stopping rule ended the run (else the iteration cap).
-    stopped_by_rule: bool,
-    /// The OSM reader's counts, as a dict; `None` for a network from tables.
-    osm_report: Option<Py<PyDict>>,
-    /// The GTFS reader's counts, as a dict; `None` without transit.
-    gtfs_report: Option<Py<PyDict>>,
+    /// How it ended, and what it set right or dropped.
+    ended: Ended,
+    /// The run's input and output files (canonical), which a page never replaces.
+    files: Vec<PathBuf>,
+    /// Its window and bin.
+    window: Window,
+    /// The network it ran on.
+    network: Py<Network>,
+    /// The demand it ran.
+    demand: Py<Demand>,
+    /// Its transit, if any.
+    transit: Option<Py<Transit>>,
+}
+
+#[pymethods]
+impl Run {
+    /// The OSM reader's counts (its network's), as a dict; `None` for a network from tables.
+    #[getter]
+    fn osm_report(&self, py: Python<'_>) -> PyResult<Option<Py<PyDict>>> {
+        self.network.get().report.as_ref().map(|r| osm_report(py, r)).transpose()
+    }
+
+    /// The GTFS reader's counts (its transit's), as a dict; `None` without transit.
+    #[getter]
+    fn gtfs_report(&self, py: Python<'_>) -> PyResult<Option<Py<PyDict>>> {
+        self.transit.as_ref().map(|t| gtfs_report(py, &t.get().report)).transpose()
+    }
+
+    /// Whether the stopping rule ended the run (else the iteration cap); `None` when the record
+    /// of an opened run does not say.
+    #[getter]
+    fn stopped_by_rule(&self) -> Option<bool> {
+        self.ended.stopped_by_rule
+    }
+
+    /// Every repair of the run and its inputs, as a dict of dicts, each kind's key to its count:
+    /// `network`, `demand`, `transit` (absent without transit) and `run` (the window's). The
+    /// trips given are `Demand.trips_given`.
+    #[getter]
+    fn repairs(&self, py: Python<'_>) -> PyResult<Py<PyDict>> {
+        let d = PyDict::new(py);
+        d.set_item("network", self.network.get().repairs(py)?)?;
+        d.set_item("demand", self.demand.get().repairs(py)?)?;
+        if let Some(t) = &self.transit {
+            d.set_item("transit", t.get().repairs(py)?)?;
+        }
+        let run = self.ended.repairs.iter().map(|(k, n)| (k.as_str(), *n));
+        d.set_item("run", repairs_dict(py, run)?)?;
+        Ok(d.unbind())
+    }
+
+    /// Write the run's interactive map, one self-contained HTML file, to `path` (replaced if
+    /// there), titled `title`, else with the file's stem; return `path`. A `path` that is one of
+    /// the run's files is refused ([`Run::page_path`]). The run is read from its files.
+    #[pyo3(signature = (path, title=None))]
+    fn map(&self, py: Python<'_>, path: PathBuf, title: Option<String>) -> PyResult<PathBuf> {
+        self.page(py, Page::Map, path, title)
+    }
+
+    /// Write the run's summary, one self-contained HTML page of its numbers, to `path` (replaced
+    /// if there), titled `title`, else with the file's stem; return `path`. A `path` that is one
+    /// of the run's files is refused ([`Run::page_path`]). The run is read from its files.
+    #[pyo3(signature = (path, title=None))]
+    fn summary(&self, py: Python<'_>, path: PathBuf, title: Option<String>) -> PyResult<PathBuf> {
+        self.page(py, Page::Summary, path, title)
+    }
+
+    /// Open the finished run whose record is `record` (a `run.toml`), its four tables beside it,
+    /// without running it (`record::open`).
+    #[staticmethod]
+    #[pyo3(signature = (record, network=None, demand=None, transit=None))]
+    #[allow(clippy::needless_pass_by_value, reason = "pyo3 hands the arguments over by value")]
+    fn open(
+        py: Python<'_>,
+        record: PathBuf,
+        network: Option<&Bound<'_, Network>>,
+        demand: Option<&Bound<'_, Demand>>,
+        transit: Option<&Bound<'_, Transit>>,
+    ) -> PyResult<Self> {
+        record::open(py, &record, (network, demand, transit))
+    }
+}
+
+/// What the pages read of a run: what they keep of it, its iterations (the summary's alone),
+/// its record's text, and the warnings of what the readers set aside.
+pub(crate) struct Read {
+    kept: Kept,
+    iterations: Vec<Iteration>,
+    record: String,
+    warnings: Vec<String>,
+}
+
+impl Run {
+    /// The run of `inputs` whose record is `record`, its four tables beside it, over `window`.
+    /// Its files: its inputs' (canonical, as each input keeps them) and its own.
+    pub(crate) fn of(
+        record: &Path,
+        window: Window,
+        ended: Ended,
+        (network, demand, transit): RunInputs<'_, '_>,
+    ) -> PyResult<Self> {
+        let beside = |name: &str| record.with_file_name(name);
+        let (n, d, t) = (network.get(), demand.get(), transit.map(Bound::get));
+        let inputs = [&n.osm_file, &n.nodes_file, &n.links_file, &d.trips_file];
+        let mut files: Vec<PathBuf> = inputs.into_iter().flatten().cloned().collect();
+        files.extend(t.map(|t| t.gtfs_file.clone()));
+        for path in TABLES.map(beside).iter().chain([&record.to_path_buf()]) {
+            files.push(canonical(path)?);
+        }
+        Ok(Self {
+            trips: beside(TABLES[0]),
+            links: beside(TABLES[1]),
+            iterations: beside(TABLES[2]),
+            routes: beside(TABLES[3]),
+            record: record.to_path_buf(),
+            ended,
+            files,
+            window,
+            network: network.clone().unbind(),
+            demand: demand.clone().unbind(),
+            transit: transit.map(|t| t.clone().unbind()),
+        })
+    }
+
+    /// What `page` reads of the run, beside its record, on its inputs: the trips, links and
+    /// routes tables (`openmobisim_io_parquet::read`), the iterations for the summary alone, and
+    /// the record's text. A file that cannot be read is refused naming it: an `OSError` when it
+    /// cannot be opened, else a `ValueError` (a column missing, say); what the readers set aside
+    /// comes back as warnings, for the caller to show.
+    pub(crate) fn read(&self, page: Option<Page>) -> PyResult<Read> {
+        let (network, demand) = (&self.network.get().network, &self.demand.get().demand);
+        let timetable = self.transit.as_ref().map(|t| &*t.get().timetable);
+        let Window { start, end, bin } = self.window;
+        let window = StepGrid::new(Second(start), bin, end.saturating_sub(start))
+            .map_err(|e| value_error(&e))?;
+        let refused =
+            |e: OutputError| if e.io { PyOSError::new_err(e.to_string()) } else { value_error(&e) };
+        let folder = self.record.parent().unwrap_or(Path::new("."));
+        let dropped = self.ended.dropped();
+        let t = openmobisim_io_parquet::read(folder, demand, network, timetable, window, dropped)
+            .map_err(refused)?;
+        let iterations = match page {
+            Some(Page::Map) => Vec::new(),
+            _ => openmobisim_io_parquet::read_iterations(&self.iterations).map_err(refused)?,
+        };
+        let record = std::fs::read_to_string(&self.record)
+            .map_err(|e| PyOSError::new_err(format!("{}: {e}", self.record.display())))?;
+        let kept = Kept::of(demand, &t.trips, t.routes, t.links, window);
+        Ok(Read { kept, iterations, record, warnings: t.warnings })
+    }
+
+    /// Write the run's `page` to `path`, read from its files; the readers' warnings are shown.
+    fn page(
+        &self,
+        py: Python<'_>,
+        page: Page,
+        path: PathBuf,
+        title: Option<String>,
+    ) -> PyResult<PathBuf> {
+        let stem = self.page_path(page.method(), &path)?;
+        let title = title.unwrap_or(stem);
+        let transit = self.transit.as_ref().map(Py::get);
+        let written = py.detach(|| {
+            let read = self.read(Some(page))?;
+            let run = Summarised {
+                kept: &read.kept,
+                network: &self.network.get().network,
+                timetable: transit.map(|t| &*t.timetable),
+                lines: transit.map(|t| &*t.lines),
+                iterations: &read.iterations,
+                stopped_by_rule: self.ended.stopped_by_rule,
+                record: &read.record,
+            };
+            let written = match page {
+                Page::Map => {
+                    let (network, timetable, lines) = (run.network, run.timetable, run.lines);
+                    let mapped =
+                        Mapped { kept: run.kept, network, timetable, lines, record: run.record };
+                    openmobisim_map::write(&mapped, &title, &path).map_err(|e| match e {
+                        MapError::Io(_) => PyOSError::new_err(e.to_string()),
+                        _ => value_error(&e),
+                    })
+                }
+                Page::Summary => {
+                    openmobisim_summary::write(&run, &title, &path).map_err(|e| match e {
+                        SummaryError::Io(_) => PyOSError::new_err(e.to_string()),
+                        SummaryError::Map(_) => value_error(&e),
+                    })
+                }
+            };
+            written.map(|()| read.warnings)
+        });
+        warn(py, &written?)?;
+        Ok(path)
+    }
+
+    /// A page's title, the stem of `path`, once `path` is known not to be one of the run's five
+    /// files (its four tables and its record) or one of its input files (canonical paths compared): those are refused, a
+    /// `ValueError` naming `method` and the file, before anything is written.
+    fn page_path(&self, method: &str, path: &Path) -> PyResult<String> {
+        if let Ok(target) = std::fs::canonicalize(path)
+            && self.files.contains(&target)
+        {
+            return Err(PyValueError::new_err(format!(
+                "{method}: {} is a file of the run (one of its inputs or outputs); the page \
+                 would replace it",
+                target.display()
+            )));
+        }
+        Ok(path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default())
+    }
 }
 
 /// The loop's parameters: its defaults for the demand's classes, and the keywords given.
@@ -315,7 +692,7 @@ fn parameters(given: &Given<'_>, demand: &RustDemand) -> PyResult<Parameters> {
 
 /// Run the loop on `network`, `demand` (built on that network and that transit) and `transit`
 /// over `window`, two seconds of the clock, and write `trips.parquet`, `links.parquet`,
-/// `iterations.parquet` and `run.toml` into `out`. Keywords: the loop's rows of `PARAMETERS.md`.
+/// `iterations.parquet`, `routes.parquet` and `run.toml` into `out`. Keywords: the loop's rows of `PARAMETERS.md`.
 #[pyfunction]
 #[pyo3(signature = (network, demand, transit=None, *, window, out, **parameters))]
 #[allow(clippy::needless_pass_by_value, reason = "pyo3 hands the arguments over by value")]
@@ -329,19 +706,10 @@ fn run(
     parameters: Option<&Bound<'_, PyDict>>,
 ) -> PyResult<Run> {
     let given = Given::read(Entry::Run, "run", parameters)?;
+    let (network_bound, demand_bound, transit_bound) = (network, demand, transit);
     let (network, demand, transit) = (network.get(), demand.get(), transit.map(|t| t.get()));
     let p = self::parameters(&given, &demand.demand)?;
-    if !Arc::ptr_eq(&network.network, &demand.network) {
-        return Err(PyValueError::new_err("the demand was built on another network"));
-    }
-    let same = match (transit, &demand.transit) {
-        (None, None) => true,
-        (Some(t), Some(d)) => Arc::ptr_eq(&t.timetable, d),
-        _ => false,
-    };
-    if !same {
-        return Err(PyValueError::new_err("the demand was built on another transit"));
-    }
+    built_on(network, demand, transit)?;
     let timetable = transit.map(|t| &*t.timetable);
     let window = (Second(window.0), Second(window.1));
     let (net, dem) = (&*network.network, &demand.demand);
@@ -362,6 +730,9 @@ fn run(
             transfer_walk_max: t.transfer_walk_max,
         }),
         parameters: &p,
+        network_repairs: &network.repairs,
+        trips_given: demand.trips_given,
+        demand_repairs: &demand.repairs,
     };
     // An `out` that would replace an input file is refused before the loop runs: the paths
     // alone tell it, and `write` would refuse it after the run.
@@ -374,50 +745,18 @@ fn run(
             WriteError::Io(_) => PyOSError::new_err(e.to_string()),
             _ => value_error(&e),
         })?;
-        Ok::<_, PyErr>((written, r.stopped_by_rule))
+        Ok::<_, PyErr>((written, r))
     });
-    let (written, stopped_by_rule) = written?;
-    Ok(Run {
-        trips: written.trips.path,
-        links: written.links.path,
-        iterations: written.iterations.path,
-        record: written.record,
-        stopped_by_rule,
-        osm_report: network.report.as_ref().map(|r| osm_report(py, r)).transpose()?,
-        gtfs_report: transit.map(|t| gtfs_report(py, &t.report)).transpose()?,
-    })
-}
-
-/// The OSM reader's counts as a dict.
-fn osm_report(py: Python<'_>, r: &OsmReport) -> PyResult<Py<PyDict>> {
-    let d = PyDict::new(py);
-    d.set_item("nodes", r.nodes)?;
-    d.set_item("links", r.links)?;
-    d.set_item("links_unreachable", r.links_unreachable)?;
-    d.set_item("loops_dropped", r.loops_dropped)?;
-    d.set_item("ways_cut", r.ways_cut)?;
-    Ok(d.unbind())
-}
-
-/// The GTFS reader's counts as a dict; `date` as GTFS writes it, `YYYYMMDD`.
-fn gtfs_report(py: Python<'_>, r: &GtfsReport) -> PyResult<Py<PyDict>> {
-    let d = PyDict::new(py);
-    d.set_item("date", r.date)?;
-    d.set_item("trips", r.trips)?;
-    d.set_item("runs", r.runs)?;
-    d.set_item("calls", r.calls)?;
-    d.set_item("night_runs", r.night_runs)?;
-    d.set_item("frequency_runs", r.frequency_runs)?;
-    d.set_item("stops", r.stops)?;
-    d.set_item("trips_untimed", r.trips_untimed)?;
-    d.set_item("trips_single_call", r.trips_single_call)?;
-    d.set_item("times_interpolated", r.times_interpolated)?;
-    d.set_item("pickup_drop_off_ignored", r.pickup_drop_off_ignored)?;
-    d.set_item("frequency_rows_skipped", r.frequency_rows_skipped)?;
-    d.set_item("footpaths", r.footpaths)?;
-    d.set_item("transfers_applied", r.transfers_applied)?;
-    d.set_item("transfers_skipped", r.transfers_skipped)?;
-    Ok(d.unbind())
+    let (written, r) = written?;
+    warn_repairs(py, "run", &r.repairs)?;
+    if r.trips.kept.iter().all(|&k| !k) {
+        warn_no_trip(py, "run", demand.trips_given, &[&demand.repairs, &r.repairs])?;
+    }
+    let bounds = (network_bound, demand_bound, transit_bound);
+    let window = Window { start: r.window.0.get(), end: r.window.1.get(), bin: p.link_bin };
+    let repairs = r.repairs.kinds().iter().map(|k| (k.key.to_owned(), k.count)).collect();
+    let ended = Ended { stopped_by_rule: Some(r.stopped_by_rule), repairs };
+    Run::of(&written.record, window, ended, bounds)
 }
 
 /// Multimodal dynamic traffic assignment: cars on a point-queue network, bikes and walkers at

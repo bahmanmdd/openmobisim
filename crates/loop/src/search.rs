@@ -29,11 +29,7 @@ fn routes_by(ctx: &Context<'_>, times: &LinkTimes, mode: Mode) -> Vec<Option<Rou
     let mut queries = Vec::new();
     for i in 0..ctx.trip_count() {
         let trip = ctx.trip(i);
-        let (Some(o), Some(d)) =
-            (ctx.demand.origin_end(trip, mode), ctx.demand.destination_end(trip, mode))
-        else {
-            continue;
-        };
+        let Some((o, d)) = ctx.ends(i, mode) else { continue };
         who.push(i);
         queries.push(Query {
             origin: o.node,
@@ -95,7 +91,7 @@ fn journeys(ctx: &Context<'_>) -> Vec<Vec<Journey>> {
     for i in 0..ctx.trip_count() {
         let trip = ctx.trip(i);
         let (access, egress) = (ctx.demand.access(trip), ctx.demand.egress(trip));
-        if access.is_empty() || egress.is_empty() {
+        if !ctx.modes[i].contains(Mode::Transit) || access.is_empty() || egress.is_empty() {
             continue;
         }
         let there = |walk: Duration| ctx.departure[i] + walk.get();
@@ -185,18 +181,13 @@ fn candidates(
     routes: &[(Mode, Vec<Option<Route>>)],
     journeys: &[Vec<Journey>],
 ) -> Vec<(Mode, Vec<Leg>)> {
-    let trip = ctx.trip(i);
     let mut out = Vec::new();
     for (mode, by_trip) in routes {
         let Some(route) = &by_trip[i] else { continue };
         if set.iter().any(|a| a.is_route(*mode, &route.links)) {
             continue;
         }
-        let (Some(o), Some(d)) =
-            (ctx.demand.origin_end(trip, *mode), ctx.demand.destination_end(trip, *mode))
-        else {
-            continue;
-        };
+        let Some((o, d)) = ctx.ends(i, *mode) else { continue };
         let legs = vec![
             Leg::Walk(ctx.gap_walk(o.gap)),
             Leg::Route { mode: *mode, links: route.links.clone() },

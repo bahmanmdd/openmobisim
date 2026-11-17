@@ -1,10 +1,11 @@
 # openmobisim-io-parquet
 
-Writes the three tables of a run, trips, links by time bin and iterations, as three Parquet
-files in a folder, and the run's record, `run.toml`, beside them; and reads an input table
-(nodes, links or trips) from a Parquet file; nothing else: the folder alone tells what was run,
-and, when every input was read from a file, the record alone runs again (the binding's
-`run_file`). Depends on `openmobisim-types`, `-graph`, `-loading` (the links table's type),
+Writes the four tables of a run, trips, links by time bin, iterations and routes, as four
+Parquet files in a folder, and the run's record, `run.toml`, beside them; reads the four back,
+each by the inverse of its writer; and reads an input table (nodes, links or trips) from a
+Parquet file; nothing else: the folder alone tells what was run, the folder and the run's
+inputs give its pages (the binding's `Run.map`, `Run.summary`, `Run.open`), and, when every
+input was read from a file, the record alone runs again (the binding's `run_file`). Depends on `openmobisim-types`, `-graph`, `-loading` (the links table's type),
 `-transit`, `-demand`, `-loop`, `-io-osm` and `-io-gtfs` (their `Report`s, for the record), and
 `parquet` with `arrow-array` and `arrow-schema` (version 59, no default features, the `arrow`
 feature and the `snap` feature, the pure-Rust snappy codec, to read pyarrow's default
@@ -16,39 +17,91 @@ serialisation library.
 - `run`: the loop's `Run`.
 - `network`, `demand`: the `Network` and the `Demand` the run ran on; they give the external
   ids of the links, the trips and the user classes, their counts and their fingerprints.
-- `given`: `Given { source, files, build_values, stop_walk_max, transit, parameters }`, what
+- `given`: `Given { source, files, build_values, stop_walk_max, transit, parameters,
+  network_repairs, trips_given, demand_repairs }`, what
   else the run was given, every value as it was used, defaults included: `Source::Osm(&report)`
   or `Source::Tables`; `Files { osm, nodes, links, trips, gtfs }`, the canonical path
   (absolute, symbolic links resolved) of each input read from a file, `None` for one given in
   memory; the network's `BuildValues`; the demand's `stop_walk_max` (m); `None` or
   `Some(Transit { timetable, report, transfer_walk_max })` (the GTFS reader's timetable, its
-  counts and the `transfer_walk_max` it was read with, m); the loop's `Parameters`. The bike
+  counts and the `transfer_walk_max` it was read with, m); the loop's `Parameters`; what the
+  network's readers repaired (the OSM reader's, or the tables' reader's and the build's), the
+  trip rows given, and what the demand's readers repaired or dropped, for the record. The bike
   and walk speeds of `build_values` must be the network's (it keeps them in m/s, from which
   km/h is not recovered exactly, hence the second copy); `capacity_per_lane` is not kept by the
   network and cannot be checked.
-- `folder`: where the files go, created if missing; a file of the same name is replaced. A
-  `run.toml` already there is removed after the record and the three tables are built (so
-  every refusal comes before it) and before they are written, and the new one is written last, so a folder holding a record holds the complete run it describes: a write that
-  fails part way leaves no record.
+- `folder`: where the files go, created if missing; a file of the same name is replaced. Every
+  refusal comes before anything is written: the inputs checked against the run, every journey
+  taken checked against the timetable given (`NotTheRunsJourney`), the record and the trips,
+  links and iterations tables built. Then a `run.toml` already there is removed, the three
+  tables written, the routes table streamed from the run in batches of 8 192 trips (it refuses
+  nothing; only an input or output failure can stop it), and the new record written last, so a
+  folder holding a record holds the complete run it describes: a write that fails part way
+  leaves no record.
 
 `read_table(path)`: one Parquet file read whole, an `InputTable`: `names()`, its column names in
-the file's order, and `column(name, kind)`, the column's cells in row order, `None` for a null,
-as `Cells::Text` (from `Utf8` or `LargeUtf8`), `Cells::Integer` (`i64`, from `Int32`, `Int64`,
-`UInt32` or `UInt64`; a `UInt64` above 2⁶³ − 1 is refused as out of range) or `Cells::Float`
-(`f64`, from `Float64` or one of those integer types, rounded to the nearest above 2⁵³), as
-`kind` (`Kind::Text`, `Integer`, `Float`) asks; a column of Arrow's `Null` type (pyarrow's type
-for a column of nulls alone) is all nulls of any kind, as the same column in memory is. Which columns a table holds, which may be null
-and what a row means is the caller's contract, the same for a file as for a table in memory
-(`crates/binding/README.md`); this crate decodes and checks each column's type against the kind
-asked for. Compression read: none and snappy; any other codec is refused by name before a page
-is decoded.
+the file's order, and `column(name)`, the column's cells in row order, of the column's own
+kind, `None` for a null: `Cells::Text` (from `Utf8` or `LargeUtf8`), `Cells::Integer` (`i128`,
+exact, from `Int8` to `Int64` and `UInt8` to `UInt64`) or `Cells::Float` (`f64`, from `Float32`,
+widened exactly, or `Float64`); a column of Arrow's `Null` type (pyarrow's type for a column of
+nulls alone) is all nulls, as the same column in memory is. Any other type (a boolean, a date, a
+list) is refused naming the column and its type. Which columns a table holds, which may be null,
+how a cell of one kind is read as a field of another and what a row means is the caller's
+contract, the same for a file as for a table in memory (`crates/binding/README.md`); this crate
+decodes. Compression read: none and snappy; any other codec is refused by name before a page is
+decoded.
+
+`read(folder, demand, network, timetable, window, dropped)`: what the run's pages read of the tables
+`write` wrote into `folder`, for the run of `demand` on `network` and `timetable` over `window`
+(a `StepGrid`, the bins of the links table), as `Tables { trips, links, routes, warnings }`.
+`read_iterations(path)` reads the fourth (the summary's alone). One reader per file, each
+public: `read_trips`, `read_links`, `read_routes`, `read_iterations`; each finds its columns
+by name (another order, or other columns beside them, read the same) and reads only those the
+pages need:
+- `TripRows`, per trip of the demand in its order: `mode` (none without an alternative),
+  `travel_time` (s, `NaN` for null), `finished`, `present` (false for a trip without a row). Not read: `class_id`, `departure_s` (the
+  demand's), `arrival_s`, `cost`, `alternatives`.
+- `Links`, per (link, bin) row in link then bin order: the link, the bin's index, `cars`,
+  `car_time` (s; a null, no car, as 0 s), `bikes`, `walkers`. Not read: the exit times.
+- `Routes`, per trip of the demand in its order: its legs (`RouteLeg`: `WalkGap(seconds)`,
+  `Route { mode, links }`, `Ride(Ride)`, `TransferWalk(Footpath)`, the transit crate's two
+  types); none without an alternative; `None` for a trip left out of the journeys (below). Each
+  distinct link id is looked up once.
+- `Iteration`s, the loop's rows, in the file's order.
+- `warnings`: what was found and set aside, each naming its file and the first five trips or
+  links with their count, for the caller to show.
+
+**The rule (the owner's): refuse only what cannot be read; warn on the rest.** A reader
+refuses (`OutputError`, naming the file) only when the file is missing or not a readable Parquet
+file, a column it needs is missing or of a type it cannot read (a list of text whatever its
+inner field's name, `item` as written here or `element` as pyarrow writes it), or a row's own id
+(its trip in `trips.parquet` and `routes.parquet`, its link in `links.parquet`) names nothing
+the inputs hold, so the row cannot be placed. Everything else is a warning and the reading goes
+on with what agrees:
+
+| Found | What is done |
+|---|---|
+| a trip of the demand without a row in `trips.parquet` | read as not run (`present` false): the run writes no row for a trip it dropped; warned only when their number is not the record's count of trips the run dropped (`dropped`, the sum of `[result.repairs]` `trips_outside_window` and `trips_after_window`) |
+| a trip's second row in `trips.parquet` | set aside, the first used |
+| a `mode` that is not car, bike, walk or transit | read as none |
+| a `links.parquet` row whose bin is off the record's grid or outside its window | set aside |
+| a (link, bin) given twice | the first row used |
+| a trip whose legs are misnumbered (not 0 to n − 1 once each), of an unknown kind, without a value their kind needs, or naming a link, run or stop the inputs do not hold | left out of the journeys |
+| a `walk_gap` or `transfer_walk` without its seconds | its seconds unknown (`NaN`): the trip's legs show no split, its door-to-door time stays |
+| a trip whose legs do not agree with its mode in `trips.parquet` (`agrees`: without a mode, no leg; car, bike or walk, exactly one route of that mode and no ride; transit, at least one ride and no route) | left out of the journeys |
+
+A trip left out is in no pair of the map and in no transit count; both pages' footers say how
+many ("N trips left out: their routes do not agree with the trips table"). Undetectable, said
+once: a value changed in place (a time, a count, a stop, `stopped_by_rule`), and a link bin
+replaced by a divisor of it (every bin of 60 s also starts on a grid of 30 s; 60 s replaced by
+120 s is seen only where a bin starts on an odd minute).
 
 ## Outputs
 `Written`: one `Table` (its `path` and its `rows`) per Parquet file, and `record`, the path of
-`run.toml`. Three tables, one row per entity,
+`run.toml`. Four tables, one row per entity,
 external ids as strings, every column named with its unit, every time of day in seconds of the
 clock, null where there is no value:
-- `trips.parquet`, one row per trip in trip id order (the external ids sorted bytewise):
+- `trips.parquet`, one row per trip run (a trip the run dropped, outside its window, has none), in trip id order (the external ids sorted bytewise):
   `trip_id` (Utf8), `class_id` (Utf8), `departure_s` (UInt32), `mode` (Utf8, nullable: `car`,
   `bike`, `walk`, `transit`), `arrival_s`, `travel_time_s` (Float64, nullable), `finished`
   (Boolean), `cost` (Float64, nullable), `alternatives` (UInt32).
@@ -60,15 +113,40 @@ clock, null where there is no value:
   `without_transit`, `without_stop` (UInt64), `offered_share`, `switch_share`, `found_share`,
   `gap` (Float64, nullable), `search_s`, `choose_s`, `load_s`, `measure_s`, `assess_s`
   (Float64).
+- `routes.parquet`, what each trip took at the last iteration, one row per trip and leg, in
+  trip id order then leg order; a trip without an alternative has no row, and routes nobody took
+  are not written: `trip_id` (Utf8), `leg` (UInt32, from 0), `kind` (Utf8), `seconds` (Float64,
+  nullable), `links` (List<Utf8>, nullable: the link ids in the order travelled), `run_id`,
+  `board_stop`, `alight_stop` (Utf8, nullable), `board_s`, `alight_s` (UInt32, nullable,
+  seconds of the clock), `from_stop`, `to_stop` (Utf8, nullable). The kinds, one plain list:
+  - `walk_gap`: a walk between a door and the network or a stop, on no link, priced by its
+    seconds: `seconds` holds them (constant over the run; 0 where the door is at the node or
+    stop).
+  - `car`, `bike`, `walk`: a route on the network: `links` holds its link ids (empty when the
+    trip's two nodes are one); `seconds` is null: the loop keeps a trip's realised door-to-door
+    time (`trips.parquet`), not each route's.
+  - `ride`: one transit run from stop to stop: `run_id`, `board_stop`, `alight_stop`, `board_s`
+    (the run's departure from its board stop), `alight_s` (its arrival at its alight stop);
+    `seconds` null (the two clock seconds give it).
+  - `transfer_walk`: a footpath of the timetable between two rides: `from_stop` (the stop left),
+    `to_stop` (the stop reached) and `seconds`, the timetable's. Two columns of its own, so a
+    ride's stops and a walk's never share a column. Where the next ride leaves from the stop the
+    last one was left at there is no row.
+
+  A car, bike or walk trip is a `walk_gap`, its route and a `walk_gap`; a transit trip a
+  `walk_gap`, its rides (with the transfer walks between them) and a `walk_gap`.
 
 Each column's meaning is the loop's (`crates/loop/README.md`) and is written beside its schema
-in `src/trips.rs`, `src/links.rs` and `src/iterations.rs`. A column that cannot be null is
+in `src/trips.rs`, `src/links.rs`, `src/iterations.rs` and `src/routes.rs`; the writer and the
+reader of a file share its one schema. A column that cannot be null is
 marked so in the file's schema.
 
 `run.toml` (TOML 1.0; its layout also in `src/record.rs`), keys in this fixed order:
 - A first line `# ...` saying what the file is; `format = 1`; `openmobisim_version` (the
   package's version; a development version, ending `-dev`, does not identify the commit it was
-  built from); `window_start_s`, `window_end_s` (seconds of the clock).
+  built from); `window_start_s`, `window_end_s` (seconds of the clock: the window the run
+  used), and `window_end_given_s` only when the run moved the end given up to a whole bin (the
+  end given, which `run_file` runs from, so it repeats the repair).
 - `[parameters]`: each row of `PARAMETERS.md` the run read, by its name, at the value it used,
   defaults included, in the table's order, each followed by its unit as a comment, the Unit
   column of `PARAMETERS.md` (`capacity_per_lane = 1800.0  # veh/h per lane`): the three build
@@ -81,13 +159,20 @@ marked so in the file's schema.
   value is the OSM reader's one table (`crates/io-osm/README.md`).
 - `[network]`: `source` (`"osm"` or `"tables"`), `nodes`, `links`, `fingerprint`, then
   `osm_file`, or `nodes_file` and `links_file`, each absent for a table given in memory;
-  `[network.osm_report]`, the OSM reader's five counts, absent for a network from tables.
-- `[demand]`: `trips`, `classes` (the class ids in id order), `fingerprint`, `trips_file`
-  (absent for a table given in memory).
+  `[network.osm_report]`, the OSM reader's five counts, absent for a network from tables;
+  `[network.repairs]`, each kind of the network's readers' repairs with its count.
+- `[demand]`: `trips`, `trips_given` (the rows of the trips table, only when the demand dropped
+  some), `classes` (the class ids in id order), `fingerprint`, `trips_file` (absent for a table
+  given in memory); `[demand.repairs]`.
 - `[transit]`, absent without transit: `stops`, `runs`, `fingerprint`, `gtfs_file`;
   `[transit.gtfs_report]`, the GTFS reader's fifteen counts (`date` as GTFS writes it,
-  `YYYYMMDD`).
-- `[result]`: `iterations` (the rows of the iterations table), `stopped_by_rule`.
+  `YYYYMMDD`); `[transit.repairs]`.
+- `[result]`: `iterations` (the rows of the iterations table), `stopped_by_rule`;
+  `[result.repairs]`, the run's (the window's).
+
+A `repairs` table is written only when a repair of its kind was made, `trips_given` and
+`window_end_given_s` only when they differ from `trips` and `window_end_s`: a run that needed
+no repair has the record it had before repairs were counted.
 
 A fingerprint is the 64-bit FNV-1a hash of what the network, the demand or the timetable was
 built from (each crate's README says exactly what it feeds), as 16 lower-case hexadecimal
@@ -99,7 +184,9 @@ drive; on Windows, a known limit, untested); a path that is not UTF-8 is refused
 at the same depth records the same paths. Not written: a time stamp, the machine, the thread
 count; so a second write of the same run, and a run at any number of threads, give the same
 bytes. `KEYS` lists every table of the record and the keys the writer may write in it, for a
-reader to refuse any other. `format` stays 1: the file keys joined tables that already existed.
+reader to refuse any other. `format` stays 1 (nothing has been released):
+the file keys joined tables that already existed, and the first line names the fourth table;
+no key changed.
 
 ## Units
 Seconds and counts; metric only. Every time of day, `departure_s`, `arrival_s`, `bin_start_s`,
@@ -132,6 +219,10 @@ fractions.
   name, no time stamp, so a second write of the same run is the same bytes.
 
 ## Errors
+`OutputError` from the four readers, naming the file: `io` when it cannot be opened or read
+(missing, say); else a column it needs is missing or of another type, or a row's own trip or
+link is not of the inputs given. Everything else a reader finds is a warning (the table above).
+
 `ReadError` from `read_table` and `column`: a file that cannot be opened or read, or a
 directory (`Io`), a codec other than snappy (`Codec`, naming it), a column name held twice
 (`TwoColumns`), a column the file lacks (`NoColumn`), a type not
@@ -144,13 +235,14 @@ not the run's (`NotTheRunsDemand`), a network lacking a link the run names
 (`NotTheRunsNetwork`), a transit whose stop count is not the demand's (`NotTheRunsTransit`),
 parameters with a coefficient row count other than the classes' or a link bin other than the
 run's (`NotTheRunsParameters`), build values whose bike or walk speed is not the network's
-(`NotTheNetworksSpeeds`), a value of the record that is a float not finite or an integer
-above 2⁶³ − 1 (`NotWritable`, naming its key); a `trips.parquet`, `links.parquet`, `iterations.parquet` or
-`run.toml` in the folder that is one of `given.files` (canonical paths compared; a file or
+(`NotTheNetworksSpeeds`), a journey taken that rides a run or calls at a stop the transit given
+does not have (`NotTheRunsJourney`, naming the trip), a value of the record that is a float not finite or an integer
+above 2⁶³ − 1 (`NotWritable`, naming its key); a `trips.parquet`, `links.parquet`,
+`iterations.parquet`, `routes.parquet` or `run.toml` in the folder that is one of `given.files` (canonical paths compared; a file or
 folder not there yet is none), which the write would destroy (`WouldReplaceInput`, naming it;
 the same check is public, `replaces_no_input(files, folder)`, for a caller to make before the
 run, as the Python binding does; a known limit: paths are compared, not files, so an input
-that is a hard link of one of the four output names is not recognised and would be replaced);
+that is a hard link of one of the five output names is not recognised and would be replaced);
 the folder or a file that cannot be created or written (`Io`); the Arrow or Parquet writer's
 refusal (`Parquet`).
 
@@ -171,8 +263,10 @@ is text in its `modes` cell, read like any other text: the reader knows no mode.
   walker at 1 125 s, a walker still walking at the window's end (arrival null, cost 1 125 s / 60 = 18.75 min), a
   trip without an alternative, three cars through two streets by the point queue (`st1` exits
   at 25 344, 25 346, 25 348 s; `st2` at 25 444, 25 448, 25 452 s, the bin from 25 320 s), in
-  three iterations. The test writes the three files, checks they exist with 7, 4 and 3 rows,
-  and that a second write is byte-identical; then
+  three iterations. The test writes the four files, checks they exist with 7, 4, 3 and 18 rows,
+  and that a second write is byte-identical, and reads each back by the crate's readers as
+  written (the trips' modes, times and finished, the links rows, the iterations, each trip's
+  legs agreeing with its mode), with no warning; then
   `tests/read_back.py` reads them with **pyarrow 26.0.1** and checks every column's name,
   Arrow type and nullability and every value against the hand numbers written in the script,
   that no float is `NaN`, and that every finished trip's `arrival_s` is `departure_s +
@@ -186,10 +280,19 @@ is text in its `modes` cell, read like any other text: the reader knows no mode.
   difference (CI runs it):
   `python3 crates/io-parquet/tests/read_record.py target/tmp/io-parquet-hand-run`.
   A second write of `run.toml` is byte-identical (`hand_run.rs`).
+- **Routes on a timetable** (`tests/routes.rs`): a trip walks 100 m to its stop (75 s), rides
+  r0 from s1 (200 s) to s3 (400 s), walks the 30 s footpath to s3b, rides r1 from s3b (500 s)
+  to s4 (600 s), walks 0 m: five rows read with the Arrow reader alone (kinds, seconds 75, 30
+  and 0, the run ids, the four stops and the four clock seconds, the from and to stops), and
+  every leg read back by `read_routes` by hand; the same 86 100 s later (a window not starting
+  at 0, rides past midnight: 86 300 to 86 700 s of the clock); a journey on a timetable lacking
+  its second run refused before anything is written (the folder not made); 8 191, 8 192 and
+  8 193 walkers with two trips without an alternative at each side of the batch boundary: three
+  rows per walker in trip id order, read back whole.
 - The record's refusals: a coefficient that is not a number and a seed of 2⁶⁴ − 1, each named
   by its key; parameters, a transit, a bike speed and a walk speed not the run's; nothing
   written on any of them, and a refused write into a folder holding a complete earlier run
-  leaves its four files byte-identical. A used folder whose `links.parquet` cannot be written (a folder of that name):
+  leaves its five files byte-identical. A used folder whose `links.parquet` cannot be written (a folder of that name):
   the write fails and the earlier `run.toml` is gone. A run without a class: no coefficients
   comment or table.
 - The refusals: a demand and a network not the run's, a folder that cannot be made.

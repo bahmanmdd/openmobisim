@@ -4,12 +4,23 @@
 //! - **Stops** (`stops.txt`): every row with `location_type` 0 or blank, projected with the
 //!   network's projection; rows of `location_type` 1 to 4 (stations, entrances, nodes, boarding
 //!   areas) are not stops.
-//! - **Refusals.** A row of `stops.txt`, `trips.txt` or `stop_times.txt` that cannot be read is
-//!   an error naming the file, the row's stop or trip and the value: a position, time,
-//!   sequence, distance or `location_type` that is not one, an empty or repeated stop id, a
-//!   repeated trip id, a call of a trip that `trips.txt` does not hold, a call at a stop that is
-//!   not a stop with a position. Every row of
-//!   `stop_times.txt` is read, whichever day its trip runs.
+//! - **Repairs** (each noted in the report's `repairs`, by kind): a stop row whose
+//!   `location_type` is not blank or 0 to 4, whose id is empty, or whose position is not one
+//!   within ±180° and ±84° is skipped (`stops_skipped`); of a repeated stop id the first is kept
+//!   (`stops_repeated`); of a repeated trip id the first row (its service) is kept
+//!   (`trips_repeated`; the calls of both are one trip, as `stop_times.txt` cannot tell them
+//!   apart); a row of `stop_times.txt` whose trip `trips.txt` does not hold is skipped
+//!   (`stop_times_skipped`); a call at a stop not held, or with a `stop_sequence` that is not a
+//!   whole number, is dropped (`calls_dropped`; a run left with one call is dropped as
+//!   `trips_single_call`); a time that is not `H:MM:SS` is read as blank (`times_unread`); a
+//!   `shape_dist_traveled` that is not a finite number as blank (`distances_unread`); a trip of `trips.txt` left with no call at all (none given, or
+//!   every one dropped) has no run (`trips_without_call`; of the trips in service that day or the night
+//!   before, as `trips_single_call`); an absent
+//!   `arrival_time` or `departure_time` column as blank in every row (`columns_absent`); a
+//!   `frequencies.txt` without one of its columns is not read (`files_unread`); two runs of one
+//!   name (overlapping frequency periods) keep the first (`runs_repeated`); a run whose calls go
+//!   back in time is dropped (`trips_out_of_order`). Every row of `stop_times.txt` is read,
+//!   whichever day its trip runs.
 //! - **Trips** (`trips.txt`): those whose service runs on the day, and, for the night runs,
 //!   those whose service runs on the day before.
 //! - **Calls** (`stop_times.txt`, streamed): each trip's rows in `stop_sequence` order; times
@@ -37,6 +48,7 @@ use openmobisim_types::time::Second;
 use crate::calendar::Services;
 use crate::source::Feed;
 use crate::{GtfsError, Report, required};
+use openmobisim_types::repairs::Repairs;
 
 /// A blank time.
 const UNSET: u32 = u32::MAX;
@@ -67,35 +79,37 @@ pub(crate) fn read_stops(
     let mut stops = Stops { index: HashMap::new(), ids: Vec::new(), xy: Vec::new() };
     while csv.next()? {
         let external = csv.field(id);
-        let bad = |column, value: &str| GtfsError::BadValue {
-            file: f,
-            id: external.to_owned(),
-            column,
-            value: value.to_owned(),
+        let skip = |repairs: &mut Repairs| {
+            let what = "stops whose location_type, id or position cannot be read: skipped";
+            repairs.note("stops_skipped", what, external.to_owned());
         };
         match csv.get(kind) {
             "" | "0" => {}
             "1" | "2" | "3" | "4" => continue,
-            v => return Err(bad("location_type", v)),
-        }
-        if external.is_empty() {
-            return Err(bad("stop_id", external));
+            _ => {
+                skip(&mut report.repairs);
+                continue;
+            }
         }
         // Within the projection's range: longitude ±180°, latitude ±84° (the UTM system).
-        let degrees = |column, text: &str, limit: f64| {
-            let v = text.parse::<f64>().ok().filter(|v| v.is_finite() && v.abs() <= limit);
-            v.ok_or_else(|| bad(column, text))
+        let degrees = |text: &str, limit: f64| {
+            text.parse::<f64>().ok().filter(|v| v.is_finite() && v.abs() <= limit)
         };
-        let x = degrees("stop_lon", csv.field(lon), 180.0)?;
-        let y = degrees("stop_lat", csv.field(lat), 84.0)?;
-        let position = LonLat::new(x, y);
+        let (Some(x), Some(y), false) =
+            (degrees(csv.field(lon), 180.0), degrees(csv.field(lat), 84.0), external.is_empty())
+        else {
+            skip(&mut report.repairs);
+            continue;
+        };
         if stops.index.contains_key(external) {
-            return Err(GtfsError::RepeatedId { file: f, id: external.to_owned() });
+            let what = "stop ids given twice: the first kept";
+            report.repairs.note("stops_repeated", what, external.to_owned());
+            continue;
         }
         let s = u32::try_from(stops.ids.len()).expect("stops fit u32");
         stops.index.insert(external.to_owned(), s);
         stops.ids.push(external.to_owned());
-        stops.xy.push(projection.project(position));
+        stops.xy.push(projection.project(LonLat::new(x, y)));
     }
     report.stops = u32::try_from(stops.ids.len()).expect("stops fit u32");
     Ok(stops)
@@ -131,7 +145,9 @@ fn read_trips(
     while csv.next()? {
         let id = csv.field(trip);
         if !trips.all.insert(id.to_owned()) {
-            return Err(GtfsError::RepeatedId { file: f, id: id.to_owned() });
+            let what = "trip ids given twice in trips.txt: the first row kept";
+            report.repairs.note("trips_repeated", what, id.to_owned());
+            continue;
         }
         let s = services.index[csv.field(service)] as usize;
         if !on_day[s] && !on_eve[s] {
@@ -159,8 +175,12 @@ fn read_frequencies(
     let mut out: Periods = HashMap::new();
     let f = "frequencies.txt";
     let Some(mut csv) = feed.optional_csv(f)? else { return Ok(out) };
-    let (trip, start) = (required(&csv, f, "trip_id")?, required(&csv, f, "start_time")?);
-    let (end, headway) = (required(&csv, f, "end_time")?, required(&csv, f, "headway_secs")?);
+    let columns = ["trip_id", "start_time", "end_time", "headway_secs"].map(|c| csv.column(c));
+    let [Some(trip), Some(start), Some(end), Some(headway)] = columns else {
+        let what = "optional files without one of their columns: not read";
+        report.repairs.note("files_unread", what, f);
+        return Ok(out);
+    };
     while csv.next()? {
         let Some(&t) = trips.index.get(csv.field(trip)) else { continue };
         let times = (parse_time(csv.field(start)), parse_time(csv.field(end)));
@@ -199,41 +219,51 @@ fn read_stop_times(
     let mut csv = feed.csv(f)?;
     let (trip, stop) = (required(&csv, f, "trip_id")?, required(&csv, f, "stop_id")?);
     let sequence = required(&csv, f, "stop_sequence")?;
-    let (arrival, departure) =
-        (required(&csv, f, "arrival_time")?, required(&csv, f, "departure_time")?);
+    let (arrival, departure) = (csv.column("arrival_time"), csv.column("departure_time"));
+    for (column, name) in [(arrival, "arrival_time"), (departure, "departure_time")] {
+        if column.is_none() {
+            let what = "time columns absent from stop_times.txt: read as blank in every row";
+            report.repairs.note("columns_absent", what, name);
+        }
+    }
     let (pickup, drop_off) = (csv.column("pickup_type"), csv.column("drop_off_type"));
     let distance = csv.column("shape_dist_traveled");
     let mut rows = Vec::new();
     while csv.next()? {
-        // Every row is read, whichever day its trip runs: a bad row is an error, not a skip.
+        // Every row is read, whichever day its trip runs.
         let id = csv.field(trip);
-        let bad = |column, value: &str| GtfsError::BadValue {
-            file: f,
-            id: id.to_owned(),
-            column,
-            value: value.to_owned(),
-        };
         if !trips.all.contains(id) {
-            let (trip, stop_sequence) = (id.to_owned(), csv.field(sequence).to_owned());
-            return Err(GtfsError::UnknownTrip { trip, stop_sequence });
+            let what = "rows of stop_times.txt whose trip trips.txt does not hold: skipped";
+            report.repairs.note("stop_times_skipped", what, id.to_owned());
+            continue;
         }
-        let Some(&s) = stops.index.get(csv.field(stop)) else {
-            return Err(GtfsError::UnknownStop {
-                trip: id.to_owned(),
-                stop: csv.field(stop).to_owned(),
-            });
+        let (Some(&s), Ok(seq)) =
+            (stops.index.get(csv.field(stop)), csv.field(sequence).parse::<u32>())
+        else {
+            let what = "calls at a stop not held, or with a stop_sequence that is not a whole number: dropped";
+            report.repairs.note("calls_dropped", what, id.to_owned());
+            continue;
         };
-        let seq = csv.field(sequence);
-        let seq = seq.parse::<u32>().map_err(|_| bad("stop_sequence", seq))?;
-        let time = |column, c| parse_time(csv.field(c)).ok_or_else(|| bad(column, csv.field(c)));
-        let (a, d) = (time("arrival_time", arrival)?, time("departure_time", departure)?);
+        let mut unread = false;
+        let mut time = |c: Option<usize>| match parse_time(csv.get(c)) {
+            Some(t) => t,
+            None => {
+                unread = true;
+                UNSET
+            }
+        };
+        let (a, d) = (time(arrival), time(departure));
+        if unread {
+            let what = "times that are not H:MM:SS: read as blank";
+            report.repairs.note("times_unread", what, id.to_owned());
+        }
         let distance = match csv.get(distance) {
             "" => f64::NAN,
-            v => v
-                .parse::<f64>()
-                .ok()
-                .filter(|v| v.is_finite())
-                .ok_or_else(|| bad("shape_dist_traveled", v))?,
+            v => v.parse::<f64>().ok().filter(|v| v.is_finite()).unwrap_or_else(|| {
+                let what = "shape_dist_traveled values that are not a finite number: read as blank";
+                report.repairs.note("distances_unread", what, id.to_owned());
+                f64::NAN
+            }),
         };
         let Some(&t) = trips.index.get(id) else { continue };
         if csv.get(pickup) == "1" || csv.get(drop_off) == "1" {
@@ -370,7 +400,27 @@ pub(crate) fn read_runs(
     let frequencies = read_frequencies(feed, &trips, report)?;
     let mut rows = read_stop_times(feed, &trips, stops, report)?;
     let mut out = Vec::new();
+    let mut names = HashSet::new();
+    // A run whose calls go back in time is dropped; of two runs of one name (overlapping
+    // frequency periods) the first is kept.
     let mut push = |(name, calls): Draft, report: &mut Report| {
+        let mut clock = 0;
+        let in_order = calls.iter().all(|&(_, a, d)| {
+            let ok = a <= d && a >= clock;
+            clock = d;
+            ok
+        });
+        if !in_order {
+            let what = "runs whose calls go back in time: dropped";
+            report.repairs.note("trips_out_of_order", what, name);
+            return false;
+        }
+        if !names.insert(name.clone()) {
+            let what =
+                "runs of a name already given (overlapping frequency periods): the first kept";
+            report.repairs.note("runs_repeated", what, name);
+            return false;
+        }
         report.runs += 1;
         report.calls += calls.len() as u64;
         let to_call = |&(s, a, d): &(u32, u32, u32)| Call {
@@ -379,9 +429,12 @@ pub(crate) fn read_runs(
             departure: Second(d),
         };
         out.push((name, calls.iter().map(to_call).collect()));
+        true
     };
+    let mut called = vec![false; trips.ids.len()];
     for run in rows.chunk_by_mut(|a, b| a.trip == b.trip) {
         let t = run[0].trip as usize;
+        called[t] = true;
         if !fill_times(run, &stops.xy, report) {
             report.trips_untimed += 1;
             continue;
@@ -394,16 +447,19 @@ pub(crate) fn read_runs(
         let drafts = expand(&trips.ids[t], run, periods);
         if trips.yesterday[t] {
             for draft in drafts.iter().cloned().filter_map(night) {
-                report.night_runs += 1;
-                push(draft, report);
+                report.night_runs += u32::from(push(draft, report));
             }
         }
         if trips.today[t] {
             for draft in drafts {
-                report.frequency_runs += u32::from(periods.is_some());
-                push(draft, report);
+                let pushed = push(draft, report);
+                report.frequency_runs += u32::from(periods.is_some() && pushed);
             }
         }
+    }
+    for t in (0..called.len()).filter(|&t| !called[t]) {
+        let what = "trips with no call left (none given, or every one dropped): no run";
+        report.repairs.note("trips_without_call", what, trips.ids[t].clone());
     }
     Ok(out)
 }

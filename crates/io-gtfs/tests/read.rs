@@ -8,7 +8,7 @@ mod common;
 use common::{CALENDAR, STOP_TIMES, STOPS, calls, hms, read, run, street, zip};
 use openmobisim_graph::geometry::{Position, Xy};
 use openmobisim_graph::network::{LinkRow, NetworkBuilder};
-use openmobisim_io_gtfs::GtfsError;
+use openmobisim_io_gtfs::{GtfsError, Report};
 use openmobisim_types::mode::{Mode, ModeSet};
 use openmobisim_types::units::Metres;
 
@@ -255,166 +255,164 @@ fn feed(file: &'static str, text: String) -> Vec<(&'static str, String)> {
     files
 }
 
-fn bad(file: &'static str, id: &str, column: &'static str, value: &str) -> GtfsError {
-    GtfsError::BadValue { file, id: id.to_owned(), column, value: value.to_owned() }
-}
-
-fn repeated(file: &'static str, id: &str) -> GtfsError {
-    GtfsError::RepeatedId { file, id: id.to_owned() }
-}
-
 fn times(rows: &str) -> String {
     format!("{GOOD_TIMES}{rows}")
 }
 
-/// Each case, one bad row in an otherwise good feed, refused with the error expected.
-fn refused(name: &str, cases: Vec<(Vec<(&'static str, String)>, GtfsError)>) {
-    for (i, (files, want)) in cases.into_iter().enumerate() {
-        let refs: Vec<(&str, &str)> = files.iter().map(|(n, t)| (*n, t.as_str())).collect();
-        let err = read(&format!("{name}-{i}"), &refs).unwrap_err();
-        assert_eq!(err, want, "{name}, case {i}");
+/// Repairs as (key, count, first ids).
+type Noted = Vec<(&'static str, u64, Vec<String>)>;
+
+/// The feed `files` read, its report's repairs as (key, count, first ids), and its runs' calls.
+fn repaired(name: &str, files: &[(&'static str, String)]) -> (Report, Noted) {
+    let refs: Vec<(&str, &str)> = files.iter().map(|(n, t)| (*n, t.as_str())).collect();
+    let (_, report) = read(name, &refs).expect("the feed is read");
+    let kinds = report.repairs.kinds().iter().map(|k| (k.key, k.count, k.first.clone())).collect();
+    (report, kinds)
+}
+
+fn one(key: &'static str, id: &str) -> Noted {
+    vec![(key, 1, vec![id.to_owned()])]
+}
+
+/// Set right, noted, the read going on: in `stops.txt`, a position that is not a number or
+/// outside longitude ±180° and latitude ±84°, an empty stop id, an undefined `location_type`
+/// (the stop skipped); a repeated stop id (the first kept); in `trips.txt`, a repeated trip id
+/// (the first row kept). The four stops A to D, one trip T1 from A to B.
+#[test]
+fn a_bad_row_of_stops_and_trips_is_set_right_and_noted() {
+    for (i, (text, id)) in [
+        (format!("{STOPS}X,Broken,north,4.36\n"), "X"),
+        (format!("{STOPS}X,Far,52.0,190\n"), "X"),
+        (format!("{STOPS}X,Pole,89.0,4.36\n"), "X"),
+        (format!("{STOPS},Nameless,52.0,4.36\n"), ""),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let (report, kinds) = repaired(&format!("stops-{i}"), &feed("stops.txt", text));
+        assert_eq!((report.stops, report.runs), (4, 1), "case {i}");
+        assert_eq!(kinds, one("stops_skipped", id), "case {i}");
+    }
+    // A of an undefined location_type is skipped: T1's call there is dropped, and T1, left with
+    // one call, is dropped as a trip of one call.
+    let typed = STOPS
+        .replace("stop_lon\n", "stop_lon,location_type\n")
+        .replace("Alpha,52.0,4.36", "Alpha,52.0,4.36,x");
+    let (report, kinds) = repaired("location", &feed("stops.txt", typed));
+    assert_eq!((report.stops, report.runs, report.trips_single_call), (3, 0, 1));
+    let keys: Vec<_> = kinds.iter().map(|k| (k.0, k.1)).collect();
+    assert_eq!(keys, [("stops_skipped", 1), ("calls_dropped", 1)]);
+    let (report, kinds) =
+        repaired("stop-again", &feed("stops.txt", format!("{STOPS}A,Again,52.0,4.36\n")));
+    assert_eq!((report.stops, kinds), (4, one("stops_repeated", "A")));
+    let twice = "route_id,service_id,trip_id\nR,WK,T1\nR,WK,T1\n".into();
+    let (report, kinds) = repaired("trip-again", &feed("trips.txt", twice));
+    assert_eq!((report.trips, report.runs, kinds), (1, 1, one("trips_repeated", "T1")));
+}
+
+/// Set right, noted: in `calendar.txt`, a date that is not one (the row skipped), a weekday flag
+/// other than 0 or 1 (read as 0), a service given twice (the first kept); in
+/// `calendar_dates.txt`, an exception type other than 1 or 2 or a date that is not one (the row
+/// skipped), a service's date given twice (the first kept). The day read stays the good feed's.
+#[test]
+fn a_bad_row_of_calendar_is_set_right_and_noted() {
+    let (good, _) = repaired("calendar-good", &feed("calendar.txt", WEEKDAYS.to_owned()));
+    for (i, (file, text, id)) in [
+        (
+            "calendar_dates.txt",
+            "service_id,date,exception_type\nWK,20261009,2\nWK,20261009,1\n".to_owned(),
+            "WK on 20261009",
+        ),
+        ("calendar.txt", format!("{WEEKDAYS}WE,0,0,0,0,0,1,1,20261001,20261331\n"), "WE"),
+        ("calendar.txt", format!("{WEEKDAYS}WE,0,0,0,0,0,yes,1,20261001,20261031\n"), "WE"),
+        ("calendar.txt", format!("{WEEKDAYS}WK,0,0,0,0,0,1,1,20261001,20261031\n"), "WK"),
+        (
+            "calendar_dates.txt",
+            "service_id,date,exception_type\nWK,20261009,3\n".to_owned(),
+            "WK on 20261009",
+        ),
+        (
+            "calendar_dates.txt",
+            "service_id,date,exception_type\nWK,2026-10-09,2\n".to_owned(),
+            "WK on 2026-10-09",
+        ),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let (report, kinds) = repaired(&format!("calendar-{i}"), &feed(file, text));
+        assert_eq!(kinds, one("calendar_rows_skipped", id), "case {i}");
+        assert_eq!((report.date, report.runs), (good.date, 1), "case {i}");
     }
 }
 
-/// Refused, naming the file, the row's id and the value, as the OSM reader refuses an
-/// unreadable tag (nothing is skipped): in `stops.txt`, a position that is not a number or
-/// outside longitude ±180° and latitude ±84°, an empty or repeated stop id, an undefined
-/// `location_type`; in `trips.txt`, a repeated trip id.
+/// Set right, noted: in `stop_times.txt`, a time that is not `H:MM:SS` (read as blank: the
+/// other time taken), a sequence that is not a number or a stop not held (the call dropped,
+/// whichever day the trip runs: T9 runs on no day), a trip `trips.txt` does not hold (the row
+/// skipped), a shape distance that is not a number (read as blank). T1 calls at A (08:00), B
+/// (08:10) and a third call C.
 #[test]
-fn a_bad_row_of_stops_and_trips_is_refused_naming_it() {
-    refused(
-        "stops_and_trips",
-        vec![
-            (
-                feed(
-                    "stops.txt",
-                    STOPS
-                        .replace("stop_lon\n", "stop_lon,location_type\n")
-                        .replace("Alpha,52.0,4.36", "Alpha,52.0,4.36,x"),
-                ),
-                bad("stops.txt", "A", "location_type", "x"),
-            ),
-            (
-                feed("stops.txt", format!("{STOPS}X,Broken,north,4.36\n")),
-                bad("stops.txt", "X", "stop_lat", "north"),
-            ),
-            (
-                feed("stops.txt", format!("{STOPS}X,Far,52.0,190\n")),
-                bad("stops.txt", "X", "stop_lon", "190"),
-            ),
-            (
-                feed("stops.txt", format!("{STOPS}X,Pole,89.0,4.36\n")),
-                bad("stops.txt", "X", "stop_lat", "89.0"),
-            ),
-            (
-                feed("stops.txt", format!("{STOPS},Nameless,52.0,4.36\n")),
-                bad("stops.txt", "", "stop_id", ""),
-            ),
-            (feed("stops.txt", format!("{STOPS}A,Again,52.0,4.36\n")), repeated("stops.txt", "A")),
-            (
-                feed("trips.txt", "route_id,service_id,trip_id\nR,WK,T1\nR,WK,T1\n".into()),
-                repeated("trips.txt", "T1"),
-            ),
-        ],
-    );
+fn a_bad_row_of_stop_times_is_set_right_and_noted() {
+    let case = |i: usize, rows: &str| {
+        repaired(&format!("stop-times-{i}"), &feed("stop_times.txt", times(rows)))
+    };
+    for (i, rows) in
+        ["T1,99:99:99,08:20:00,C,3\n", "T1,08:20:00,8:2:00,C,3\n"].into_iter().enumerate()
+    {
+        let (report, kinds) = case(i, rows);
+        assert_eq!((report.calls, kinds), (3, one("times_unread", "T1")), "{rows}");
+    }
+    for (i, rows) in
+        ["T1,08:20:00,08:20:00,C,third\n", "T1,08:20:00,08:20:00,Q,3\n"].into_iter().enumerate()
+    {
+        let (report, kinds) = case(i + 2, rows);
+        assert_eq!((report.calls, kinds), (2, one("calls_dropped", "T1")), "{rows}");
+    }
+    let mut files = feed("stop_times.txt", times("T9,08:20:00,08:20:00,Q,1\n"));
+    files[1].1 = "route_id,service_id,trip_id\nR,WK,T1\nR,NONE,T9\n".into();
+    assert_eq!(repaired("stop-times-4", &files).1, one("calls_dropped", "T9"));
+    let (report, kinds) = case(5, "T7,08:20:00,08:20:00,C,5\n");
+    assert_eq!((report.runs, kinds), (1, one("stop_times_skipped", "T7")));
+    let shaped = "trip_id,arrival_time,departure_time,stop_id,stop_sequence,shape_dist_traveled\n\
+        T1,08:00:00,08:00:00,A,1,0\nT1,08:10:00,08:10:00,B,2,1km\n";
+    let (report, kinds) = repaired("stop-times-6", &feed("stop_times.txt", shaped.into()));
+    assert_eq!((report.runs, kinds), (1, one("distances_unread", "T1")));
+    // No arrival_time column: read as blank, the departures taken.
+    let departures =
+        "trip_id,departure_time,stop_id,stop_sequence\nT1,08:00:00,A,1\nT1,08:10:00,B,2\n";
+    let (report, kinds) = repaired("stop-times-7", &feed("stop_times.txt", departures.into()));
+    assert_eq!((report.runs, kinds), (1, one("columns_absent", "arrival_time")));
 }
 
-/// Refused, naming the service and the value: in `calendar.txt`, a date that is not one, a
-/// weekday flag other than 0 or 1, a service given twice; in `calendar_dates.txt`, an
-/// exception type other than 1 or 2, a date that is not one, a service's date given twice.
+/// A trip whose every call is at a stop not held (Q twice) has no call left: no run, counted
+/// once (`trips_without_call`) beside its two calls dropped.
 #[test]
-fn a_bad_row_of_calendar_is_refused_naming_it() {
-    refused(
-        "calendar",
-        vec![
-            (
-                feed(
-                    "calendar_dates.txt",
-                    "service_id,date,exception_type\nWK,20261009,2\nWK,20261009,1\n".into(),
-                ),
-                repeated("calendar_dates.txt", "WK on 20261009"),
-            ),
-            (
-                feed("calendar.txt", format!("{WEEKDAYS}WE,0,0,0,0,0,1,1,20261001,20261331\n")),
-                bad("calendar.txt", "WE", "end_date", "20261331"),
-            ),
-            (
-                feed("calendar.txt", format!("{WEEKDAYS}WE,0,0,0,0,0,yes,1,20261001,20261031\n")),
-                bad("calendar.txt", "WE", "saturday", "yes"),
-            ),
-            (
-                feed("calendar.txt", format!("{WEEKDAYS}WK,0,0,0,0,0,1,1,20261001,20261031\n")),
-                repeated("calendar.txt", "WK"),
-            ),
-            (
-                feed(
-                    "calendar_dates.txt",
-                    "service_id,date,exception_type\nWK,20261009,3\n".into(),
-                ),
-                bad("calendar_dates.txt", "WK", "exception_type", "3"),
-            ),
-            (
-                feed(
-                    "calendar_dates.txt",
-                    "service_id,date,exception_type\nWK,2026-10-09,2\n".into(),
-                ),
-                bad("calendar_dates.txt", "WK", "date", "2026-10-09"),
-            ),
-        ],
-    );
+fn a_trip_left_with_no_call_is_counted() {
+    let rows = "trip_id,arrival_time,departure_time,stop_id,stop_sequence\n\
+        T1,08:00:00,08:00:00,Q,1\nT1,08:10:00,08:10:00,Q,2\n";
+    let (report, kinds) = repaired("no-call", &feed("stop_times.txt", rows.into()));
+    assert_eq!((report.runs, report.trips_single_call), (0, 0));
+    let t1 = vec!["T1".to_owned(), "T1".to_owned()];
+    assert_eq!(kinds, [("calls_dropped", 2, t1), ("trips_without_call", 1, vec!["T1".to_owned()])]);
 }
 
-/// Refused, naming the trip and the value: in `stop_times.txt`, a time that is not `H:MM:SS`,
-/// a sequence or a shape distance that is not a number, a stop that is not a stop with a
-/// position, whichever day the trip runs (T9 runs on no day), a trip `trips.txt` does not hold.
+/// Two overlapping frequency periods of T1 (08:00 to 09:00 and 08:30 to 09:30, every 10 min):
+/// the second gives again the runs at 08:30, 08:40 and 08:50 (30 600, 31 200, 31 800 s), whose
+/// names are taken; those 3 are left out, noted: 6 + 3 = 9 runs. A `frequencies.txt` without
+/// its `headway_secs` column is not read: one run, T1 itself.
 #[test]
-fn a_bad_row_of_stop_times_is_refused_naming_it() {
-    refused(
-        "stop_times",
-        vec![
-        (
-            feed("stop_times.txt", times("T1,99:99:99,08:20:00,C,3\n")),
-            bad("stop_times.txt", "T1", "arrival_time", "99:99:99"),
-        ),
-        (
-            feed("stop_times.txt", times("T1,08:20:00,8:2:00,C,3\n")),
-            bad("stop_times.txt", "T1", "departure_time", "8:2:00"),
-        ),
-        (
-            feed("stop_times.txt", times("T1,08:20:00,08:20:00,C,third\n")),
-            bad("stop_times.txt", "T1", "stop_sequence", "third"),
-        ),
-        (
-            feed("stop_times.txt", times("T1,08:20:00,08:20:00,Q,3\n")),
-            GtfsError::UnknownStop { trip: "T1".into(), stop: "Q".into() },
-        ),
-        (
-            {
-                // T9 is a trip of service NONE, which runs on no day.
-                let mut files = feed("stop_times.txt", times("T9,08:20:00,08:20:00,Q,1\n"));
-                files[1].1 = "route_id,service_id,trip_id\nR,WK,T1\nR,NONE,T9\n".into();
-                files
-            },
-            GtfsError::UnknownStop { trip: "T9".into(), stop: "Q".into() },
-        ),
-        (
-            feed("stop_times.txt", times("T7,08:20:00,08:20:00,C,5\n")),
-            GtfsError::UnknownTrip { trip: "T7".into(), stop_sequence: "5".into() },
-        ),
-        (
-            feed(
-                "stop_times.txt",
-                "trip_id,arrival_time,departure_time,stop_id,stop_sequence,shape_dist_traveled\n\
-                T1,08:00:00,08:00:00,A,1,0\nT1,08:10:00,08:10:00,B,2,1km\n"
-                    .into(),
-            ),
-            bad("stop_times.txt", "T1", "shape_dist_traveled", "1km"),
-        ),
-    ],
-    );
+fn overlapping_frequencies_keep_the_first_run_of_each_name() {
+    let rows = "trip_id,start_time,end_time,headway_secs\nT1,08:00:00,09:00:00,600\nT1,08:30:00,09:30:00,600\n";
+    let (report, kinds) = repaired("overlap", &feed("frequencies.txt", rows.into()));
+    assert_eq!((report.runs, report.frequency_runs), (9, 9));
+    let first = ["T1@30600", "T1@31200", "T1@31800"].map(str::to_owned).to_vec();
+    assert_eq!(kinds, [("runs_repeated", 3, first)]);
+    let no_headway = "trip_id,start_time,end_time\nT1,08:00:00,09:00:00\n";
+    let (report, kinds) = repaired("no-headway", &feed("frequencies.txt", no_headway.into()));
+    assert_eq!((report.runs, kinds), (1, one("files_unread", "frequencies.txt")));
 }
 
-/// The refusals, each naming what it refuses.
+/// The refusals, each naming what it refuses, and the two repairs of a whole feed.
 #[test]
 fn the_refusals() {
     let (trips, times) = trips_and_times(&[("WK", "T1")]);
@@ -454,13 +452,22 @@ fn the_refusals() {
     assert_eq!(err, GtfsError::MissingColumn { file: "stops.txt", column: "stop_lat" });
     let weekend = "service_id,monday,tuesday,wednesday,thursday,friday,saturday,sunday,start_date,end_date\n\
         WK,0,0,0,0,0,1,1,20261001,20261031\n";
-    let err =
-        read("weekend", &[files[0], files[1], ("calendar.txt", weekend), files[3]]).unwrap_err();
-    assert_eq!(err, GtfsError::NoWeekdayService);
+    // A weekend-only feed: its busiest day of all seven, the first Saturday (2026-10-03), noted.
+    let (_, report) =
+        read("weekend", &[files[0], files[1], ("calendar.txt", weekend), files[3]]).unwrap();
+    assert_eq!((report.date, report.runs), (20_261_003, 1));
+    assert_eq!(report.repairs.kinds()[0].key, "weekday_absent");
+    assert_eq!(report.repairs.kinds()[0].first, ["20261003"]);
+    let never = "service_id,monday,tuesday,wednesday,thursday,friday,saturday,sunday,start_date,end_date\n\
+        WK,0,0,0,0,0,0,0,20261001,20261031\n";
+    let err = read("never", &[files[0], files[1], ("calendar.txt", never), files[3]]).unwrap_err();
+    assert_eq!(err, GtfsError::NoService);
+    // A run whose second call arrives before the first departs: dropped, noted.
     let backwards = format!("{STOP_TIMES}T1,08:10:00,08:10:00,A,1\nT1,08:00:00,08:00:00,B,2\n");
-    let err = read("backwards", &[files[0], files[1], files[2], ("stop_times.txt", &backwards)])
-        .unwrap_err();
-    assert!(matches!(&err, GtfsError::Timetable(e) if e.to_string().contains("run T1")), "{err:?}");
+    let (_, report) =
+        read("backwards", &[files[0], files[1], files[2], ("stop_times.txt", &backwards)]).unwrap();
+    assert_eq!(report.runs, 0);
+    assert_eq!(report.repairs.kinds()[0].key, "trips_out_of_order");
     let not_zip =
         std::env::temp_dir().join(format!("openmobisim-gtfs-text-{}", std::process::id()));
     std::fs::write(&not_zip, "not a zip").unwrap();

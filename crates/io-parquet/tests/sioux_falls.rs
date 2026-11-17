@@ -133,6 +133,9 @@ fn sioux_falls_s_run_is_written_in_under_1_s() {
         stop_walk_max: 1_500.0,
         transit: None,
         parameters: &parameters,
+        network_repairs: net.repairs(),
+        trips_given: u64::from(dem.trip_count()),
+        demand_repairs: dem.repairs(),
     };
     let w = write(&r, &net, &dem, &given, &folder).expect("written");
     let seconds = started.elapsed().as_secs_f64();

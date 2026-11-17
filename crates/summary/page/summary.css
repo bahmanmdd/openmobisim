@@ -1,0 +1,51 @@
+/* The run's summary: cards on the theme's surface, as the map's cards (the network's grey tinting the surface, a
+   12 px radius, uppercase muted headings), its fonts and its colours; the colours themselves are set per theme above. */
+:root { --sans: Inter, "Helvetica Neue", "Segoe UI", system-ui, sans-serif; --mono: "JetBrains Mono", Menlo, Consolas, "DejaVu Sans Mono", monospace;
+  --panel: color-mix(in srgb, var(--base) 36%, var(--surface)); --card: color-mix(in srgb, var(--panel) 96%, transparent);
+  --line: color-mix(in srgb, var(--base) 75%, transparent); --accent: var(--transit); }
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--surface); color: var(--ink); font: 14px/1.45 var(--sans); }
+main { max-width: 1180px; margin: 0 auto; padding: 24px 16px 40px; }
+header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+header .mark { width: 26px; height: 26px; vertical-align: middle; margin-right: 10px; fill: var(--mark); }
+h1 { display: inline; font-size: 26px; margin: 0; vertical-align: middle; letter-spacing: -0.01em; }
+#theme { font: 12px var(--sans); color: var(--ink); background: var(--card); border: 1px solid var(--line); border-radius: 7px; padding: 5px 12px; cursor: pointer; }
+#theme:hover { border-color: var(--ink2); }
+.meta { color: var(--muted); font: 12px/1.4 var(--mono); margin-top: 6px; }
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin: 20px 0; }
+.tile { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; }
+.tl { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .08em; }
+.tv { font-size: 24px; font-weight: 700; margin-top: 2px; } .nw { white-space: nowrap; }
+.tu { font-size: 13px; font-weight: 500; color: var(--ink2); white-space: nowrap; } .tn { color: var(--muted); font-size: 12px; }
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; } .grid2 > * { min-width: 0; }
+@media (max-width: 860px) { .grid2 { grid-template-columns: 1fr; } }
+section { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; margin-top: 16px; }
+section .grid2 { gap: 20px; }
+h2 { font-size: 11px; text-transform: uppercase; letter-spacing: .09em; color: var(--muted); margin: 0 0 10px; font-weight: 600; }
+h3 { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 14px 0 6px; font-weight: 600; }
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th { text-align: left; color: var(--muted); font-weight: 600; border-bottom: 1px solid var(--line); padding: 5px 6px; vertical-align: bottom; }
+td { border-bottom: 1px solid color-mix(in srgb, var(--base) 50%, transparent); padding: 5px 6px; }
+.n { text-align: right; font-variant-numeric: tabular-nums; } td.v2 { white-space: nowrap; }
+.k-car { --c: var(--car); } .k-bike { --c: var(--bike); } .k-walk { --c: var(--walk); } .k-transit { --c: var(--transit); } .k-none { --c: var(--base); }
+.k-k0 { --c: var(--k0); } .k-k1 { --c: var(--k1); } .k-k2 { --c: var(--k2); } .k-k3 { --c: var(--k3); } .k-k4 { --c: var(--k4); } .k-k5 { --c: var(--k5); }
+.k-b0 { --c: var(--b0); } .k-b1 { --c: var(--b1); } .k-b2 { --c: var(--b2); } .k-b3 { --c: var(--b3); }
+.sw { display: inline-block; width: 10px; height: 10px; border-radius: 2px; background: var(--c); margin-right: 7px; vertical-align: -1px; }
+.stack { display: flex; gap: 2px; height: 14px; margin: 4px 0 12px; }
+.seg { background: var(--c); border-radius: 3px; min-width: 2px; } svg .seg { fill: var(--c); }
+.chart { width: 100%; height: auto; } .grid { stroke: var(--line); stroke-width: 1; }
+.ax { fill: var(--muted); font-size: 11px; } .ln { fill: none; stroke: var(--accent); stroke-width: 2; }
+.dot { fill: var(--accent); stroke: var(--surface); stroke-width: 2; }
+.bars { display: grid; gap: 5px; } .bar { display: grid; grid-template-columns: 120px 1fr 64px; gap: 8px; align-items: center; font-size: 13px; }
+.bl { color: var(--ink2); } .bt { background: color-mix(in srgb, var(--base) 35%, transparent); border-radius: 4px; height: 12px; }
+.bf { background: var(--accent); height: 12px; border-radius: 4px; } .bv { text-align: right; font-variant-numeric: tabular-nums; }
+.note { color: var(--muted); font-size: 12px; margin: 8px 0 0; } .note b { color: var(--ink2); }
+.below { margin-top: 14px; padding-top: 10px; border-top: 1px solid var(--line); }
+.record { font: 11.5px/1.45 var(--mono); color: var(--ink2); white-space: pre-wrap; word-break: break-all; margin: 0; max-height: 520px; overflow: auto; }
+svg.defs { position: absolute; width: 0; height: 0; }
+.map { width: 100%; height: auto; max-height: 820px; display: block; }
+.map use { fill: none; stroke: var(--base); stroke-width: 1.2; stroke-linecap: round; }
+.map path { fill: none; stroke: var(--c); stroke-linecap: round; }
+.map path.k-bike { stroke-linecap: butt; }
+.note .lg { white-space: nowrap; margin-right: 6px; }
+footer { color: var(--muted); font: 12px var(--mono); margin-top: 22px; }

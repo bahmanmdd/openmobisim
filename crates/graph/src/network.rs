@@ -21,40 +21,58 @@
 //! no car speed, no lanes and no capacity limit. A bike is a mode on the
 //! same links as a car, with its own free-flow speed: there is one network, no separate layer.
 //!
-//! # Bad input is an error
+//! # What cannot be used is repaired, counted, and the build goes on
 //!
-//! A link to an undeclared node, a length that is not a positive number, a speed that is not a
-//! positive number, an empty network, or a mix of position kinds stops the build with a
-//! [`BuildError`] naming the node or link. Nothing is repaired.
+//! A row the network cannot use as given is set right or left out, and noted in the network's
+//! [`Repairs`] (`Network::repairs`), one kind per rule (`src/network/rows.rs` lists them), so that
+//! its caller reports each kind with its count and first ids; nothing is set right silently. Only
+//! what leaves no network to build stops it with a [`BuildError`]: no node, a build value that is
+//! not a finite number above zero, nodes of both position kinds.
 
 use core::fmt;
 
 use openmobisim_types::fingerprint::Fingerprint;
-use openmobisim_types::ids::{EntityId, ExternalIdTable, ExternalIdTableBuilder, LinkId, NodeId};
+use openmobisim_types::ids::{EntityId, ExternalIdTable, LinkId, NodeId};
 use openmobisim_types::mode::{Mode, ModeSet};
+use openmobisim_types::repairs::Repairs;
 use openmobisim_types::units::{Duration, Flow, Metres, Speed};
 
 use crate::csr::Csr;
-use crate::geometry::{Hemisphere, LonLat, Position, Projection, Xy};
+use crate::geometry::{Hemisphere, Position, Projection, Xy};
+
+mod drawing;
+mod rows;
+pub use drawing::{LinkDrawing, SHAPES_UNREAD};
+
+/// The key and phrase of a link of 0 m, left out: the graph's, and the OSM reader's, which leaves
+/// such a piece out before it takes the car network's strong component.
+pub const LINKS_OF_NO_LENGTH: (&str, &str) = (
+    "links_of_no_length",
+    "links of no length (a node to itself, or two nodes at one position): left out",
+);
 
 /// What the caller knows about a link: one row of a link table.
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub struct LinkRow {
-    /// The modes allowed on the link: any of car, bike and walk, at least one. Transit runs on
-    /// its timetable, not on links.
+    /// The modes allowed on the link: any of car, bike and walk, at least one (transit runs on
+    /// its timetable, not on links: taken out of the set, noted; a link left with none is
+    /// dropped, noted).
     pub modes: ModeSet,
-    /// The lanes in the link's own direction, at least one. Required when cars are allowed;
-    /// `None` when they are not.
+    /// The lanes in the link's own direction, at least one, when cars are allowed (a car link
+    /// without lanes, or with 0, loses its car mode, noted); ignored when they are not.
     pub lanes: Option<u8>,
-    /// The car free-flow speed, in kilometres per hour, above zero. Required when cars are
-    /// allowed; `None` when they are not.
+    /// The car free-flow speed, in kilometres per hour, above zero, when cars are allowed (a
+    /// car link without one loses its car mode, noted); ignored when they are not.
     pub car_speed_km_h: Option<f64>,
-    /// The length in metres; `None` is the straight line between the two nodes.
+    /// The length in metres; `None` is the straight line between the two nodes (a length not
+    /// finite or not above zero is replaced by it, noted; a link whose straight line is 0 m is
+    /// dropped, noted).
     pub length_m: Option<f64>,
     /// The capacity of the downstream end across all lanes, in vehicles per hour, above zero;
     /// `f64::INFINITY` is an unlimited capacity (the downstream end passes any flow). When cars
-    /// are allowed, `None` is lanes times [`BuildValues::capacity_per_lane`]; when they are not,
-    /// it must be `None` (the link has no capacity limit: nothing is loaded there).
+    /// are allowed, `None` (or a value not above zero, noted) is lanes times
+    /// [`BuildValues::capacity_per_lane`]; when they are not, it is ignored (the link has no
+    /// capacity limit: nothing is loaded there).
     pub capacity_veh_h: Option<f64>,
     /// Whether a signal stands at the downstream end. Stored, applied nowhere.
     pub signal_at_downstream_end: bool,
@@ -72,10 +90,11 @@ pub struct BuildValues {
     pub walk_speed: f64,
 }
 
-/// Why a network could not be built. Each names what it refuses.
+/// Why a network could not be built: nothing is left to build one from, or a value it cannot
+/// guess. Each names what it refuses.
 #[derive(Clone, PartialEq, Debug)]
 pub enum BuildError {
-    /// No node was declared.
+    /// No node was declared, or none could be placed.
     NoNodes,
     /// One of the three build values is not a finite number above zero.
     BadValue {
@@ -91,84 +110,12 @@ pub enum BuildError {
         /// The first node, in sorted order, given in metres.
         metres: String,
     },
-    /// A node is not finite, or outside longitude ±180° and latitude ±84° (the UTM system).
-    NotProjectable {
-        /// The node.
-        node: String,
-        /// Its position as given.
-        at: LonLat,
-    },
-    /// A position in metres that is not finite.
-    NotFinite {
-        /// The node.
-        node: String,
-    },
-    /// The same node external id was declared twice.
-    DuplicateNode(String),
-    /// The same link external id was declared twice.
-    DuplicateLink(String),
-    /// A node marked signalised was never declared.
-    UnknownSignalNode(String),
-    /// A link names a node that was never declared.
-    UnknownNode {
-        /// The link.
-        link: String,
-        /// The node it names.
-        node: String,
-    },
-    /// A link allows no mode, or allows transit.
-    BadModes {
-        /// The link.
-        link: String,
-        /// The modes it gave.
-        modes: ModeSet,
-    },
-    /// A link has zero lanes.
-    NoLanes(String),
-    /// A link that allows cars lacks a car field (`lanes` or `car_speed_km_h`).
-    MissingCarField {
-        /// The link.
-        link: String,
-        /// The field's name in [`LinkRow`].
-        field: &'static str,
-    },
-    /// A link that does not allow cars gives a car field (`lanes`, `car_speed_km_h` or
-    /// `capacity_veh_h`).
-    CarFieldWithoutCars {
-        /// The link.
-        link: String,
-        /// The field's name in [`LinkRow`].
-        field: &'static str,
-    },
-    /// A link's car free-flow speed is not a finite number above zero.
-    BadSpeed {
-        /// The link.
-        link: String,
-        /// The speed given, in kilometres per hour.
-        km_h: f64,
-    },
-    /// A link's length (given, or the straight line between its nodes) is not a finite number
-    /// above zero.
-    BadLength {
-        /// The link.
-        link: String,
-        /// The length, in metres.
-        metres: f64,
-    },
-    /// A link's given capacity is not a number above zero (NaN, zero, negative or negative
-    /// infinity). Positive infinity, an unlimited capacity, is allowed.
-    BadCapacity {
-        /// The link.
-        link: String,
-        /// The capacity given, in vehicles per hour.
-        veh_h: f64,
-    },
 }
 
 impl fmt::Display for BuildError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::NoNodes => f.write_str("the network has no nodes"),
+            Self::NoNodes => f.write_str("the network has no node that can be placed"),
             Self::BadValue { name, value } => {
                 write!(f, "{name} must be a finite number above zero, got {value}")
             }
@@ -176,45 +123,6 @@ impl fmt::Display for BuildError {
                 f,
                 "node {lon_lat} is in longitude/latitude but node {metres} is in metres; \
                  give every node in one kind"
-            ),
-            Self::NotProjectable { node, at } => write!(
-                f,
-                "node {node} at ({}, {}) is not projectable: longitude must be within ±180°, \
-                 latitude within ±84°, and both finite",
-                at.lon, at.lat
-            ),
-            Self::NotFinite { node } => write!(f, "node {node} has a position that is not finite"),
-            Self::DuplicateNode(node) => write!(f, "node {node} is declared twice"),
-            Self::DuplicateLink(link) => write!(f, "link {link} is declared twice"),
-            Self::UnknownSignalNode(node) => {
-                write!(f, "node {node} is marked signalised but never declared")
-            }
-            Self::UnknownNode { link, node } => {
-                write!(f, "link {link} names node {node}, which is never declared")
-            }
-            Self::BadModes { link, modes } => write!(
-                f,
-                "link {link} allows {modes:?}: a link allows at least one of car, bike and walk, \
-                 and never transit"
-            ),
-            Self::NoLanes(link) => write!(f, "link {link} has zero lanes"),
-            Self::MissingCarField { link, field } => {
-                write!(f, "link {link} allows cars but gives no {field}")
-            }
-            Self::CarFieldWithoutCars { link, field } => {
-                write!(f, "link {link} does not allow cars but gives {field}; leave it empty")
-            }
-            Self::BadSpeed { link, km_h } => write!(
-                f,
-                "link {link} has car free-flow speed {km_h} km/h; it must be finite and above zero"
-            ),
-            Self::BadLength { link, metres } => {
-                write!(f, "link {link} has length {metres} m; it must be finite and above zero")
-            }
-            Self::BadCapacity { link, veh_h } => write!(
-                f,
-                "link {link} has capacity {veh_h} veh/h; it must be above zero (infinity, \
-                 an unlimited capacity, is allowed)"
             ),
         }
     }
@@ -230,7 +138,12 @@ impl core::error::Error for BuildError {}
 pub struct NetworkBuilder {
     nodes: Vec<(String, Position)>,
     signalised: Vec<String>,
-    links: Vec<(String, String, String, LinkRow)>,
+    links: Vec<rows::GivenLink>,
+    /// The row each link id was last given at: a drawing belongs to it.
+    last_row: std::collections::HashMap<String, usize>,
+    /// Drawings given for a link id no row was given for (yet), and for a row given one already.
+    stray_drawings: Vec<String>,
+    second_drawings: Vec<String>,
 }
 
 impl NetworkBuilder {
@@ -259,35 +172,26 @@ impl NetworkBuilder {
         downstream: impl Into<String>,
         row: LinkRow,
     ) {
-        self.links.push((external_id.into(), upstream.into(), downstream.into(), row));
+        let id = external_id.into();
+        self.last_row.insert(id.clone(), self.links.len());
+        let (upstream, downstream) = (upstream.into(), downstream.into());
+        self.links.push(rows::GivenLink { id, upstream, downstream, row, drawing: None });
     }
 
-    /// Check every row, assign ids, project, and freeze.
+    /// Repair or leave out every row the network cannot use (`src/network/rows.rs`, each noted
+    /// in [`Network::repairs`]), assign ids, project, and freeze.
     ///
     /// # Errors
     ///
-    /// A [`BuildError`] for the first fault found, nodes before links, each in sorted external
-    /// order (so the same input gives the same error whatever its order).
-    pub fn build(mut self, values: BuildValues) -> Result<Network, BuildError> {
+    /// A [`BuildError`]: a build value that is not a finite number above zero, nodes of both
+    /// position kinds, or no node left to place.
+    pub fn build(self, values: BuildValues) -> Result<Network, BuildError> {
         let per_lane = positive("capacity_per_lane", values.capacity_per_lane)?;
         let bike = Speed::from_km_per_hour(positive("bike_speed", values.bike_speed)?);
         let walk = Speed::from_km_per_hour(positive("walk_speed", values.walk_speed)?);
-
-        let nodes = place_nodes(&mut self.nodes, &mut self.signalised)?;
-        self.links.sort_unstable_by(|a, b| a.0.cmp(&b.0));
-        if let Some(w) = self.links.windows(2).find(|w| w[0].0 == w[1].0) {
-            return Err(BuildError::DuplicateLink(w[0].0.clone()));
-        }
-        let mut links = Links::with_capacity(self.links.len());
-        let mut link_ids = ExternalIdTableBuilder::new();
-        for (external, upstream, downstream, row) in &self.links {
-            let up = node_of(&nodes.ids, external, upstream)?;
-            let down = node_of(&nodes.ids, external, downstream)?;
-            let straight = nodes.xy[up.index()].distance_to(nodes.xy[down.index()]);
-            links.push(external, up, down, row, straight, per_lane)?;
-            link_ids.insert(external.as_str());
-        }
-
+        let mut repairs = Repairs::new();
+        let nodes = rows::place_nodes(self.nodes, self.signalised, &mut repairs)?;
+        let links = rows::links(self.links, &nodes, per_lane, &mut repairs);
         let node_count = nodes.ids.count();
         let pairs = |ends: &[NodeId]| -> Vec<(NodeId, LinkId)> {
             ends.iter().enumerate().map(|(i, &n)| (n, LinkId::from_index(i))).collect()
@@ -295,10 +199,12 @@ impl NetworkBuilder {
         let out_links = Csr::from_pairs(node_count, pairs(&links.upstream));
         let in_links = Csr::from_pairs(node_count, pairs(&links.downstream));
         let n = links.length.len();
+        let given = drawing::Given { stray: self.stray_drawings, second: self.second_drawings };
+        let drawings = drawing::build(&links.drawings, given, nodes.projection, &mut repairs);
         Ok(Network {
             projection: nodes.projection,
             node_ids: nodes.ids,
-            link_ids: link_ids.build(),
+            link_ids: links.ids,
             node_x: nodes.xy.iter().map(|p| p.x).collect(),
             node_y: nodes.xy.iter().map(|p| p.y).collect(),
             node_signalised: nodes.signalised,
@@ -314,6 +220,8 @@ impl NetworkBuilder {
             link_signal_downstream: links.signal_downstream,
             out_links,
             in_links,
+            drawings,
+            repairs,
         })
     }
 }
@@ -325,176 +233,6 @@ fn positive(name: &'static str, value: f64) -> Result<f64, BuildError> {
     } else {
         Err(BuildError::BadValue { name, value })
     }
-}
-
-/// The nodes, checked and placed in metres, in sorted external order.
-struct Nodes {
-    ids: ExternalIdTable,
-    xy: Vec<Xy>,
-    signalised: Vec<bool>,
-    projection: Option<Projection>,
-}
-
-/// Sort and check the nodes, choose the projection if they are in longitude/latitude, and mark
-/// the signalised ones.
-fn place_nodes(
-    nodes: &mut [(String, Position)],
-    signalised: &mut [String],
-) -> Result<Nodes, BuildError> {
-    if nodes.is_empty() {
-        return Err(BuildError::NoNodes);
-    }
-    nodes.sort_unstable_by(|a, b| a.0.cmp(&b.0));
-    if let Some(w) = nodes.windows(2).find(|w| w[0].0 == w[1].0) {
-        return Err(BuildError::DuplicateNode(w[0].0.clone()));
-    }
-    let first_lon_lat = nodes.iter().find(|(_, p)| matches!(p, Position::LonLat(_)));
-    let first_metres = nodes.iter().find(|(_, p)| matches!(p, Position::Metres(_)));
-    let (xy, projection) = match (first_lon_lat, first_metres) {
-        (Some((a, _)), Some((b, _))) => {
-            return Err(BuildError::MixedPositions { lon_lat: a.clone(), metres: b.clone() });
-        }
-        (Some(_), None) => project_all(nodes)?,
-        _ => (metres_all(nodes)?, None),
-    };
-
-    let mut ids = ExternalIdTableBuilder::new();
-    ids.extend(nodes.iter().map(|(id, _)| id.as_str()));
-    let ids = ids.build();
-    let mut flags = vec![false; nodes.len()];
-    signalised.sort_unstable();
-    for external in signalised.iter() {
-        let id =
-            ids.id_of(external).ok_or_else(|| BuildError::UnknownSignalNode(external.clone()))?;
-        flags[id as usize] = true;
-    }
-    Ok(Nodes { ids, xy, signalised: flags, projection })
-}
-
-/// Project nodes that are all in longitude/latitude, in the UTM zone of their centre.
-fn project_all(nodes: &[(String, Position)]) -> Result<(Vec<Xy>, Option<Projection>), BuildError> {
-    let mut points = Vec::with_capacity(nodes.len());
-    for (node, position) in nodes {
-        let Position::LonLat(at) = *position else { unreachable!("the caller checked the kind") };
-        if !at.is_projectable() {
-            return Err(BuildError::NotProjectable { node: node.clone(), at });
-        }
-        points.push(at);
-    }
-    let projection = Projection::for_extent(points.iter().copied())
-        .expect("every point was checked projectable and there is at least one");
-    Ok((points.iter().map(|&p| projection.project(p)).collect(), Some(projection)))
-}
-
-/// Take nodes that are all in metres as they are.
-fn metres_all(nodes: &[(String, Position)]) -> Result<Vec<Xy>, BuildError> {
-    nodes
-        .iter()
-        .map(|(node, position)| {
-            let Position::Metres(xy) = *position else {
-                unreachable!("the caller checked the kind")
-            };
-            if xy.x.is_finite() && xy.y.is_finite() {
-                Ok(xy)
-            } else {
-                Err(BuildError::NotFinite { node: node.clone() })
-            }
-        })
-        .collect()
-}
-
-/// The internal id of a node a link names.
-fn node_of(ids: &ExternalIdTable, link: &str, node: &str) -> Result<NodeId, BuildError> {
-    ids.typed_id_of(node)
-        .ok_or_else(|| BuildError::UnknownNode { link: link.to_owned(), node: node.to_owned() })
-}
-
-/// The link columns as they are filled, in sorted external order.
-struct Links {
-    upstream: Vec<NodeId>,
-    downstream: Vec<NodeId>,
-    length: Vec<Metres>,
-    car_speed: Vec<Speed>,
-    capacity: Vec<Flow>,
-    lanes: Vec<u8>,
-    modes: Vec<ModeSet>,
-    signal_downstream: Vec<bool>,
-}
-
-impl Links {
-    fn with_capacity(n: usize) -> Self {
-        Self {
-            upstream: Vec::with_capacity(n),
-            downstream: Vec::with_capacity(n),
-            length: Vec::with_capacity(n),
-            car_speed: Vec::with_capacity(n),
-            capacity: Vec::with_capacity(n),
-            lanes: Vec::with_capacity(n),
-            modes: Vec::with_capacity(n),
-            signal_downstream: Vec::with_capacity(n),
-        }
-    }
-
-    /// Check one row and append it. `straight` is the distance between its nodes, in metres;
-    /// `per_lane` the capacity of one lane, in vehicles per hour.
-    fn push(
-        &mut self,
-        link: &str,
-        upstream: NodeId,
-        downstream: NodeId,
-        row: &LinkRow,
-        straight: f64,
-        per_lane: f64,
-    ) -> Result<(), BuildError> {
-        if row.modes.is_empty() || row.modes.contains(Mode::Transit) {
-            return Err(BuildError::BadModes { link: link.to_owned(), modes: row.modes });
-        }
-        let metres = row.length_m.unwrap_or(straight);
-        if !(metres.is_finite() && metres > 0.0) {
-            return Err(BuildError::BadLength { link: link.to_owned(), metres });
-        }
-        let (car_speed, lanes, capacity) = car_fields(link, row, per_lane)?;
-        self.upstream.push(upstream);
-        self.downstream.push(downstream);
-        self.length.push(Metres(metres));
-        self.car_speed.push(car_speed);
-        self.capacity.push(capacity);
-        self.lanes.push(lanes);
-        self.modes.push(row.modes);
-        self.signal_downstream.push(row.signal_at_downstream_end);
-        Ok(())
-    }
-}
-
-/// The car speed, lanes and capacity of a row, checked. A link without cars gives none of
-/// them and gets no speed (NaN, never read), 0 lanes and an infinite capacity.
-fn car_fields(link: &str, row: &LinkRow, per_lane: f64) -> Result<(Speed, u8, Flow), BuildError> {
-    if !row.modes.contains(Mode::Car) {
-        let given = [
-            ("lanes", row.lanes.is_some()),
-            ("car_speed_km_h", row.car_speed_km_h.is_some()),
-            ("capacity_veh_h", row.capacity_veh_h.is_some()),
-        ];
-        if let Some(&(field, _)) = given.iter().find(|(_, g)| *g) {
-            return Err(BuildError::CarFieldWithoutCars { link: link.to_owned(), field });
-        }
-        return Ok((Speed(f64::NAN), 0, Flow::INFINITE));
-    }
-    let missing = |field| BuildError::MissingCarField { link: link.to_owned(), field };
-    let lanes = row.lanes.ok_or_else(|| missing("lanes"))?;
-    if lanes == 0 {
-        return Err(BuildError::NoLanes(link.to_owned()));
-    }
-    let km_h = row.car_speed_km_h.ok_or_else(|| missing("car_speed_km_h"))?;
-    if !(km_h.is_finite() && km_h > 0.0) {
-        return Err(BuildError::BadSpeed { link: link.to_owned(), km_h });
-    }
-    // Positive infinity is an unlimited capacity, kept as `Flow::INFINITE` (∞ / 3 600 = ∞).
-    let veh_h = row.capacity_veh_h.unwrap_or(f64::from(lanes) * per_lane);
-    if veh_h.is_nan() || veh_h <= 0.0 {
-        return Err(BuildError::BadCapacity { link: link.to_owned(), veh_h });
-    }
-    Ok((Speed::from_km_per_hour(km_h), lanes, Flow::from_veh_per_hour(veh_h)))
 }
 
 /// A built network. Immutable; every later module reads it.
@@ -523,6 +261,10 @@ pub struct Network {
 
     out_links: Csr<NodeId, LinkId>,
     in_links: Csr<NodeId, LinkId>,
+    /// For drawing only: each link's shape and road class (not in the fingerprint).
+    drawings: drawing::Drawings,
+    /// What the build repaired or left out (not in the fingerprint).
+    repairs: Repairs,
 }
 
 /// The column of a link mode in [`Network::link_speed`].
@@ -693,6 +435,13 @@ impl Network {
     #[must_use]
     pub fn in_links(&self, node: NodeId) -> &[LinkId] {
         self.in_links.targets(node)
+    }
+
+    /// What the build repaired or left out, by kind (`src/network/rows.rs`): each with its
+    /// count and the ids of the first five rows. Not in the fingerprint.
+    #[must_use]
+    pub fn repairs(&self) -> &Repairs {
+        &self.repairs
     }
 
     /// The fingerprint of the network as built (`openmobisim_types::fingerprint`), fed in this

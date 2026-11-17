@@ -91,10 +91,13 @@ fn a_car_link_of_unlimited_capacity_builds_with_its_lanes_and_free_flow_time_unc
     assert_eq!(net.capacity(link).get().to_bits(), Flow::INFINITE.get().to_bits());
     assert_eq!(net.lanes(link), 2);
     assert!(close(time(&net, Mode::Car), 72.0), "{}", time(&net, Mode::Car));
-    // Negative infinity and NaN are still refused.
-    for veh_h in [f64::NEG_INFINITY, f64::NAN] {
-        let err = error_of(two_nodes(LinkRow { capacity_veh_h: Some(veh_h), ..unlimited }));
-        assert!(matches!(err, BuildError::BadCapacity { .. }), "{veh_h}: {err:?}");
+    // Negative infinity, NaN and 0 are replaced by lanes × capacity_per_lane, 2 × 1 800 =
+    // 3 600 veh/h = 1 veh/s, and noted.
+    for veh_h in [f64::NEG_INFINITY, f64::NAN, 0.0] {
+        let net =
+            two_nodes(LinkRow { capacity_veh_h: Some(veh_h), ..unlimited }).build(VALUES).unwrap();
+        assert!(close(net.capacity(only_link(&net)).get(), 1.0), "{veh_h}");
+        assert_eq!(noted(&net), [("capacities_defaulted", 1, vec!["ab".to_string()])]);
     }
 }
 
@@ -241,36 +244,52 @@ fn a_cycle_path_has_no_car_free_flow_time() {
     let _ = net.free_flow_time(only_link(&net), Mode::Car);
 }
 
-#[test]
-fn a_car_row_without_a_speed_or_lanes_is_refused_naming_the_link() {
-    let no_speed = LinkRow { car_speed_km_h: None, ..row(1, 50.0) };
-    let err = error_of(two_nodes(no_speed));
-    assert_eq!(err, BuildError::MissingCarField { link: "ab".into(), field: "car_speed_km_h" });
-    assert!(err.to_string().contains("link ab"), "{err}");
-    let no_lanes = LinkRow { lanes: None, ..row(1, 50.0) };
-    assert_eq!(
-        error_of(two_nodes(no_lanes)),
-        BuildError::MissingCarField { link: "ab".into(), field: "lanes" }
-    );
+/// The repairs a build noted: per kind its key, count and first ids.
+fn noted(net: &Network) -> Vec<(&'static str, u64, Vec<String>)> {
+    net.repairs().kinds().iter().map(|k| (k.key, k.count, k.first.clone())).collect()
 }
 
 #[test]
-fn a_row_without_cars_carrying_a_car_field_is_refused_naming_the_link() {
+fn a_car_row_without_a_speed_or_lanes_loses_its_car_mode_and_keeps_the_others() {
+    // Every link mode, no car speed (or none above zero), or no lanes, or 0 lanes: bike and walk
+    // stay (1 000 m at 15 km/h: 240 s by bike); cars are not let on it, and no speed is guessed.
+    for bad in [
+        LinkRow { car_speed_km_h: None, ..row(1, 50.0) },
+        row(1, 0.0),
+        row(1, -30.0),
+        row(1, f64::NAN),
+        LinkRow { lanes: None, ..row(1, 50.0) },
+        row(0, 50.0),
+    ] {
+        let net = two_nodes(bad).build(VALUES).unwrap();
+        let ab = only_link(&net);
+        assert_eq!(net.modes(ab), ModeSet::of(&[Mode::Bike, Mode::Walk]), "{bad:?}");
+        assert!(close(time(&net, Mode::Bike), 240.0));
+        assert_eq!((net.lanes(ab), net.capacity(ab).get()), (0, f64::INFINITY));
+        assert_eq!(noted(&net), [("car_mode_removed", 1, vec!["ab".to_string()])]);
+    }
+    // A car-only link left with no mode is left out.
+    let car_only =
+        LinkRow { modes: ModeSet::of(&[Mode::Car]), car_speed_km_h: None, ..row(1, 50.0) };
+    let net = two_nodes(car_only).build(VALUES).unwrap();
+    assert_eq!(net.link_count(), 0);
+    let keys: Vec<_> = noted(&net).into_iter().map(|(k, n, _)| (k, n)).collect();
+    assert_eq!(keys, [("car_mode_removed", 1), ("links_without_mode", 1)]);
+}
+
+#[test]
+fn a_row_without_cars_carrying_a_car_field_ignores_it() {
     let bikes = ModeSet::of(&[Mode::Bike]);
-    let with_speed = LinkRow { modes: bikes, car_speed_km_h: Some(30.0), ..cycle_path() };
-    let err = error_of(two_nodes(with_speed));
-    assert_eq!(err, BuildError::CarFieldWithoutCars { link: "ab".into(), field: "car_speed_km_h" });
-    assert!(err.to_string().contains("link ab"), "{err}");
-    let with_lanes = LinkRow { modes: bikes, lanes: Some(1), ..cycle_path() };
-    assert_eq!(
-        error_of(two_nodes(with_lanes)),
-        BuildError::CarFieldWithoutCars { link: "ab".into(), field: "lanes" }
-    );
-    let with_capacity = LinkRow { capacity_veh_h: Some(1_200.0), ..cycle_path() };
-    assert_eq!(
-        error_of(two_nodes(with_capacity)),
-        BuildError::CarFieldWithoutCars { link: "ab".into(), field: "capacity_veh_h" }
-    );
+    for with in [
+        LinkRow { modes: bikes, car_speed_km_h: Some(30.0), ..cycle_path() },
+        LinkRow { modes: bikes, lanes: Some(1), ..cycle_path() },
+        LinkRow { capacity_veh_h: Some(1_200.0), ..cycle_path() },
+    ] {
+        let net = two_nodes(with).build(VALUES).unwrap();
+        let ab = only_link(&net);
+        assert_eq!((net.lanes(ab), net.capacity(ab).get()), (0, f64::INFINITY));
+        assert_eq!(noted(&net), [("car_fields_ignored", 1, vec!["ab".to_string()])]);
+    }
 }
 
 #[test]
@@ -285,35 +304,36 @@ fn error_of(b: NetworkBuilder) -> BuildError {
 }
 
 #[test]
-fn a_link_to_an_undeclared_node_is_refused_naming_the_link() {
+fn a_link_to_an_undeclared_node_is_left_out_and_noted() {
     let mut b = two_nodes(row(1, 50.0));
     b.add_link("dangling", "a", "nowhere", row(1, 50.0));
-    let err = error_of(b);
-    assert_eq!(err, BuildError::UnknownNode { link: "dangling".into(), node: "nowhere".into() });
-    assert!(err.to_string().contains("dangling") && err.to_string().contains("nowhere"));
+    let net = b.build(VALUES).unwrap();
+    assert_eq!(net.link_count(), 1);
+    assert_eq!(noted(&net), [("links_to_no_node", 1, vec!["dangling".to_string()])]);
 }
 
 #[test]
-fn a_zero_negative_or_nan_length_is_refused_naming_the_link() {
+fn a_bad_length_is_the_straight_line_and_a_link_of_no_length_is_left_out() {
+    // a and b 1 000 m apart: a length of 0, −5, NaN or ∞ is replaced by 1 000 m, noted.
     for metres in [0.0, -5.0, f64::NAN, f64::INFINITY] {
-        let err = error_of(two_nodes(LinkRow { length_m: Some(metres), ..row(1, 50.0) }));
-        assert!(matches!(&err, BuildError::BadLength { link, .. } if link == "ab"), "{err}");
-        assert!(err.to_string().contains("link ab"), "{err}");
+        let net =
+            two_nodes(LinkRow { length_m: Some(metres), ..row(1, 50.0) }).build(VALUES).unwrap();
+        assert_eq!(net.length(only_link(&net)).get(), 1_000.0, "{metres}");
+        assert_eq!(noted(&net), [("lengths_defaulted", 1, vec!["ab".to_string()])]);
     }
-    // Two nodes at the same place give a straight line of 0 m.
+    // Two nodes at one place, or a node to itself, without a length: 0 m, the link left out.
     let mut b = NetworkBuilder::new();
     b.add_node("a", at(5.0, 5.0));
     b.add_node("b", at(5.0, 5.0));
     b.add_link("ab", "a", "b", row(1, 50.0));
-    assert_eq!(error_of(b), BuildError::BadLength { link: "ab".into(), metres: 0.0 });
+    b.add_link("aa", "a", "a", row(1, 50.0));
+    let net = b.build(VALUES).unwrap();
+    assert_eq!(net.link_count(), 0);
+    assert_eq!(noted(&net), [("links_of_no_length", 2, vec!["aa".to_string(), "ab".to_string()])]);
 }
 
 #[test]
-fn a_zero_speed_is_refused() {
-    for km_h in [0.0, -30.0, f64::NAN] {
-        let err = error_of(two_nodes(row(1, km_h)));
-        assert!(matches!(&err, BuildError::BadSpeed { link, .. } if link == "ab"), "{err}");
-    }
+fn a_build_value_not_above_zero_is_refused() {
     let values = |bike_speed, walk_speed, capacity_per_lane| BuildValues {
         capacity_per_lane,
         bike_speed,
@@ -348,39 +368,84 @@ fn a_mix_of_longitude_latitude_and_metres_is_refused() {
 }
 
 #[test]
-fn every_other_bad_row_is_refused_naming_what_it_refuses() {
-    let unprojectable = {
-        let mut b = NetworkBuilder::new();
-        b.add_node("pole", Position::LonLat(LonLat::new(0.0, 88.0)));
-        error_of(b)
-    };
-    assert!(matches!(&unprojectable, BuildError::NotProjectable { node, .. } if node == "pole"));
-    assert!(unprojectable.to_string().contains("±84°"));
+fn every_other_bad_row_is_repaired_and_noted() {
+    // A node beyond ±84°: left out, and the link naming it; a node in metres not finite alike.
+    let mut b = NetworkBuilder::new();
+    b.add_node("a", Position::LonLat(LonLat::new(4.36, 52.0)));
+    b.add_node("b", Position::LonLat(LonLat::new(4.37, 52.0)));
+    b.add_node("pole", Position::LonLat(LonLat::new(0.0, 88.0)));
+    b.add_link("ab", "a", "b", row(1, 50.0));
+    b.add_link("to-pole", "a", "pole", row(1, 50.0));
+    let net = b.build(VALUES).unwrap();
+    assert_eq!((net.node_count(), net.link_count()), (2, 1));
+    let keys = noted(&net);
+    assert_eq!(
+        keys,
+        [
+            ("nodes_unplaced", 1, vec!["pole".to_string()]),
+            ("links_to_no_node", 1, vec!["to-pole".to_string()])
+        ]
+    );
+    let mut b = two_nodes(row(1, 50.0));
+    b.add_node("nan", at(f64::NAN, 0.0));
+    assert_eq!(noted(&b.build(VALUES).unwrap()), [("nodes_unplaced", 1, vec!["nan".to_string()])]);
 
+    // A node or a link id given twice: the first row given kept (a stays at 0, ab runs a→b).
     let mut b = two_nodes(row(1, 50.0));
     b.add_node("a", at(1.0, 1.0));
-    assert_eq!(error_of(b), BuildError::DuplicateNode("a".into()));
+    b.add_link("ab", "b", "a", row(2, 30.0));
+    let net = b.build(VALUES).unwrap();
+    assert_eq!(net.node_position(NodeId::new(0)).x, 0.0);
+    assert_eq!((net.upstream(only_link(&net)), net.lanes(only_link(&net))), (NodeId::new(0), 1));
+    let keys: Vec<_> = noted(&net).into_iter().map(|(k, n, _)| (k, n)).collect();
+    assert_eq!(keys, [("nodes_repeated", 1), ("links_repeated", 1)]);
 
-    let mut b = two_nodes(row(1, 50.0));
-    b.add_link("ab", "b", "a", row(1, 50.0));
-    assert_eq!(error_of(b), BuildError::DuplicateLink("ab".into()));
-
+    // A signal on a node not held: ignored.
     let mut b = two_nodes(row(1, 50.0));
     b.mark_signalised("z");
-    assert_eq!(error_of(b), BuildError::UnknownSignalNode("z".into()));
+    assert_eq!(noted(&b.build(VALUES).unwrap()), [("signals_unplaced", 1, vec!["z".to_string()])]);
 
-    for modes in [ModeSet::EMPTY, ALL_LINK_MODES.with(Mode::Transit)] {
-        let err = error_of(two_nodes(LinkRow { modes, ..row(1, 50.0) }));
-        assert_eq!(err, BuildError::BadModes { link: "ab".into(), modes });
-    }
-    assert_eq!(error_of(two_nodes(row(0, 50.0))), BuildError::NoLanes("ab".into()));
-    let err = error_of(two_nodes(LinkRow { capacity_veh_h: Some(0.0), ..row(1, 50.0) }));
-    assert_eq!(err, BuildError::BadCapacity { link: "ab".into(), veh_h: 0.0 });
+    // A link allowing transit: transit taken out; a link allowing nothing: left out.
+    let net = two_nodes(LinkRow { modes: ALL_LINK_MODES.with(Mode::Transit), ..row(1, 50.0) })
+        .build(VALUES)
+        .unwrap();
+    assert_eq!(net.modes(only_link(&net)), ALL_LINK_MODES);
+    assert_eq!(noted(&net), [("links_transit_removed", 1, vec!["ab".to_string()])]);
+    let net = two_nodes(LinkRow { modes: ModeSet::EMPTY, ..cycle_path() }).build(VALUES).unwrap();
+    assert_eq!(net.link_count(), 0);
+    assert_eq!(noted(&net), [("links_without_mode", 1, vec!["ab".to_string()])]);
+}
+
+/// Of a repeated id the first usable row is kept: a first row that is itself left out (a node
+/// not finite, a link to a node not held) does not take the good second row with it, and each
+/// fault is noted once. a at 0 m and b at 1 000 m; the second `ab` row runs a→b with 2 lanes.
+#[test]
+fn a_repeated_id_keeps_its_first_usable_row() {
+    let mut b = NetworkBuilder::new();
+    b.add_node("a", at(f64::NAN, 0.0));
+    b.add_node("a", at(0.0, 0.0));
+    b.add_node("b", at(1_000.0, 0.0));
+    b.add_link("ab", "a", "nowhere", row(1, 50.0));
+    b.add_link("ab", "a", "b", row(2, 50.0));
+    let net = b.build(VALUES).unwrap();
+    assert_eq!((net.node_count(), net.link_count()), (2, 1));
+    assert_eq!((net.lanes(only_link(&net)), net.length(only_link(&net)).get()), (2, 1_000.0));
+    let one = |key| (key, 1, vec!["a".to_string()]);
+    assert_eq!(noted(&net), [one("nodes_repeated"), ("links_repeated", 1, vec!["ab".to_string()])]);
+    // Every row of an id left out: the first row's fault, the other rows as repeated.
+    let mut b = two_nodes(row(1, 50.0));
+    b.add_link("ac", "a", "nowhere", row(1, 50.0));
+    b.add_link("ac", "a", "elsewhere", row(1, 50.0));
+    let net = b.build(VALUES).unwrap();
+    assert_eq!(net.link_count(), 1);
+    let keys: Vec<_> = noted(&net).into_iter().map(|(k, n, _)| (k, n)).collect();
+    assert_eq!(keys, [("links_repeated", 1), ("links_to_no_node", 1)]);
 }
 
 #[test]
-fn the_error_reported_does_not_depend_on_the_input_order() {
-    // Two bad links; the one first in sorted order ("ab" < "zz") is named, either way round.
+fn the_repairs_do_not_depend_on_the_input_order() {
+    // Two bad links ("zz" without lanes, "ab" without a car speed), either way round: both lose
+    // their car mode, noted in sorted order.
     for reverse in [false, true] {
         let mut b = NetworkBuilder::new();
         b.add_node("a", at(0.0, 0.0));
@@ -392,6 +457,10 @@ fn the_error_reported_does_not_depend_on_the_input_order() {
         for (name, r) in bad {
             b.add_link(name, "a", "b", r);
         }
-        assert!(matches!(error_of(b), BuildError::BadSpeed { link, .. } if link == "ab"));
+        let net = b.build(VALUES).unwrap();
+        assert_eq!(
+            noted(&net),
+            [("car_mode_removed", 2, vec!["ab".to_string(), "zz".to_string()])]
+        );
     }
 }

@@ -22,11 +22,25 @@
 //! [network]                    source, nodes, links, fingerprint; osm_file, or nodes_file and
 //!                              links_file, each absent for a table given in memory
 //! [network.osm_report]         the OSM reader's counts; absent for a network from tables
-//! [demand]                     trips, classes, fingerprint; trips_file, absent likewise
+//! [network.repairs]            what the network's readers set right, by kind
+//! [demand]                     trips, trips_given (only when it differs from trips), classes,
+//!                              fingerprint; trips_file, absent likewise
+//! [demand.repairs]             what the demand's readers set right or dropped, by kind
 //! [transit]                    stops, runs, fingerprint, gtfs_file; absent without transit
 //! [transit.gtfs_report]        the GTFS reader's counts
+//! [transit.repairs]            what the GTFS reader set right, by kind
 //! [result]                     iterations, stopped_by_rule
+//! [result.repairs]             what the run set right or dropped (the window), by kind
 //! ```
+//!
+//! A `repairs` table holds one key per kind of repair made, its count (each crate's README names
+//! its kinds), and is absent when none was made. `trips_given` counts the rows of the trips
+//! table and is written only when the demand dropped some, so that it differs from `trips`, the
+//! trips the demand holds (the difference is in `[demand.repairs]`); of those, the trips the run
+//! did not run are counted in `[result.repairs]`. `window_end_s` is the end the run used; when
+//! the run moved the end given up to a whole bin, `window_end_given_s` (after it) is the end
+//! given, which a run again starts from, so it repeats the repair. So a run that needed no
+//! repair has the record it had before repairs were counted.
 //!
 //! TOML has no null: a value that does not exist is an absent key or table. `stop_walk_max` and
 //! `transfer_walk_max` are absent without transit (nothing reads them there); the coefficients'
@@ -52,12 +66,14 @@ use openmobisim_demand::demand::Demand;
 use openmobisim_graph::network::Network;
 use openmobisim_loop::parameters::{COLUMNS, ChoiceModel};
 use openmobisim_loop::run::Run;
+use openmobisim_types::repairs::Repairs;
 
 use crate::{Given, Source, WriteError};
 
 /// The file's first line.
 const HEAD: &str = "# The record of one openmobisim run: the parameters and inputs that produced \
-                    trips.parquet, links.parquet and iterations.parquet in this folder.";
+                    trips.parquet, links.parquet, iterations.parquet and routes.parquet in this \
+                    folder.";
 
 /// The rows of `PARAMETERS.md` written under `[parameters]`, in order, each with its unit as
 /// that table's Unit column writes it (`coefficients` is written as tables after them;
@@ -80,9 +96,10 @@ const UNITS: [(&str, &str); 14] = [
 ];
 
 /// Every table of the record, by its dotted name (`""` for the top), and the keys the writer may
-/// write in it, so that a reader can refuse any other. The tables of the coefficients, one per
+/// write in it, so that a reader can name any other. The tables of the coefficients, one per
 /// class under `parameters.coefficients`, hold the columns of the choice row
-/// (`openmobisim_loop::parameters::COLUMNS`).
+/// (`openmobisim_loop::parameters::COLUMNS`); a `repairs` table, the kinds of repair its
+/// readers name.
 pub const KEYS: [(&str, &[&str]); 8] = [
     (
         "",
@@ -91,6 +108,7 @@ pub const KEYS: [(&str, &[&str]); 8] = [
             "openmobisim_version",
             "window_start_s",
             "window_end_s",
+            "window_end_given_s",
             "parameters",
             "network",
             "demand",
@@ -129,11 +147,12 @@ pub const KEYS: [(&str, &[&str]); 8] = [
             "nodes_file",
             "links_file",
             "osm_report",
+            "repairs",
         ],
     ),
     ("network.osm_report", &["nodes", "links", "links_unreachable", "loops_dropped", "ways_cut"]),
-    ("demand", &["trips", "classes", "fingerprint", "trips_file"]),
-    ("transit", &["stops", "runs", "fingerprint", "gtfs_file", "gtfs_report"]),
+    ("demand", &["trips", "trips_given", "classes", "fingerprint", "trips_file", "repairs"]),
+    ("transit", &["stops", "runs", "fingerprint", "gtfs_file", "gtfs_report", "repairs"]),
     (
         "transit.gtfs_report",
         &[
@@ -154,7 +173,7 @@ pub const KEYS: [(&str, &[&str]); 8] = [
             "transfers_skipped",
         ],
     ),
-    ("result", &["iterations", "stopped_by_rule"]),
+    ("result", &["iterations", "stopped_by_rule", "repairs"]),
 ];
 
 /// The comment above the coefficient tables.
@@ -290,6 +309,9 @@ pub(crate) fn text(
         ("window_start_s", Value::Int(u64::from(window.origin().get()))),
         ("window_end_s", Value::Int(u64::from(window.end().get()))),
     ])?;
+    if run.window_given.1 != window.end() {
+        t.key("window_end_given_s", &Value::Int(u64::from(run.window_given.1.get())), None)?;
+    }
     t.table("parameters");
     for (name, unit) in UNITS {
         if let Some(value) = parameter(name, given) {
@@ -311,7 +333,18 @@ pub(crate) fn text(
         ("iterations", Value::Int(run.iterations.len() as u64)),
         ("stopped_by_rule", Value::Flag(run.stopped_by_rule)),
     ])?;
+    repairs(&mut t, "result", &run.repairs)?;
     Ok(t.text)
+}
+
+/// The table `[<name>.repairs]`: each kind of `repairs` with its count, in the order first met;
+/// nothing when no repair was made.
+fn repairs(t: &mut Toml, name: &str, repairs: &Repairs) -> Result<(), WriteError> {
+    if repairs.is_empty() {
+        return Ok(());
+    }
+    t.table(&format!("{name}.repairs"));
+    repairs.kinds().iter().try_for_each(|k| t.key(k.key, &Value::Int(k.count), None))
 }
 
 /// `file` relative to `folder`, both canonical paths, with `/` between components: a `..` for
@@ -384,14 +417,19 @@ fn inputs(
             ("ways_cut", n(r.ways_cut)),
         ])?;
     }
+    repairs(t, "network", given.network_repairs)?;
     t.table("demand");
     let fingerprint = hex(demand.fingerprint());
+    t.key("trips", &Value::Int(u64::from(demand.trip_count())), None)?;
+    if given.trips_given != u64::from(demand.trip_count()) {
+        t.key("trips_given", &Value::Int(given.trips_given), None)?;
+    }
     t.keys(&[
-        ("trips", Value::Int(u64::from(demand.trip_count()))),
         ("classes", Value::Strs(demand.class_ids().iter().collect())),
         ("fingerprint", Value::Str(&fingerprint)),
     ])?;
     files(t, &[("trips_file", f.trips)], folder)?;
+    repairs(t, "demand", given.demand_repairs)?;
     let Some(transit) = &given.transit else { return Ok(()) };
     t.table("transit");
     let fingerprint = hex(transit.timetable.fingerprint());
@@ -419,5 +457,6 @@ fn inputs(
         ("footpaths", Value::Int(r.footpaths)),
         ("transfers_applied", n(r.transfers_applied)),
         ("transfers_skipped", n(r.transfers_skipped)),
-    ])
+    ])?;
+    repairs(t, "transit", &r.repairs)
 }

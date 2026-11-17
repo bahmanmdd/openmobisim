@@ -30,6 +30,10 @@ self-comparison allowed).
    files are kept; run_file into the record's own folder replaces the record.
 7. Each refusal of a record by name (ValueError), one case each (a boolean for each kind of
    number included: TOML's true would read as 1), and a file that cannot be read (OSError).
+8. Ignored, one UserWarning naming it, the run the minimal record's (its new record the same
+   bytes): a key or table the writer never writes outside [parameters] (at the top, in
+   [network], [demand], [transit], [result], the readers' reports), and stop_walk_max or
+   transfer_walk_max under [parameters] with no [transit].
 
 For bikes: bike_speed is 17 km/h in case 2 and read back from the record; the Delft rerun holds a
 bike trip; the bike's permissions travel in the links and trips files.
@@ -394,9 +398,6 @@ def test_inputs_of_other_names_beside_the_run_are_kept_and_the_record_folder_is_
 
 GTFS_LINE = "gtfs_file = \"inputs/gtfs.zip\"\n"
 REFUSALS = [  # (what replaces what in the minimal record, the message)
-    (("window_start_s", "speed = 3\nwindow_start_s"), "speed is not a key of the record"),
-    (("[network]", "[scenario]\nname = 1\n\n[network]"), "scenario is not a key of the record"),
-    (("[network]\n", "[network]\ncrs = 1\n"), r"crs is not a key of the record \[network\]"),
     (("[network]", "[parameters]\nwalk_sped = 5.0\n\n[network]"),
      r"walk_sped is not a key of the record \[parameters\]"),
     (("[network]", "[parameters.coefficients.\"all\"]\nper_km = 1.0\n\n[network]"),
@@ -415,20 +416,7 @@ REFUSALS = [  # (what replaces what in the minimal record, the message)
     (("links_file = \"inputs/links.parquet\"\n", ""), "network.links_file is missing"),
     (("[network]\n", "[network]\nosm_file = \"inputs/x.osm.pbf\"\n"), "are two networks"),
     (("gtfs_file = \"inputs/gtfs.zip\"\n", "stops = 2\n"), "transit.gtfs_file is missing"),
-    (("[transit]\ngtfs_file = \"inputs/gtfs.zip\"\n", "[parameters]\ntransfer_walk_max = 400.0\n"),
-     "parameters.transfer_walk_max is read only with a transit"),
     (("[network]", "[parameters]\nseed = -1\n\n[network]"), "seed: "),
-    (("classes = [\"all\"]\n", "classes = [\"all\"]\nzones = 3\n"),
-     r"zones is not a key of the record \[demand\]"),
-    ((GTFS_LINE, GTFS_LINE + "agency = 1\n"), r"agency is not a key of the record \[transit\]"),
-    ((GTFS_LINE, GTFS_LINE + "\n[result]\nseconds = 1.0\n"),
-     r"seconds is not a key of the record \[result\]"),
-    (("[demand]", "[network.osm_report]\nnodez = 1\n\n[demand]"),
-     r"nodez is not a key of the record \[network.osm_report\]"),
-    ((GTFS_LINE, GTFS_LINE + "\n[transit.gtfs_report]\nroutes = 1\n"),
-     r"routes is not a key of the record \[transit.gtfs_report\]"),
-    (("[transit]\n" + GTFS_LINE, "[parameters]\nstop_walk_max = 1500.0\n"),
-     "parameters.stop_walk_max is read only with a transit"),
 ] + [  # a boolean for each kind of number the record holds
     (("[network]", f"{table}\n{key} = true\n\n[network]"), f"{name}: a boolean")
     for table, key, name in [
@@ -445,6 +433,41 @@ REFUSALS = [  # (what replaces what in the minimal record, the message)
     (("window_start_s = 28800", "window_start_s = false"), "window_start_s: a boolean"),
     (("window_end_s = 36000", "window_end_s = true"), "window_end_s: a boolean"),
 ]
+
+
+IGNORED = [  # (what replaces what in the minimal record, the warning)
+    (("window_start_s", "speed = 3\nwindow_start_s"), "ignored: speed"),
+    (("[network]", "[scenario]\nname = 1\n\n[network]"), "ignored: scenario"),
+    (("[network]\n", "[network]\ncrs = 1\n"), r"ignored: crs \[network\]"),
+    (("classes = [\"all\"]\n", "classes = [\"all\"]\nzones = 3\n"), r"ignored: zones \[demand\]"),
+    ((GTFS_LINE, GTFS_LINE + "agency = 1\n"), r"ignored: agency \[transit\]"),
+    ((GTFS_LINE, GTFS_LINE + "\n[result]\nseconds = 1.0\n"), r"ignored: seconds \[result\]"),
+    (("[demand]", "[network.osm_report]\nnodez = 1\n\n[demand]"),
+     r"ignored: nodez \[network.osm_report\]"),
+    ((GTFS_LINE, GTFS_LINE + "\n[transit.gtfs_report]\nroutes = 1\n"),
+     r"ignored: routes \[transit.gtfs_report\]"),
+]
+WITHOUT_TRANSIT = [  # the same, the record without [transit]
+    (("[transit]\n" + GTFS_LINE, "[parameters]\ntransfer_walk_max = 400.0\n"),
+     "parameters.transfer_walk_max is ignored: it is read only with a transit"),
+    (("[transit]\n" + GTFS_LINE, "[parameters]\nstop_walk_max = 1500.0\n"),
+     "parameters.stop_walk_max is ignored: it is read only with a transit"),
+]
+
+
+@pytest.mark.parametrize("case", range(len(IGNORED + WITHOUT_TRANSIT)),
+                         ids=[m for _, m in IGNORED + WITHOUT_TRANSIT])
+def test_a_key_the_record_does_not_read_is_ignored_and_warned(tmp_path, case):
+    (old, new), match = (IGNORED + WITHOUT_TRANSIT)[case]
+    record = minimal_case(tmp_path)
+    baseline_text = MINIMAL if case < len(IGNORED) else MINIMAL.replace("[transit]\n" + GTFS_LINE, "")
+    record.write_text(baseline_text)
+    baseline = Path(oms.run_file(record, out=tmp_path / "baseline").record).read_bytes()
+    assert MINIMAL.count(old) == 1, old
+    record.write_text(MINIMAL.replace(old, new))
+    with pytest.warns(UserWarning, match=match):
+        result = oms.run_file(record, out=tmp_path / "ignored")
+    assert Path(result.record).read_bytes() == baseline
 
 
 @pytest.mark.parametrize("case", range(len(REFUSALS)), ids=[m for _, m in REFUSALS])

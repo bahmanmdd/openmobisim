@@ -8,7 +8,7 @@ stopping rule; and the three tables a run returns. Depends on `openmobisim-types
 - The `Network` (`openmobisim-graph`), the `Demand` (`openmobisim-demand`, built on that
   network and on the timetable), and the `Timetable` (`openmobisim-transit`) or none.
 - The window `(start, end)`, two seconds of the clock: the study period, the user's, never
-  defaulted; a whole number of link bins long.
+  defaulted; a whole number of link bins long (else its end is moved up to one, below).
 - `Parameters` (defaults and their sources in `PARAMETERS.md`): `link_bin` (s), `iteration_cap`,
   `iteration_floor`, `seed`, `boarding_slack` (s), `max_rides`, `nearby_stops`, `choice`
   (deterministic or logit), `nest_scale`, and per user class the sixteen coefficients of the
@@ -16,7 +16,7 @@ stopping rule; and the three tables a run returns. Depends on `openmobisim-types
 
 ## Outputs
 `run::run` returns a `Run`:
-- `trips`, one row per trip in id order: class, departure, the mode taken, the arrival at the
+- `trips`, one row per trip in id order: whether it was run (`kept`), class, departure, the mode taken, the arrival at the
   door (seconds after the window's start; `NaN` for a trip without an alternative or
   unfinished, whose arrival is unknown), the door-to-door travel time (the same), whether it finished,
   the cost of the alternative taken, the size of its set. `set(trip)` and `taken(trip)` give the
@@ -165,11 +165,26 @@ model's unit (minutes in a time-only run: 1 on each of the nine time columns, 0 
   over two runs.
 
 ## Errors
-`run` refuses, never repairs, with a `RunError`: `link_bin`, `iteration_cap`, `max_rides` or
-`nearby_stops` zero; coefficient rows not one per class; a window that is not whole bins, is empty or runs
-past the clock; with a timetable, a class whose coefficient of a transit time or of the transfers is
-negative or not finite; a trip departing outside the window, or reaching the network by some mode at or
-after its end (named by external id); the choice model's and the loading's refusals.
+`run` refuses with a `RunError` only what no run can be made of: `link_bin`, `iteration_cap`,
+`max_rides` or `nearby_stops` zero; coefficient rows not one per class; an empty window or one
+running past the clock; with a timetable, a class whose coefficient of a transit time or of the
+transfers is negative or not finite; the choice model's and the loading's refusals.
+
+## Repairs
+What the window cannot hold is set right and noted in `Run::repairs` by kind (count and first
+five ids); `Run::window` is the window run (`Run::window_given` the window given), `Run::dropped`
+the trips dropped.
+
+| Key | What | What is done |
+|---|---|---|
+| `window_end_moved` | a window that is not a whole number of `link_bin` | its end moved up to the next whole bin (the id: the end used, a second of the clock) |
+| `trips_outside_window` | a trip departing before the window's start or at or after its end | dropped |
+| `modes_after_window` | a trip whose walk to the network by car, bike or walk would end at or after the window's end (once per trip) | each such mode taken out of its set for the run |
+| `trips_after_window` | a trip left with no mode by that | dropped |
+
+A trip dropped is not run: no alternative, in no count of the iterations table, and its row of
+`trips` says so (`kept` false), so the outputs leave it out. For bikes: a bike trip whose door
+is so far from the bike network that its walk there would end after the window loses the bike.
 
 ## Bikes
 A bike alternative is a route on the links a bike may use at the bike's speed, in the same set
@@ -205,7 +220,7 @@ or the car share against the logit share at the times met; printed, not judged);
 mixed numbers that follow from the three (the mean trip, a queue's delay); by hand, the bike's 360 s and 405 s, the walker's 1 125 s, a journey at 922.5 s,
 the cheaper mode taken, the nearest stop tried alone and two journeys on one run
 (`tests/nearby_stops.rs`), an empty route, an unfinished walker, the boarding slack and the most
-rides, the refusals, the stopping rule on hand-made rows; the choice row of each mode by hand
+rides, the refusals and the window's repairs, the stopping rule on hand-made rows; the choice row of each mode by hand
 (`tests/choice_row.rs`: a car and a bike with gap walks, a walk, a journey with one transfer,
 every part in minutes; the path size of two overlapping car routes, 0 for bike and walk
 routes; and of three car routes sharing one link among three and one among two, one link

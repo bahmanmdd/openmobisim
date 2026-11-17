@@ -258,22 +258,43 @@ fn refusals_name_what_they_refuse() {
         Some(RunError::CoefficientRows { classes: 1, rows: 0 })
     );
     assert_eq!(
-        run(&net, &dem, None, (Second(0), Second(100)), &p).err(),
-        Some(RunError::Window(StepGridError::WindowNotWholeSteps {
-            window_seconds: 100,
-            step_seconds: 60
-        }))
+        run(&net, &dem, None, (Second(0), Second(0)), &p).err(),
+        Some(RunError::Window(StepGridError::ZeroWindow))
     );
-    assert_eq!(
-        run(&net, &dem, None, (Second(60), Second(3_660)), &p).err(),
-        Some(RunError::DepartureOutsideWindow("t".to_string()))
-    );
-    // A gap of 100 m walked in 75 s would reach the network at the end of a 60 s window.
-    let far = demand(&net, &[trip(100.0, &[Mode::Car])]);
-    assert_eq!(
-        run(&net, &far, None, (Second(0), Second(60)), &p).err(),
-        Some(RunError::StartsAfterWindow("t".to_string(), Mode::Car))
-    );
+}
+
+/// The window's repairs, each by hand. A window of 100 s in 60 s bins ends at 120 s, the next
+/// whole bin. A trip departing at 0 s is outside a window from 60 s: dropped. A gap of 100 m
+/// is walked in 75 s at 4.8 km/h: by car or walk the trip would reach the network after a
+/// 60 s window, so both modes are taken out and the trip, left with none, is dropped; with
+/// transit beside the car (no timetable) it keeps transit and is run without an alternative.
+#[test]
+fn what_the_window_cannot_hold_is_set_right_and_noted() {
+    let net = two_nodes();
+    let p = time_only(1);
+    let keys = |r: &openmobisim_loop::run::Run| -> Vec<(&str, u64, Vec<String>)> {
+        r.repairs.kinds().iter().map(|k| (k.key, k.count, k.first.clone())).collect()
+    };
+    let t = || vec!["t".to_owned()];
+    let bike = demand(&net, &[trip(0.0, &[Mode::Bike])]);
+    let r = run(&net, &bike, None, (Second(0), Second(100)), &p).expect("a run");
+    assert_eq!(r.window, (Second(0), Second(120)));
+    assert_eq!(keys(&r), [("window_end_moved", 1, vec!["120".to_owned()])]);
+    assert!(r.trips.kept[0]);
+    let car = demand(&net, &[trip(0.0, &[Mode::Car])]);
+    let r = run(&net, &car, None, (Second(60), Second(3_660)), &p).expect("a run");
+    assert_eq!(keys(&r), [("trips_outside_window", 1, t())]);
+    assert_eq!((r.trips.kept[0], r.trips.mode[0]), (false, None));
+    assert_eq!((r.iterations[0].without_alternative, r.iterations[0].finished), (0, 0));
+    let far = demand(&net, &[trip(100.0, &[Mode::Car, Mode::Walk])]);
+    let r = run(&net, &far, None, (Second(0), Second(60)), &p).expect("a run");
+    assert_eq!(keys(&r), [("modes_after_window", 1, t()), ("trips_after_window", 1, t())]);
+    assert!(!r.trips.kept[0]);
+    let far = demand(&net, &[trip(100.0, &[Mode::Car, Mode::Transit])]);
+    let r = run(&net, &far, None, (Second(0), Second(60)), &p).expect("a run");
+    assert_eq!(keys(&r), [("modes_after_window", 1, t())]);
+    assert!(r.trips.kept[0]);
+    assert_eq!(r.iterations[0].without_alternative, 1);
 }
 
 fn row(mean: f64, found: f64) -> Iteration {

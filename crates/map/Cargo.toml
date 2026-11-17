@@ -1,0 +1,22 @@
+[package]
+name = "openmobisim-map"
+description = "The interactive map: one self-contained HTML file of a finished run."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+openmobisim-types = { workspace = true }
+openmobisim-graph = { workspace = true }
+openmobisim-transit = { workspace = true }
+openmobisim-demand = { workspace = true }
+openmobisim-loop = { workspace = true }
+openmobisim-io-gtfs = { workspace = true }
+openmobisim-io-parquet = { workspace = true }
+flate2 = { workspace = true }

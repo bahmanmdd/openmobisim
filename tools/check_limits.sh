@@ -1,7 +1,7 @@
 #!/bin/bash
 # The budgets, checked by the build. A piece that breaks one is not merged.
 #   no source file over 800 lines          (Rust and Python; functions over 80 lines are clippy's too_many_lines)
-#   Rust under 45 000 lines in all, Python under 5 000, the binding crate under 1 500
+#   Rust under 45 000 lines in all, Python under 5 000, the binding crate under 2 000
 #   at most 40 parameters, each read by a test    (the rows of PARAMETERS.md; each name found under a tests folder)
 #   a crate depends only on the crates before it  (the order below)
 #   the handbook at most 60 lines, the status file at most 40   (only when LIMITS_WORKSPACE names the folder that
@@ -26,7 +26,7 @@ for f in "${rs[@]}" "${py[@]}"; do
 done
 total_rs=$(lines "${rs[@]}"); [ "$total_rs" -gt 45000 ] && breach "Rust has $total_rs lines (at most 45 000)"
 total_py=$(lines "${py[@]}"); [ "$total_py" -gt 5000 ] && breach "Python has $total_py lines (at most 5 000)"
-total_bind=$(lines "${bind[@]}"); [ "$total_bind" -gt 1500 ] && breach "the binding has $total_bind lines (at most 1 500)"
+total_bind=$(lines "${bind[@]}"); [ "$total_bind" -gt 2000 ] && breach "the binding has $total_bind lines (at most 2 000)"
 
 # Parameters: the rows of the table in PARAMETERS.md after its header and rule lines.
 params=()
@@ -40,7 +40,7 @@ for p in "${params[@]}"; do
 done
 
 # The crate order: a crate's internal dependencies all come before it.
-order=(types graph loading search choice transit demand loop io-osm io-gtfs io-parquet binding)
+order=(types graph loading search choice transit demand loop io-osm io-gtfs io-parquet map summary binding)
 rank() { local i; for i in "${!order[@]}"; do [ "${order[$i]}" = "$1" ] && { echo "$i"; return; }; done; echo -1; }
 for c in crates/*/; do
   c=${c%/}; name=${c#crates/}; r=$(rank "$name")

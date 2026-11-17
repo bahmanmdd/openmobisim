@@ -24,6 +24,12 @@
 //! egress list is the same from each stop to the destination. An empty list on either end is
 //! not an error: the trip has no transit alternative, and the ends are counted.
 //!
+//! # Repairs
+//!
+//! A row that cannot be used is set right or dropped and noted in [`Demand::repairs`] (the
+//! table of [`crate::input`]); a trip dropped is not in the demand. With a timetable and no
+//! link allowing walking, no stop is linked (transit is then out of every trip's set, noted).
+//!
 //! # Identity
 //!
 //! Trips and classes get dense ids by sorted external id, whatever the order of the rows. Every
@@ -35,6 +41,7 @@ use openmobisim_transit::timetable::Timetable;
 use openmobisim_types::fingerprint::Fingerprint;
 use openmobisim_types::ids::{EntityId, ExternalIdTable, NodeId, StopId, TripId, UserClassId};
 use openmobisim_types::mode::{Mode, ModeSet};
+use openmobisim_types::repairs::Repairs;
 use openmobisim_types::time::Second;
 use openmobisim_types::units::{Duration, Metres};
 use rayon::prelude::*;
@@ -107,6 +114,9 @@ pub struct Demand {
     access: Lists,
     egress: Lists,
     stop_end: Vec<End>,
+    stops: u32,
+    given: u64,
+    repairs: Repairs,
     origins_without_stop: u32,
     destinations_without_stop: u32,
     without_transit: u32,
@@ -119,43 +129,38 @@ type TripEnds = [[(NodeId, f64); 4]; 2];
 /// Link both ends of a trip for every mode of its set (`indices[mode]` holds the mode's nodes
 /// by [`Joins::Either`], [`Joins::Out`] and [`Joins::In`]): where both ends are nearest the
 /// same node of the mode's network, both join it (no link is travelled); otherwise the origin
-/// joins the nearest node it can leave and the destination the nearest it can arrive at. The
-/// mode for which no node is kept when there is one.
-fn link_trip(
-    indices: &[[NodeIndex; 3]; 3],
-    modes: ModeSet,
-    ends: [Xy; 2],
-) -> Result<TripEnds, Mode> {
+/// joins the nearest node it can leave and the destination the nearest it can arrive at. Every
+/// mode of the set is allowed by some link (the check took out the others), so every node is
+/// found.
+fn link_trip(indices: &[[NodeIndex; 3]; 3], modes: ModeSet, ends: [Xy; 2]) -> TripEnds {
     let mut out = [[(NodeId::NULL, f64::NAN); 4]; 2];
+    let allowed = "the check keeps only modes some link allows";
     for mode in modes.iter() {
         let [either, leave, arrive] =
             &indices[column(if mode == Mode::Transit { Mode::Walk } else { mode })];
-        let (o, d) = (either.nearest(ends[0]).ok_or(mode)?, either.nearest(ends[1]).ok_or(mode)?);
+        let o = either.nearest(ends[0]).expect(allowed);
+        let d = either.nearest(ends[1]).expect(allowed);
         let (o, d) = if o.0 == d.0 {
             (o, d)
         } else {
-            (leave.nearest(ends[0]).ok_or(mode)?, arrive.nearest(ends[1]).ok_or(mode)?)
+            (leave.nearest(ends[0]).expect(allowed), arrive.nearest(ends[1]).expect(allowed))
         };
         (out[0][column(mode)], out[1][column(mode)]) = (o, d);
     }
-    Ok(out)
+    out
 }
 
-/// Link every trip, in parallel; the first trip that cannot be linked, in id order, refused.
-fn link_trips(network: &Network, trips: &Trips) -> Result<[Side; 2], DemandError> {
+/// Link every trip, in parallel.
+fn link_trips(network: &Network, trips: &Trips) -> [Side; 2] {
     let indices = [Mode::Car, Mode::Bike, Mode::Walk].map(|m| {
         [Joins::Either, Joins::Out, Joins::In].map(|joins| NodeIndex::new(network, m, joins))
     });
-    let linked: Vec<Result<TripEnds, Mode>> = (0..trips.modes.len())
+    let linked: Vec<TripEnds> = (0..trips.modes.len())
         .into_par_iter()
         .map(|t| link_trip(&indices, trips.modes[t], [trips.origin[t], trips.destination[t]]))
         .collect();
     let mut sides = [Side::default(), Side::default()];
-    for (t, ends) in linked.into_iter().enumerate() {
-        let ends = ends.map_err(|mode| DemandError::NoNode {
-            trip: trips.ids.external(TripId::from_index(t).raw()).to_owned(),
-            mode,
-        })?;
+    for ends in linked {
         for (side, per_mode) in sides.iter_mut().zip(ends) {
             for (c, (node, gap)) in per_mode.into_iter().enumerate() {
                 side.node[c].push(node);
@@ -163,20 +168,18 @@ fn link_trips(network: &Network, trips: &Trips) -> Result<[Side; 2], DemandError
             }
         }
     }
-    Ok(sides)
+    sides
 }
 
-/// Link every stop of `timetable` to its nearest walk node.
-fn link_stops(network: &Network, timetable: &Timetable) -> Result<Vec<End>, DemandError> {
+/// Link every stop of `timetable` to its nearest walk node; none when no link allows walking
+/// (no trip then has transit in its set).
+fn link_stops(network: &Network, timetable: &Timetable) -> Vec<End> {
     let walk = NodeIndex::new(network, Mode::Walk, Joins::Either);
     StopId::iter_space(timetable.stop_count())
-        .map(|stop| {
+        .map_while(|stop| {
             let (x, y) = timetable.stop_position(stop);
-            let (node, gap) =
-                walk.nearest(Xy::new(x.get(), y.get())).ok_or_else(|| DemandError::StopNoNode {
-                    stop: timetable.stop_ids().external(stop.raw()).to_owned(),
-                })?;
-            Ok(End { node, gap: Metres(gap) })
+            let (node, gap) = walk.nearest(Xy::new(x.get(), y.get()))?;
+            Some(End { node, gap: Metres(gap) })
         })
         .collect()
 }
@@ -222,12 +225,13 @@ impl Demand {
     /// and egress lists of `timetable` (none: every transit trip is without a stop in reach),
     /// a walk to a stop being at most `stop_walk_max` metres.
     ///
+    /// A row that cannot be used is set right or dropped and noted in [`Demand::repairs`].
+    ///
     /// # Errors
     ///
     /// A [`DemandError`] naming what it refuses: `stop_walk_max` not a finite number at or above
-    /// zero; a class or a trip given twice; then trip by trip in id order, an unknown class, an
-    /// empty mode set, mixed position kinds, a position the network cannot take, a mode no link
-    /// allows; then a stop when no link allows walking.
+    /// zero; then trip by trip in id order, mixed position kinds or a position of another kind
+    /// than the network's.
     pub fn build(
         rows: &[TripRow],
         classes: &[String],
@@ -239,10 +243,11 @@ impl Demand {
         if !max.is_finite() || max < 0.0 {
             return Err(DemandError::StopWalkMax { metres: max });
         }
-        let trips = check(rows, classes, network)?;
-        let sides = link_trips(network, &trips)?;
+        let mut repairs = Repairs::new();
+        let trips = check(rows, classes, network, &mut repairs)?;
+        let sides = link_trips(network, &trips);
         let stop_end = match timetable {
-            Some(timetable) => link_stops(network, timetable)?,
+            Some(timetable) => link_stops(network, timetable),
             None => Vec::new(),
         };
         let [access, egress] = if stop_end.is_empty() {
@@ -263,6 +268,9 @@ impl Demand {
             access,
             egress,
             stop_end,
+            stops: timetable.map_or(0, Timetable::stop_count),
+            given: rows.len() as u64,
+            repairs,
             origins_without_stop: 0,
             destinations_without_stop: 0,
             without_transit: 0,
@@ -282,6 +290,18 @@ impl Demand {
             self.destinations_without_stop += u32::from(e);
             self.without_transit += u32::from(a || e);
         }
+    }
+
+    /// How many trip rows were given, the dropped ones with them.
+    #[must_use]
+    pub fn trips_given(&self) -> u64 {
+        self.given
+    }
+
+    /// What the build set right or dropped, by kind (the table of [`crate::input`]).
+    #[must_use]
+    pub fn repairs(&self) -> &Repairs {
+        &self.repairs
     }
 
     /// How many trips.
@@ -368,12 +388,14 @@ impl Demand {
     /// How many stops (the timetable's; 0 without one).
     #[must_use]
     pub fn stop_count(&self) -> u32 {
-        #[allow(clippy::cast_possible_truncation, reason = "the timetable's stop count, a u32")]
-        let n = self.stop_end.len() as u32;
-        n
+        self.stops
     }
 
     /// Where a stop joins the walk network.
+    ///
+    /// # Panics
+    ///
+    /// When no link allows walking: no stop is then linked, and no trip has transit in its set.
     #[must_use]
     pub fn stop_end(&self, stop: StopId) -> End {
         self.stop_end[stop.index()]

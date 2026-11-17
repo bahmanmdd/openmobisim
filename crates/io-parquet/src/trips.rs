@@ -24,18 +24,43 @@ use openmobisim_types::time::Second;
 
 use crate::{WriteError, column, value};
 
-/// The trips table as one batch; `demand` gives the external ids, `start` the window's start
-/// on the clock, added to the loop's arrivals (seconds after it).
+/// The trips table as one batch, one row per trip run (a trip the window could not hold,
+/// `kept` false, is left out); `demand` gives the external ids, `start` the window's start on
+/// the clock, added to the loop's arrivals (seconds after it).
 pub(crate) fn batch(
     trips: &Trips,
     demand: &Demand,
     start: Second,
 ) -> Result<RecordBatch, WriteError> {
-    let floats = |v: &[f64]| column(v.iter().map(|&x| value(x)).collect::<Float64Array>());
+    let rows: Vec<usize> = (0..trips.kept.len()).filter(|&i| trips.kept[i]).collect();
+    let floats = |v: &[f64]| column(rows.iter().map(|&i| value(v[i])).collect::<Float64Array>());
     let start = f64::from(start.get());
-    let arrivals = trips.arrival.iter().map(|&x| value(x).map(|x| start + x));
-    let arrivals = arrivals.collect::<Float64Array>();
-    let schema = Schema::new(vec![
+    let arrivals = rows.iter().map(|&i| value(trips.arrival[i]).map(|x| start + x));
+    let ids = demand.trip_ids();
+    let columns = vec![
+        column(StringArray::from_iter_values(rows.iter().map(|&i| ids.external(as_u32(i))))),
+        column(StringArray::from_iter_values(
+            rows.iter().map(|&i| demand.class_ids().external(trips.class[i].raw())),
+        )),
+        column(UInt32Array::from_iter_values(rows.iter().map(|&i| trips.departure[i].get()))),
+        column(rows.iter().map(|&i| trips.mode[i].map(|m| m.to_string())).collect::<StringArray>()),
+        column(arrivals.collect::<Float64Array>()),
+        floats(&trips.travel_time),
+        column(BooleanArray::from(rows.iter().map(|&i| trips.finished[i]).collect::<Vec<_>>())),
+        floats(&trips.cost),
+        column(UInt32Array::from_iter_values(rows.iter().map(|&i| trips.alternatives[i]))),
+    ];
+    Ok(RecordBatch::try_new(Arc::new(schema()), columns)?)
+}
+
+/// A trip index as a raw id.
+fn as_u32(i: usize) -> u32 {
+    u32::try_from(i).expect("trip ids fit u32")
+}
+
+/// The file's columns, in order: the writer writes them and the reader asks for exactly them.
+pub(crate) fn schema() -> Schema {
+    Schema::new(vec![
         Field::new("trip_id", DataType::Utf8, false),
         Field::new("class_id", DataType::Utf8, false),
         Field::new("departure_s", DataType::UInt32, false),
@@ -45,19 +70,5 @@ pub(crate) fn batch(
         Field::new("finished", DataType::Boolean, false),
         Field::new("cost", DataType::Float64, true),
         Field::new("alternatives", DataType::UInt32, false),
-    ]);
-    let columns = vec![
-        column(StringArray::from_iter_values(demand.trip_ids().iter())),
-        column(StringArray::from_iter_values(
-            trips.class.iter().map(|c| demand.class_ids().external(c.raw())),
-        )),
-        column(UInt32Array::from_iter_values(trips.departure.iter().map(|d| d.get()))),
-        column(trips.mode.iter().map(|m| m.map(|m| m.to_string())).collect::<StringArray>()),
-        column(arrivals),
-        floats(&trips.travel_time),
-        column(BooleanArray::from(trips.finished.clone())),
-        floats(&trips.cost),
-        column(UInt32Array::from(trips.alternatives.clone())),
-    ];
-    Ok(RecordBatch::try_new(Arc::new(schema), columns)?)
+    ])
 }

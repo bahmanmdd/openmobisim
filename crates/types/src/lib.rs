@@ -11,6 +11,7 @@
 //! | [`reduce`] | sums and reductions in a fixed order, identical at any number of threads |
 //! | [`rng`] | ChaCha8 draws addressed by seed, stream and entity identity |
 //! | [`fingerprint`] | the 64-bit FNV-1a hash of what a network, a timetable or a demand was built from |
+//! | [`repairs`] | what a reader set right instead of refusing: per kind its count and first ids |
 //!
 //! Units are metric throughout; vehicles per hour and kilometres per hour are converted once, as
 //! a value is read. Bikes share every type with cars and walkers: there is no passenger-car
@@ -27,6 +28,7 @@ pub mod fingerprint;
 pub mod ids;
 pub mod mode;
 pub mod reduce;
+pub mod repairs;
 pub mod rng;
 pub mod time;
 pub mod units;

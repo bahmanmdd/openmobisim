@@ -25,7 +25,7 @@ use openmobisim_types::units::Duration;
 
 use crate::source::Feed;
 use crate::stop_times::Stops;
-use crate::{GtfsError, Report, required};
+use crate::{GtfsError, Report};
 
 /// One footpath: from stop, to stop (indices), seconds.
 pub(crate) type Footpath = (u32, u32, f64);
@@ -41,7 +41,12 @@ pub(crate) fn derive(
     let walk = NodeIndex::new(network, Mode::Walk, Joins::Either);
     let mut ends: Vec<(NodeId, f64)> = Vec::with_capacity(stops.xy.len());
     for &p in &stops.xy {
-        ends.push(walk.nearest(p).ok_or(GtfsError::NoWalkLinks)?);
+        let Some(end) = walk.nearest(p) else {
+            let what = "networks with no link a walker may use: no footpath between stops";
+            report.repairs.note("footpaths_none", what, "the network");
+            return Ok(Vec::new());
+        };
+        ends.push(end);
     }
     let speed = network.walk_speed().get();
     let limit = transfer_walk_max / speed * (1.0 + 1e-9);
@@ -73,8 +78,12 @@ fn apply_transfers(
 ) -> Result<(), GtfsError> {
     let f = "transfers.txt";
     let Some(mut csv) = feed.optional_csv(f)? else { return Ok(()) };
-    let (from, to) = (required(&csv, f, "from_stop_id")?, required(&csv, f, "to_stop_id")?);
-    let kind = required(&csv, f, "transfer_type")?;
+    let columns = ["from_stop_id", "to_stop_id", "transfer_type"].map(|c| csv.column(c));
+    let [Some(from), Some(to), Some(kind)] = columns else {
+        let what = "optional files without one of their columns: not read";
+        report.repairs.note("files_unread", what, f);
+        return Ok(());
+    };
     let seconds = csv.column("min_transfer_time");
     let specific: Vec<Option<usize>> =
         ["from_route_id", "to_route_id", "from_trip_id", "to_trip_id"]

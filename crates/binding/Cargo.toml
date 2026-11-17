@@ -1,6 +1,6 @@
 [package]
 name = "openmobisim-binding"
-description = "The Python binding: Network, Demand, Transit, run, run_file and Run."
+description = "The Python binding: Network, Demand, Transit, run, run_file, Run, Run.map and Run.summary."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -28,4 +28,6 @@ openmobisim-loop = { workspace = true }
 openmobisim-io-osm = { workspace = true }
 openmobisim-io-gtfs = { workspace = true }
 openmobisim-io-parquet = { workspace = true }
+openmobisim-map = { workspace = true }
+openmobisim-summary = { workspace = true }
 pyo3 = { workspace = true }

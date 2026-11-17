@@ -1,0 +1,24 @@
+[package]
+name = "openmobisim-summary"
+description = "The run's summary page: one self-contained HTML file of a finished run's numbers."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+openmobisim-types = { workspace = true }
+openmobisim-graph = { workspace = true }
+openmobisim-transit = { workspace = true }
+openmobisim-loop = { workspace = true }
+openmobisim-map = { workspace = true }
+openmobisim-io-gtfs = { workspace = true }
+openmobisim-io-parquet = { workspace = true }
+
+[dev-dependencies]
+openmobisim-demand = { workspace = true }

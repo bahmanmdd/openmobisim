@@ -1,0 +1,148 @@
+:root { --surface:#fbfcfd; --ink:#0a1626; --ink2:#3d4c5f; --muted:#55657a; --base:#c5cfda; --mark:#04938e; --panel: color-mix(in srgb, var(--base) 24%, var(--surface)); --sans: Inter, "Helvetica Neue", "Segoe UI", system-ui, sans-serif; --mono: "JetBrains Mono", Menlo, Consolas, "DejaVu Sans Mono", monospace; }
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; background: var(--surface); color: var(--ink); font-family: var(--sans); overflow: hidden; }
+/* The pointer: the arrow over the map, a pointing hand only over something to hover or click, a closed hand while
+   dragging, a crosshair while picking a pair's places (set by the script). */
+canvas#map { position: fixed; inset: 0; width: 100vw; height: 100vh; display: block; cursor: default; touch-action: none; }
+#error { position: fixed; top: 12px; left: 50%; transform: translateX(-50%); background: #9d0221; color: #fff; padding: 10px 16px; border-radius: 8px; z-index: 20; font: 13px var(--mono); }
+.head { position: fixed; top: 8px; left: 10px; max-width: min(760px, calc(100vw - 390px)); padding: 8px 14px 9px; border-radius: 12px; background: color-mix(in srgb, var(--surface) 84%, transparent); backdrop-filter: blur(3px); pointer-events: none; }
+.head .mark { width: 26px; height: 26px; vertical-align: middle; margin-right: 10px; fill: var(--mark); }
+.head h1 { display: inline; margin: 0; font-size: 24px; font-weight: 700; letter-spacing: -0.01em; vertical-align: middle; }
+.head p { margin: 5px 0 0; font-size: 13px; color: var(--ink2); }
+/* The panel and the legend on a light tint of the network's grey, a little apart from the map's surface on either
+   theme. */
+aside#panel { flex: 0 1 auto; min-height: 0; overflow: auto; background: color-mix(in srgb, var(--panel) 94%, transparent); border: 1px solid var(--base); border-radius: 12px; padding: 12px 14px 14px; box-shadow: 0 6px 26px rgba(0,0,0,.18); font-size: 12.5px; backdrop-filter: blur(6px); }
+aside h2 { margin: 12px 0 7px; font-size: 10.5px; letter-spacing: .09em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
+aside h2:first-child { margin-top: 0; }
+button, select, input[type=number] { font: inherit; color: var(--ink); background: transparent; border: 1px solid var(--base); border-radius: 7px; padding: 4px 9px; cursor: pointer; }
+button:hover:not(:disabled) { border-color: var(--ink2); }
+button:disabled { opacity: .35; cursor: default; }
+button.on { background: var(--ink); color: var(--surface); border-color: var(--ink); }
+.row { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin: 5px 0; }
+#levels { display: grid; grid-template-columns: repeat(5, 1fr); gap: 4px; margin-bottom: 6px; }
+#levels button { padding: 4px 0; font-size: 10.5px; }
+input[type=range] { width: 100%; accent-color: var(--ink2); }
+input[type=number] { width: 62px; }
+label { display: inline-flex; align-items: center; gap: 5px; color: var(--ink2); }
+#legendgroup.card { flex: 0 1 auto; margin-top: auto; max-height: 48%; display: flex; flex-direction: column; overflow: hidden; padding: 10px 14px 8px; border-radius: 12px; background: color-mix(in srgb, var(--panel) 92%, transparent); border: 1px solid color-mix(in srgb, var(--base) 70%, transparent); backdrop-filter: blur(4px); font-size: 12px; box-shadow: 0 3px 14px rgba(0,0,0,.10); }
+#legendbody .lg { margin: 0 0 10px; }
+#legendbody h3 { margin: 0 0 3px; font-size: 11.5px; font-weight: 600; color: var(--ink); }
+#legendbody .sub { font-size: 11px; color: var(--ink2); }
+#legendbody .bar { height: 9px; border-radius: 3px; margin: 4px 0 2px; }
+#legendbody .ends { display: flex; justify-content: space-between; font: 10.5px var(--mono); color: var(--ink2); }
+#legendbody .ends span { flex: 1; } #legendbody .ends span + span { text-align: center; } #legendbody .ends span:last-child { text-align: right; }
+#legendbody .bands { display: flex; font: 10.5px var(--mono); color: var(--ink2); }
+#legendbody .bands span { flex: 1; text-align: center; }
+#legendbody .kinds { display: flex; flex-wrap: wrap; gap: 3px 12px; font-size: 11px; color: var(--ink2); margin-top: 3px; }
+#legendbody .kinds i { width: 20px; height: 0; display: inline-block; margin-right: 5px; vertical-align: middle; }
+#legendbody .note { font-size: 10.5px; color: var(--muted); margin-top: 3px; }
+.layers { display: grid; grid-template-columns: 1fr 1fr; gap: 2px 10px; margin-bottom: 4px; } .layers label { margin: 2px 0; }
+#routehint, #linkinfo div { color: var(--ink2); font-size: 12px; }
+#linkinfo { border-top: 1px solid var(--base); margin-top: 10px; padding-top: 8px; }
+#tip { position: fixed; pointer-events: none; z-index: 10; background: var(--ink); color: var(--surface); padding: 8px 10px; border-radius: 8px; font-size: 12px; min-width: 190px; box-shadow: 0 4px 16px rgba(0,0,0,.3); }
+#tip b { display: block; margin-bottom: 3px; font-family: var(--mono); }
+#tip div { display: flex; justify-content: space-between; gap: 14px; } #tip span { opacity: .65; }
+#legendbody { overflow: auto; min-height: 0; }
+#compass { flex: none; display: flex; align-items: flex-end; gap: 12px; color: var(--ink); font: 11px var(--mono); }
+#legendbody:not([hidden]) + #compass { border-top: 1px solid color-mix(in srgb, var(--base) 70%, transparent); padding-top: 8px; }
+#compass svg { display: block; flex: none; }
+#scalebar { height: 6px; border: 2px solid var(--ink); border-top: 0; margin-top: 3px; }
+footer { position: fixed; left: 0; right: 0; bottom: 0; height: 30px; display: flex; align-items: center; justify-content: space-between; padding: 0 20px; border-top: 1px solid var(--base); background: color-mix(in srgb, var(--surface) 92%, transparent); font: 11px var(--mono); color: var(--muted); }
+footer .right { display: flex; align-items: center; gap: 10px; font-family: var(--sans); flex: none; white-space: nowrap; }
+footer #source { flex: none; white-space: nowrap; margin-right: 16px; }
+footer #provenance { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-right: 12px; }
+#logo { display: inline-flex; align-items: center; gap: 4px; color: var(--ink); font-weight: 700; font-size: 13px; }
+#logo .mark { width: 16px; height: 16px; fill: var(--mark); } #logo b { margin-left: 3px; position: relative; top: -0.1em; }  /* the lowercase body centred on the mark, not the line box */
+.grow { flex: 1; }
+/* The layers, each with its mark */
+.layers label .sw { width: 18px; height: 0; display: inline-block; vertical-align: middle; }
+.layers label .sw.ramp { height: 5px; border-radius: 2px; }
+/* Trips between two places */
+#pairpick { width: 100%; font-size: 11.5px; padding: 4px 6px; }
+#tripcard .od { font-size: 13px; color: var(--ink); line-height: 1.45; margin-top: 4px; }
+#tripcard .od b { font-weight: 650; }
+#tripcard .mk { display: inline-flex; align-items: center; justify-content: center; width: 16px; height: 16px; border-radius: 50%; background: var(--ink); color: var(--surface); font: 700 9.5px var(--sans); margin-right: 4px; vertical-align: 1px; }
+#tripcard .odsub { font-size: 11.5px; color: var(--muted); margin: 1px 0 8px; }
+#tripcard .chips { display: flex; flex-wrap: wrap; gap: 4px 5px; margin-bottom: 8px; }
+#tripcard .chip { font-size: 11px; padding: 2px 8px 2px 4px; border-radius: 10px; border: 1px solid var(--base); display: inline-flex; align-items: center; gap: 4px; cursor: pointer; color: var(--ink); user-select: none; }
+#tripcard .chip input { margin: 0; width: 12px; height: 12px; accent-color: var(--ink2); }
+#tripcard .chip.off { color: var(--muted); }
+#tripcard .opt.off { opacity: .45; cursor: default; }
+/* A journey's row, kept low so more fit in view: thin strip, little padding. */
+#tripcard .opt { padding: 4px 6px 4px; border-radius: 7px; cursor: pointer; border: 1px solid transparent; }
+#tripcard .opt:hover, #tripcard .opt.hl { background: color-mix(in srgb, var(--base) 38%, transparent); border-color: color-mix(in srgb, var(--base) 80%, transparent); }
+#tripcard .strip { display: flex; gap: 2px; height: 8px; margin-top: 3px; }
+#tripcard .strip span { display: block; height: 100%; min-width: 3px; border-radius: 2px; overflow: hidden; }
+#tripcard .strip .walk { background-image: radial-gradient(circle, var(--c) 1.5px, transparent 1.7px); background-size: 5px 100%; background-position: center; }
+#tripcard .strip .wait { background: repeating-linear-gradient(135deg, var(--base) 0 3px, transparent 3px 6px); }
+#tripcard .more { font-size: 11px; color: var(--ink2); margin: 6px 6px 0; }
+#tripcard .more a { color: var(--ink); cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
+@media (max-width: 760px) { .head { max-width: calc(100vw - 20px); } #legendgroup.card { display: none; } }
+
+/* ---- The cleaned layout: the tools in a bar at the top right, the legend in a card on the left and the controls in
+   a card on the right, the two cards alike (same top, width and surface), each a step darker than the map. ---- */
+:root { --panel: color-mix(in srgb, var(--base) 36%, var(--surface)); --line: color-mix(in srgb, var(--base) 75%, transparent); --top: 84px; --cardw: 340px; }
+.card { background: color-mix(in srgb, var(--panel) 96%, transparent); border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 2px 12px rgba(0,0,0,.10); backdrop-filter: blur(6px); }
+.head { top: 10px; left: 16px; padding: 6px 12px 8px; max-width: calc(100vw - 600px); }
+#tools { position: fixed; top: 16px; right: 16px; display: flex; align-items: center; gap: 6px; padding: 7px 9px; font-size: 12px; }
+#tools i { width: 1px; align-self: stretch; margin: 2px 4px; background: var(--line); }
+#tools button { border-color: transparent; padding: 4px 9px; }
+#tools button:hover:not(:disabled) { border-color: var(--base); }
+#tools button.on { border-color: var(--ink); }
+#levels { display: flex; gap: 2px; margin: 0; } #levels button { padding: 4px 9px; font-size: 12px; }
+#legendgroup.card, aside#panel.card { position: fixed; top: var(--top); width: var(--cardw); max-height: calc(100vh - var(--top) - 46px); margin: 0; padding: 16px 18px; font-size: 13px; }
+#legendgroup.card { left: 16px; right: auto; }
+aside#panel.card { right: 16px; overflow: auto; }
+#legendgroup h2, #panel summary { margin: 0; font-size: 11px; letter-spacing: .09em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
+#legendgroup h2 { margin-bottom: 12px; }
+#panel details { padding: 14px 0; border-top: 1px solid var(--line); }
+#panel details:first-of-type, #panel details[hidden] + details { border-top: 0; padding-top: 0; }
+#panel details:last-of-type { padding-bottom: 0; }
+#panel summary { cursor: pointer; list-style: none; display: flex; justify-content: space-between; align-items: center; user-select: none; }
+#panel summary::-webkit-details-marker { display: none; }
+#panel summary::after { content: "–"; font-size: 14px; color: var(--muted); } #panel details:not([open]) summary::after { content: "+"; }
+#panel details[open] summary { margin-bottom: 10px; }
+#panel .row { margin: 9px 0; gap: 8px; } #panel .row:last-child { margin-bottom: 0; }
+#panel label.wide { display: flex; width: 100%; gap: 10px; } #panel label.wide select { flex: 1; min-width: 0; }
+#panel select, #panel button { padding: 5px 10px; }
+.layers { grid-template-columns: 1fr; gap: 0; margin: 0; } .layers label { margin: 0; padding: 5px 0; gap: 9px; color: var(--ink); }
+#routehint { margin: 10px 0 0; line-height: 1.45; color: var(--muted); font-size: 12px; }
+#linkinfo { border: 0; margin: 0; padding: 0; }
+#legendbody .lg { margin: 0 0 14px; } #legendbody h3 { font-size: 13px; margin-bottom: 4px; } #legendbody .sub, #legendbody .kinds { font-size: 12px; }
+#legendbody .bar { height: 10px; margin: 7px 0 4px; } #legendbody .bands, #legendbody .ends { font-size: 11px; } #legendbody .note { font-size: 11px; line-height: 1.4; margin-top: 6px; }
+#legendbody .kinds { gap: 6px 14px; margin-top: 6px; }
+#legendbody:not([hidden]) + #compass { border-top: 1px solid var(--line); padding-top: 12px; }
+footer { border-top-color: var(--line); padding: 0 16px; }
+@media (max-width: 1100px) { #levels { display: none; } .head { max-width: calc(100vw - 330px); } }
+@media (max-width: 760px) { #tools { display: none; } aside#panel.card { top: auto; bottom: 40px; left: 14px; right: 14px; width: auto; max-height: 42vh; } }
+/* ---- A journey on one line: its colour, its name, its legs, its share and its time ---- */
+#tripcard .od { margin-top: 2px; } #tripcard .odsub { margin: 2px 0 10px; }
+#tripcard .chips { margin-bottom: 10px; }
+#tripcard .opthead, #tripcard .opt { display: grid; grid-template-columns: 10px minmax(0, 1fr) 54px 36px 56px; align-items: center; column-gap: 8px; }
+#tripcard .opthead { padding: 0 6px 3px; font-size: 10px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); border-bottom: 1px solid var(--line); margin-bottom: 3px; }
+#tripcard .opthead span:first-child { grid-column: 1 / 4; } #tripcard .opthead span + span { text-align: right; }
+#tripcard .opt { padding: 5px 6px; font-size: 12.5px; white-space: nowrap; }
+#tripcard .opt .dot { width: 10px; height: 10px; border-radius: 50%; }
+#tripcard .opt b { font-weight: 600; color: var(--ink); overflow: hidden; text-overflow: ellipsis; }
+#tripcard .opt .strip { height: 6px; margin: 0; grid-column: 3; }
+#tripcard .opt .pc { grid-column: 4; text-align: right; color: var(--ink2); font: 12px var(--mono); }
+#tripcard .opt .t { grid-column: 5; text-align: right; font: 600 12px var(--mono); color: var(--ink); }
+#tripcard .more { margin: 8px 6px 0; color: var(--muted); }
+/* ---- Link analysis ---- */
+#linkhint { margin: 0; line-height: 1.45; color: var(--muted); font-size: 12px; }
+#linkinfo .lname { display: flex; justify-content: space-between; gap: 8px; color: var(--ink); font-size: 13px; } #linkinfo .lname b { font-weight: 650; }
+#linkinfo .lname a { cursor: pointer; color: var(--muted); font-size: 16px; line-height: 1; }
+#linkinfo .lfacts { font: 11.5px var(--mono); color: var(--ink2); margin-top: 3px; }
+#linkinfo .lsum { margin: 10px 0 6px; font-size: 12.5px; color: var(--ink2); } #linkinfo .lsum b { color: var(--ink); }
+#linkinfo .prow { display: grid; grid-template-columns: 76px minmax(0, 1fr) 48px; column-gap: 8px; align-items: center; padding: 4px 6px; border-radius: 7px; cursor: pointer; font-size: 12px; white-space: nowrap; color: var(--ink); }
+#linkinfo .prow.on { background: color-mix(in srgb, var(--base) 38%, transparent); font-weight: 600; }
+#linkinfo .prow:hover { background: color-mix(in srgb, var(--base) 38%, transparent); }
+#linkinfo .prow b { font-weight: 500; display: flex; gap: 5px; min-width: 0; } #linkinfo .prow s { text-decoration: none; flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; } #linkinfo .prow em { font-style: normal; color: var(--muted); flex: none; }
+#linkinfo .prow i { height: 4px; border-radius: 2px; background: var(--base); overflow: hidden; } #linkinfo .prow u { display: block; height: 100%; background: var(--ink2); }
+#linkinfo .prow span { text-align: right; font: 12px var(--mono); color: var(--ink); }
+#linkinfo .more { font-size: 11px; margin: 6px 6px 0; } #linkinfo .more a { color: var(--ink); cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
+/* The list's strips in the map's styles: car solid, transit solid and thicker, bike dashed, walk dotted, waiting
+   hatched */
+#tripcard .strip .drive { background: linear-gradient(180deg, transparent 0 17%, var(--c) 17% 83%, transparent 83%); border-radius: 0; }
+#tripcard .strip .track, #tripcard .strip .bus { background: var(--c); border-radius: 0; }
+#tripcard .strip .bike { background: repeating-linear-gradient(90deg, var(--c) 0 6px, transparent 6px 9px) center / 100% 66% no-repeat; border-radius: 0; }

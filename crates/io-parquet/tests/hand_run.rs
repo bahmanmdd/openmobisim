@@ -1,4 +1,4 @@
-//! A run whose every value is derived by hand, written to the three files. This test checks the
+//! A run whose every value is derived by hand, written to the four files. This test checks the
 //! files exist, their row counts, and that a second write of the same run is byte-identical; the
 //! values, the column names, the Arrow types and the nullability are checked by another tool,
 //! `read_back.py` (pyarrow), against the hand numbers written in that script:
@@ -48,6 +48,7 @@ use openmobisim_loop::parameters::{ChoiceModel, Parameters};
 use openmobisim_loop::run::{Run, run};
 use openmobisim_transit::timetable::TimetableBuilder;
 use openmobisim_types::mode::{Mode, ModeSet};
+use openmobisim_types::repairs::Repairs;
 use openmobisim_types::time::Second;
 use openmobisim_types::units::Metres;
 
@@ -134,7 +135,7 @@ fn hand_run(network: &Network, demand: &Demand) -> Run {
 }
 
 /// What the hand run was given besides its network and demand.
-fn given(parameters: &Parameters) -> Given<'_> {
+fn given<'a>(parameters: &'a Parameters, demand: &'a Demand) -> Given<'a> {
     Given {
         source: Source::Tables,
         files: Files::default(),
@@ -142,8 +143,14 @@ fn given(parameters: &Parameters) -> Given<'_> {
         stop_walk_max: STOP_WALK_MAX,
         transit: None,
         parameters,
+        network_repairs: &NO_REPAIRS,
+        trips_given: u64::from(demand.trip_count()),
+        demand_repairs: demand.repairs(),
     }
 }
+
+/// No repair: the hand run's tables need none.
+static NO_REPAIRS: Repairs = Repairs::new();
 
 /// The folder `read_back.py` reads.
 fn folder(name: &str) -> PathBuf {
@@ -156,9 +163,10 @@ fn the_hand_run_writes_three_files_of_7_4_and_3_rows_byte_identical_twice() {
     let dem = demand(&net);
     let r = hand_run(&net, &dem);
     let p = parameters();
-    let first = write(&r, &net, &dem, &given(&p), &folder("io-parquet-hand-run")).expect("written");
-    let again =
-        write(&r, &net, &dem, &given(&p), &folder("io-parquet-hand-run-again")).expect("written");
+    let first =
+        write(&r, &net, &dem, &given(&p, &dem), &folder("io-parquet-hand-run")).expect("written");
+    let again = write(&r, &net, &dem, &given(&p, &dem), &folder("io-parquet-hand-run-again"))
+        .expect("written");
     for (table, rows) in [(&first.trips, 7), (&first.links, 4), (&first.iterations, 3)] {
         assert!(table.path.is_file(), "{}", table.path.display());
         assert_eq!(table.rows, rows, "{}", table.path.display());
@@ -189,7 +197,7 @@ fn a_demand_or_a_network_not_the_runs_is_refused() {
         .expect("an empty demand");
     let out = folder("io-parquet-refused");
     assert!(matches!(
-        write(&r, &net, &other, &given(&p), &out),
+        write(&r, &net, &other, &given(&p, &other), &out),
         Err(WriteError::NotTheRunsDemand { run_trips: 7, demand_trips: 0 })
     ));
     let mut b = NetworkBuilder::new();
@@ -198,7 +206,7 @@ fn a_demand_or_a_network_not_the_runs_is_refused() {
     b.add_link("ab", "a", "b", street(1_500.0, 50.0, 1_800.0));
     let small = b.build(VALUES).expect("a network");
     assert!(matches!(
-        write(&r, &small, &dem, &given(&p), &out),
+        write(&r, &small, &dem, &given(&p, &dem), &out),
         Err(WriteError::NotTheRunsNetwork { link: 1, network_links: 1 })
     ));
     assert!(!out.exists(), "nothing written on a refusal");
@@ -213,7 +221,7 @@ fn a_folder_that_cannot_be_made_is_an_io_error() {
     let blocker = folder("io-parquet-a-file");
     std::fs::write(&blocker, b"a file, not a folder").expect("a file");
     assert!(matches!(
-        write(&r, &net, &dem, &given(&p), &blocker.join("inside")),
+        write(&r, &net, &dem, &given(&p, &dem), &blocker.join("inside")),
         Err(WriteError::Io(_))
     ));
 }
@@ -226,9 +234,10 @@ fn the_record_is_written_beside_the_tables_and_byte_identical_twice() {
     let dem = demand(&net);
     let r = hand_run(&net, &dem);
     let p = parameters();
-    let first = write(&r, &net, &dem, &given(&p), &folder("io-parquet-record")).expect("written");
-    let again =
-        write(&r, &net, &dem, &given(&p), &folder("io-parquet-record-again")).expect("written");
+    let first =
+        write(&r, &net, &dem, &given(&p, &dem), &folder("io-parquet-record")).expect("written");
+    let again = write(&r, &net, &dem, &given(&p, &dem), &folder("io-parquet-record-again"))
+        .expect("written");
     assert_eq!(first.record, folder("io-parquet-record").join("run.toml"));
     let (x, y) =
         (std::fs::read(&first.record).expect("read"), std::fs::read(&again.record).expect("read"));
@@ -246,13 +255,15 @@ fn a_record_value_toml_cannot_hold_is_refused_by_name_and_nothing_written() {
     let out = folder("io-parquet-not-writable");
     let mut p = parameters();
     p.coefficients[1][2] = f64::NAN;
-    let Err(WriteError::NotWritable { key, .. }) = write(&r, &net, &dem, &given(&p), &out) else {
+    let Err(WriteError::NotWritable { key, .. }) = write(&r, &net, &dem, &given(&p, &dem), &out)
+    else {
         panic!("a coefficient that is not a number was written");
     };
     assert_eq!(key, "parameters.coefficients.\"leisure\".walk_min");
     let mut p = parameters();
     p.seed = u64::MAX;
-    let Err(WriteError::NotWritable { key, .. }) = write(&r, &net, &dem, &given(&p), &out) else {
+    let Err(WriteError::NotWritable { key, .. }) = write(&r, &net, &dem, &given(&p, &dem), &out)
+    else {
         panic!("a seed above 2^63 - 1 was written");
     };
     assert_eq!(key, "parameters.seed");
@@ -267,12 +278,12 @@ fn parameters_or_a_transit_not_the_runs_are_refused_and_nothing_written() {
     let out = folder("io-parquet-not-the-runs");
     let p = Parameters { link_bin: 300, ..parameters() };
     assert!(matches!(
-        write(&r, &net, &dem, &given(&p), &out),
+        write(&r, &net, &dem, &given(&p, &dem), &out),
         Err(WriteError::NotTheRunsParameters(_))
     ));
     let p = Parameters { coefficients: vec![TIME_ONLY; 3], ..parameters() };
     assert!(matches!(
-        write(&r, &net, &dem, &given(&p), &out),
+        write(&r, &net, &dem, &given(&p, &dem), &out),
         Err(WriteError::NotTheRunsParameters(_))
     ));
     let mut b = TimetableBuilder::new();
@@ -281,7 +292,7 @@ fn parameters_or_a_transit_not_the_runs_are_refused_and_nothing_written() {
     let report = GtfsReport::default();
     let p = parameters();
     let transit = Transit { timetable: &timetable, report: &report, transfer_walk_max: 400.0 };
-    let with_transit = Given { transit: Some(transit), ..given(&p) };
+    let with_transit = Given { transit: Some(transit), ..given(&p, &dem) };
     assert!(matches!(
         write(&r, &net, &dem, &with_transit, &out),
         Err(WriteError::NotTheRunsTransit { demand_stops: 0, transit_stops: 1 })
@@ -301,7 +312,7 @@ fn build_values_whose_speeds_are_not_the_networks_are_refused_and_nothing_writte
     for other in
         [BuildValues { bike_speed: 16.0, ..VALUES }, BuildValues { walk_speed: 5.0, ..VALUES }]
     {
-        let wrong = Given { build_values: other, ..given(&p) };
+        let wrong = Given { build_values: other, ..given(&p, &dem) };
         assert!(
             matches!(
                 write(&r, &net, &dem, &wrong, &out),
@@ -326,7 +337,7 @@ fn a_failed_write_into_a_used_folder_leaves_no_record_beside_the_tables() {
     let _ = std::fs::remove_dir_all(&out);
     std::fs::create_dir_all(out.join("links.parquet")).expect("a folder");
     std::fs::write(out.join("run.toml"), "# an earlier run's record\n").expect("a file");
-    assert!(matches!(write(&r, &net, &dem, &given(&p), &out), Err(WriteError::Io(_))));
+    assert!(matches!(write(&r, &net, &dem, &given(&p, &dem), &out), Err(WriteError::Io(_))));
     assert!(!out.join("run.toml").exists(), "the earlier record is left beside new tables");
 }
 
@@ -336,13 +347,14 @@ fn without_a_class_the_record_has_no_coefficients_comment_or_table() {
     let none = Demand::build(&[], &[], &net, None, Metres(STOP_WALK_MAX)).expect("no trips");
     let p = Parameters { link_bin: 60, iteration_cap: 1, ..Parameters::defaults(0) };
     let r = run(&net, &none, None, (Second(START), Second(START + 3_600)), &p).expect("a run");
-    let w = write(&r, &net, &none, &given(&p), &folder("io-parquet-no-class")).expect("written");
+    let w =
+        write(&r, &net, &none, &given(&p, &none), &folder("io-parquet-no-class")).expect("written");
     let text = std::fs::read_to_string(&w.record).expect("read");
     assert!(!text.contains("coefficients"), "{text}");
 }
 
 #[test]
-fn a_refused_write_into_a_folder_holding_a_complete_run_leaves_its_four_files_unchanged() {
+fn a_refused_write_into_a_folder_holding_a_complete_run_leaves_its_five_files_unchanged() {
     // Every refusal comes before anything is touched: wrong speeds, parameters not the run's
     // (another link bin) and a value the record cannot hold (a coefficient not a number).
     let net = network();
@@ -350,21 +362,85 @@ fn a_refused_write_into_a_folder_holding_a_complete_run_leaves_its_four_files_un
     let r = hand_run(&net, &dem);
     let p = parameters();
     let out = folder("io-parquet-kept");
-    let w = write(&r, &net, &dem, &given(&p), &out).expect("written");
-    let paths = [&w.trips.path, &w.links.path, &w.iterations.path, &w.record];
+    let w = write(&r, &net, &dem, &given(&p, &dem), &out).expect("written");
+    let paths = [&w.trips.path, &w.links.path, &w.iterations.path, &w.routes.path, &w.record];
     let before: Vec<Vec<u8>> = paths.iter().map(|f| std::fs::read(f).expect("read")).collect();
     let speeds = BuildValues { walk_speed: 5.0, ..VALUES };
     let bin = Parameters { link_bin: 300, ..parameters() };
     let mut nan = parameters();
     nan.coefficients[0][0] = f64::NAN;
     let refused = [
-        write(&r, &net, &dem, &Given { build_values: speeds, ..given(&p) }, &out),
-        write(&r, &net, &dem, &given(&bin), &out),
-        write(&r, &net, &dem, &given(&nan), &out),
+        write(&r, &net, &dem, &Given { build_values: speeds, ..given(&p, &dem) }, &out),
+        write(&r, &net, &dem, &given(&bin, &dem), &out),
+        write(&r, &net, &dem, &given(&nan, &dem), &out),
     ];
     assert!(matches!(refused[0], Err(WriteError::NotTheNetworksSpeeds { .. })));
     assert!(matches!(refused[1], Err(WriteError::NotTheRunsParameters(_))));
     assert!(matches!(refused[2], Err(WriteError::NotWritable { .. })));
     let after: Vec<Vec<u8>> = paths.iter().map(|f| std::fs::read(f).expect("read")).collect();
     assert!(before == after, "a refused write changed a file of the earlier run");
+}
+
+/// The fourth file: per trip with an alternative a gap of 0 s (every door at a node), its route
+/// and a gap of 0 s; `lost` none: 6 × 3 = 18 rows, the same bytes twice. Each of the four tables
+/// read back by the crate's readers is what was written: the loop's trips, links, iterations
+/// and the legs each trip took (the values themselves are `read_back.py`'s, by pyarrow).
+#[test]
+fn the_routes_file_has_18_rows_and_each_table_reads_back_as_written() {
+    let net = network();
+    let dem = demand(&net);
+    let r = hand_run(&net, &dem);
+    let p = parameters();
+    let first =
+        write(&r, &net, &dem, &given(&p, &dem), &folder("io-parquet-routes")).expect("written");
+    let again = write(&r, &net, &dem, &given(&p, &dem), &folder("io-parquet-routes-again"))
+        .expect("written");
+    assert_eq!(first.routes.rows, 18);
+    assert_eq!(first.routes.path, folder("io-parquet-routes").join("routes.parquet"));
+    let bytes = |t: &openmobisim_io_parquet::Table| std::fs::read(&t.path).expect("read");
+    assert!(bytes(&first.routes) == bytes(&again.routes), "two writes differ");
+    let tables = openmobisim_io_parquet::read(
+        &folder("io-parquet-routes"),
+        &dem,
+        &net,
+        None,
+        r.links.window(),
+        r.dropped(),
+    )
+    .expect("read back");
+    let same =
+        |a: &[f64], b: &[f64]| a.iter().map(|x| x.to_bits()).eq(b.iter().map(|x| x.to_bits()));
+    // What the pages read of the trips: the mode, the realised time and whether it finished.
+    let (t, w) = (&tables.trips, &r.trips);
+    assert_eq!((&t.mode, &t.finished), (&w.mode, &w.finished));
+    assert!(same(&t.travel_time, &w.travel_time));
+    let l = &tables.links;
+    assert_eq!(l.link, r.links.links());
+    assert_eq!(l.bin, r.links.bins().iter().map(|b| b.0).collect::<Vec<_>>());
+    assert_eq!(
+        (&l.cars[..], &l.bikes[..], &l.walkers[..]),
+        (r.links.cars(), r.links.bikes(), r.links.walkers())
+    );
+    assert!(same(&l.car_time, &r.links.car_time().iter().map(|d| d.get()).collect::<Vec<_>>()));
+    let iterations = openmobisim_io_parquet::read_iterations(
+        &folder("io-parquet-routes").join("iterations.parquet"),
+    )
+    .expect("read back");
+    assert_eq!(iterations.len(), r.iterations.len());
+    for (a, b) in iterations.iter().zip(&r.iterations) {
+        assert_eq!(format!("{a:?}"), format!("{b:?}"));
+    }
+    let legs: Vec<Option<usize>> = tables.routes.iter().map(|l| l.as_ref().map(Vec::len)).collect();
+    let three = Some(3);
+    assert_eq!(
+        legs,
+        [three, three, three, three, Some(0), three, three],
+        "bike, car1, car2, car3, lost, walk, walk-late"
+    );
+    for (trip, legs) in tables.routes.iter().enumerate() {
+        let taken =
+            openmobisim_io_parquet::agrees(r.trips.mode[trip], legs.as_deref().unwrap_or(&[]));
+        assert!(taken, "trip {trip}");
+    }
+    assert!(tables.warnings.is_empty(), "{:?}", tables.warnings);
 }

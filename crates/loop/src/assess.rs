@@ -58,7 +58,7 @@ pub(crate) fn assess(
     found: u64,
     (offered, switches): (u64, u64),
 ) -> Iteration {
-    let n = ctx.trip_count() as u64;
+    let n = (0..ctx.trip_count()).filter(|&i| ctx.runs(i)).count() as u64;
     let counted = with_alternative(sets);
     let finished = realised.finished.iter().filter(|&&f| f).count() as u64;
     let indices: Vec<usize> = (0..ctx.trip_count()).collect();
@@ -80,8 +80,14 @@ pub(crate) fn assess(
     });
     let without_transit = (0..ctx.trip_count())
         .filter(|&i| {
-            ctx.demand.modes(ctx.trip(i)).contains(Mode::Transit)
-                && !sets[i].iter().any(|a| a.mode == Mode::Transit)
+            ctx.modes[i].contains(Mode::Transit) && !sets[i].iter().any(|a| a.mode == Mode::Transit)
+        })
+        .count() as u64;
+    let without_stop = (0..ctx.trip_count())
+        .filter(|&i| {
+            let trip = ctx.trip(i);
+            ctx.modes[i].contains(Mode::Transit)
+                && (ctx.demand.access(trip).is_empty() || ctx.demand.egress(trip).is_empty())
         })
         .count() as u64;
     Iteration {
@@ -91,7 +97,7 @@ pub(crate) fn assess(
         unfinished: counted - finished,
         without_alternative: n - counted,
         without_transit,
-        without_stop: u64::from(ctx.demand.trips_without_transit()),
+        without_stop,
         offered_share: share(offered, counted),
         switch_share: share(switches, counted),
         found_share: share(found, counted),

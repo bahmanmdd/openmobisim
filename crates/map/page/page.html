@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="generator" content="__GENERATOR__">
+<title>__TITLE__</title>
+<style>
+__CSS__
+</style>
+</head>
+<body data-state="loading">
+<canvas id="map"></canvas>
+<div id="error" hidden></div>
+<header class="head">
+  <svg class="mark" viewBox="0 0 64 64" aria-hidden="true"><path d="__LOGO__"/></svg><h1 id="title"></h1>
+  <p id="subtitle"></p>
+</header>
+<div id="tools" class="card">
+  <div id="levels"><button>Overview</button><button>Region</button><button>District</button><button>Street</button><button>Detail</button></div>
+  <i></i><button id="zout" title="Zoom out">−</button><button id="zin" title="Zoom in">+</button><button id="fit" title="Show the whole network">Fit</button>
+  <i></i><button id="exportpng" title="Save an image at twice the screen's resolution">PNG</button><button id="exportsvg" title="Save vector graphics, for print and editing">SVG</button>
+  <i></i><button id="theme">Night</button>
+</div>
+<div id="legendgroup" class="card">
+  <h2>Legend</h2>
+  <div id="legendbody"></div>
+  <div id="compass"><svg width="18" height="28" viewBox="0 0 22 34"><path d="M11 2 L17 20 L11 16 L5 20 Z" fill="currentColor"/><text x="11" y="32" text-anchor="middle" font-size="10" font-weight="700" fill="currentColor" font-family="sans-serif">N</text></svg><div><div id="scalelabel"></div><div id="scalebar"></div></div></div>
+</div>
+<aside id="panel" class="card">
+  <details id="layergroup" open hidden>
+    <summary>Layers</summary>
+    <div class="layers" id="layerrows"></div>
+  </details>
+  <details id="trafficgroup" open>
+    <summary>Traffic</summary>
+    <div class="row"><label class="wide">Colour by <select id="colour"><option value="delay">Delay over free flow</option><option value="volume">Volume</option><option value="vc">Volume ÷ capacity</option></select></label></div>
+    <div class="row"><label><input id="allbins" type="checkbox" checked> Whole period</label><span class="grow"></span><button id="play">Play</button></div>
+    <div class="row"><input id="bin" type="range" min="0" max="0" value="0" step="1"></div>
+  </details>
+  <details id="routegroup" open>
+    <summary>Trips between two places</summary>
+    <div class="row"><select id="pairpick" title="The pairs with the most travellers first"></select></div>
+    <div class="row"><button id="prev" title="The pair before">‹</button><button id="next" title="The next pair">›</button><button id="pickmap" title="Click an origin on the map, then a destination">Pick on map</button><span class="grow"></span><button id="clear">Clear</button></div>
+    <p id="routehint">Choose a pair above, or pick its two places on the map.</p>
+    <div id="tripcard"></div>
+  </details>
+  <details id="linkgroup" open>
+    <summary>Link analysis</summary>
+    <p id="linkhint">Click a link to see the pairs that use it.</p>
+    <div id="linkinfo" hidden></div>
+  </details>
+</aside>
+<footer><span id="provenance"></span><span id="source"></span><span class="right"><span id="budget"></span><span id="logo"><svg class="mark" viewBox="0 0 64 64" aria-hidden="true"><path d="__LOGO__"/></svg><b>openmobisim</b></span></span></footer>
+<div id="tip" hidden></div>
+<script id="meta" type="application/json">__META__</script>
+<script id="blob" type="text/plain">__BLOB__</script>
+<script>
+__JS__
+</script>
+</body>
+</html>

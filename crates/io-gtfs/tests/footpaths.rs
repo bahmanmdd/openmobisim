@@ -95,3 +95,48 @@ fn transfers_raise_a_footpath_to_their_minimum_time() {
     assert!(close(footpaths(&t, "B")[0].1, 225.0));
     assert_eq!((report.transfers_applied, report.transfers_skipped), (3, 5));
 }
+
+/// A `transfers.txt` without its `transfer_type` column is not read (`files_unread`): A to B
+/// stays 225 s by its walk, though the file says 300 s.
+#[test]
+fn a_transfers_file_without_one_of_its_columns_is_not_read() {
+    let files = files("from_stop_id,to_stop_id,min_transfer_time\nA,B,300\n");
+    let refs: Vec<(&str, &str)> = files.iter().map(|(n, t)| (*n, t.as_str())).collect();
+    let path = zip("transfers-no-type", "", &refs);
+    let (t, report) = read(&path, &street(&[0.0, 300.0, 800.0, 1_000.0]), Metres(400.0)).unwrap();
+    std::fs::remove_file(path).ok();
+    assert!(close(footpaths(&t, "A")[0].1, 225.0));
+    let kinds: Vec<_> =
+        report.repairs.kinds().iter().map(|k| (k.key, k.count, k.first.clone())).collect();
+    assert_eq!(kinds, [("files_unread", 1, vec!["transfers.txt".to_owned()])]);
+}
+
+/// On a network no walker may use (one car link from 0 to 1 000 m), no stop can be walked to:
+/// no footpath (`footpaths_none`), the run read all the same.
+#[test]
+fn a_network_without_a_walk_link_gives_no_footpath() {
+    use openmobisim_graph::geometry::Position;
+    use openmobisim_graph::network::{LinkRow, NetworkBuilder};
+    use openmobisim_types::mode::{Mode, ModeSet};
+    let mut b = NetworkBuilder::new();
+    b.add_node("a", Position::LonLat(east(0.0)));
+    b.add_node("b", Position::LonLat(east(1_000.0)));
+    let row = LinkRow {
+        modes: ModeSet::of(&[Mode::Car]),
+        lanes: Some(1),
+        car_speed_km_h: Some(50.0),
+        length_m: None,
+        capacity_veh_h: None,
+        signal_at_downstream_end: false,
+    };
+    b.add_link("ab", "a", "b", row);
+    let net = b.build(common::VALUES).unwrap();
+    let files = files("");
+    let refs: Vec<(&str, &str)> = files.iter().map(|(n, t)| (*n, t.as_str())).collect();
+    let path = zip("no-walk", "", &refs);
+    let (t, report) = read(&path, &net, Metres(400.0)).unwrap();
+    std::fs::remove_file(path).ok();
+    assert_eq!((report.footpaths, report.runs), (0, 1));
+    assert!(footpaths(&t, "A").is_empty());
+    assert_eq!(report.repairs.count("footpaths_none"), 1);
+}
