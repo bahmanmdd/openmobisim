@@ -21,4 +21,11 @@ Release 0.2 is done when these ten tests pass, each against an answer from outsi
 | 9 | Bike and walk | trip times equal length over speed by hand; routes equal networkx |
 | 10 | Delft, signals ignored | free-flow routes of 1 000 node pairs per mode (car, bike, walk) equal to networkx's shortest times on the same network; identical results at 1 and 8 threads and over two runs; every trip finishes; under 15 s; the stopped state within 1 % of a 60-iteration run |
 
+## Known limits
+- **The mean trip time is over finished trips only.** A trip not at its door when the window ends is unfinished and has no travel time, so it is not in the mean. Unfinished trips are always recorded: each trip's row in `trips.parquet` has `finished`, and each row of `iterations.parquet` has the `finished` and `unfinished` counts beside its mean. Read the mean together with the unfinished count; a window long enough for every trip to finish makes means comparable (`crates/loop/README.md`).
+- **Of two routes of exactly equal time, one is offered.** The search's tie rule finds one of them, and a traveller chooses only among what the search found (`crates/loop/README.md`).
+- **A car trip while a bottleneck's queue builds up is slightly above theory.** In the test of cars against bikes behind a bottleneck, the mean car trip in the build-up period is about 1.5 s above the theoretical value on a trip of about 692 s (0.2 %), of which about 0.4 s comes from whole-second departures; the rest is not explained.
+- **A single link's queue delay on Sioux Falls is reported, never judged** (test 6): the sum over links agrees with the outside solver, single links differ.
+- **Bikes and walkers travel at free flow**: one bike speed and one walk speed, no bike congestion.
+
 Licensed under Apache-2.0; see LICENSE and NOTICE.
