@@ -3,9 +3,11 @@
 The timetable of one service day and the earliest-arrival journey over it, by RAPTOR (Delling,
 Pajor and Werneck 2015), the earliest journey per number of rides, and the cheapest journey per
 number of rides for a cost linear in a journey's parts (`cheapest::Cheapest::by_rides`: the
-rounds of RAPTOR with a set of labels, arrival and cost, per stop; its module documentation
-gives the cost, when a label makes another useless and why every catchable run is boarded;
-tested against an exhaustive enumeration on 300 random timetables, 12 000 questions, and by
+rounds of RAPTOR with a set of labels, arrival and cost, per stop, bounded from the start by
+the costs of the same question's earliest-arrival journeys, which are journeys of it too; its
+module documentation gives the cost, when a label makes another useless, why every catchable
+run is boarded, why the bound changes no answer and why that needs the runs of a pattern left
+in rank order; tested against an exhaustive enumeration on 300 random timetables, 12 000 questions, and by
 hand). Depends on `openmobisim-types` and `rayon`, nothing else. It knows
 stops by position only: linking stops to the walk network, and choosing which stops are within
 reach of a trip's ends, is the caller's; the access and egress lists arrive already chosen.
@@ -104,7 +106,9 @@ irregular headways against Osuna and Newell's `E[H²]/(2E[H])`; the network of S
 (1989) as timetables, every traveller equal to the brute force, the mean door time reported
 against the paper's 27.75 min (a frequency-based strategy, not asserted); transfers, slack and
 footpaths by hand; `by_rides` by hand (a slow direct run and a faster connection: two journeys;
-a direct run as early or earlier: one); the refusals; `earliest_many`'s determinism over 1 and 8
+a direct run as early or earlier: one); the cheapest journey unchanged by an access from which
+every journey costs more (a property; two runs equal in cost, the dear access catching the later
+one, then the earlier one); the refusals; `earliest_many`'s determinism over 1 and 8
 threads and two runs (1 000 queries; a run does not call it). `by_rides_many`'s, the one a run
 calls, is tested with the whole chain (`crates/loop/tests/determinism.rs`).
 The fingerprint as a property (`tests/fingerprint.rs`): two builds of the same rows equal; one

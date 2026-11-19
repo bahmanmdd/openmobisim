@@ -277,3 +277,68 @@ fn a_slow_run_boarded_at_once_is_cheaper_than_a_fast_run_waited_for() {
     assert_eq!(earliest.arrival, Second(660), "the fast run");
     assert!((cost_of(&q, &earliest) - 1.55).abs() < 1e-12);
 }
+
+/// The answer to `q` on `rows` with the access at place 0 of the query, and without it.
+fn with_and_without_the_first_access(rows: &Rows, q: &CostQuery) -> (Vec<Journey>, Vec<Journey>) {
+    let tt = rows.build();
+    let mut without = q.clone();
+    without.query.access.remove(0);
+    without.access_cost.remove(0);
+    let mut search = Cheapest::new(&tt, Duration(0.0));
+    (search.by_rides(q), search.by_rides(&without))
+}
+
+#[test]
+fn an_access_no_cheapest_journey_uses_does_not_change_the_answer() {
+    // A property (invariance): removing an access from which every journey costs more than the
+    // cheapest leaves the answer as it was. Two runs of one pattern leave B at 300 s and reach C
+    // at 400 s; boarded at B by a traveller there at second 0 for nothing, they cost the same to
+    // the bit. A dear access (cost 10, against 0.89 for a journey from B) can catch only
+    // some of the runs upstream.
+    let weights = Weights {
+        first_wait: 0.145 / 60.0,
+        in_vehicle: 0.1 / 60.0,
+        transfer_wait: 0.145 / 60.0,
+        transfer_walk: 0.165 / 60.0,
+        transfer: 0.5,
+    };
+    let at = |s: usize, t: u32| (StopId::from_index(s), Second(t));
+    // Stops A, B, C. The dear access at A catches the later run alone.
+    let mut late = Rows { stops: 3, ..Rows::default() };
+    late.runs.push(("r0".to_owned(), vec![(0, 100, 100), (1, 300, 300), (2, 400, 400)]));
+    late.runs.push(("r1".to_owned(), vec![(0, 200, 200), (1, 300, 300), (2, 400, 400)]));
+    let late_q = CostQuery {
+        query: Query {
+            access: vec![at(0, 150), at(1, 0)],
+            egress: vec![(StopId::from_index(2), Duration(0.0))],
+            max_rides: 1,
+        },
+        weights,
+        access_cost: vec![10.0, 0.0],
+        egress_cost: vec![0.0],
+    };
+    // Stops A, A2, B, C. The dear access at A catches the earlier run (and the later); a
+    // second access at A2, kept in both, catches the later run alone.
+    let mut early = Rows { stops: 4, ..Rows::default() };
+    early
+        .runs
+        .push(("r0".to_owned(), vec![(0, 100, 100), (1, 150, 150), (2, 300, 300), (3, 400, 400)]));
+    early
+        .runs
+        .push(("r1".to_owned(), vec![(0, 120, 120), (1, 250, 250), (2, 300, 300), (3, 400, 400)]));
+    let early_q = CostQuery {
+        query: Query {
+            access: vec![at(0, 50), at(1, 200), at(2, 0)],
+            egress: vec![(StopId::from_index(3), Duration(0.0))],
+            max_rides: 1,
+        },
+        weights,
+        access_cost: vec![10.0, 10.0, 0.0],
+        egress_cost: vec![0.0],
+    };
+    for (case, rows, q) in [("later run", &late, &late_q), ("earlier run", &early, &early_q)] {
+        let (with, without) = with_and_without_the_first_access(rows, q);
+        assert_eq!(with.len(), 1, "{case}: one journey");
+        assert_eq!(with, without, "{case}: the dear access changed the answer");
+    }
+}

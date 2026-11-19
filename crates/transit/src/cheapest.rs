@@ -20,7 +20,12 @@
 //!
 //! [`Cheapest::by_rides`] answers, for each number of rides `k` that makes a journey cheaper
 //! than every smaller number does, the cheapest journey of at most `k` rides, fewest rides
-//! first. Of two journeys of equal cost: the earlier at the door, then the lower egress stop.
+//! first. Of two journeys of equal cost: the earlier at the door, then the lower egress stop,
+//! then the one the search makes first. That order is the timetable's and the question's alone:
+//! fewer rides first; in a round, the patterns by number, along a pattern its stops in order,
+//! at a stop its runs by rank (the earlier run first), rides before footpaths; never which other
+//! label happened to board a run first, so an access from which every journey costs more does
+//! not change the answer.
 //!
 //! # How
 //!
@@ -33,26 +38,46 @@
 //! compared (their next boarding is priced differently). Round `k` boards, from every label of
 //! `k − 1` rides, every run that can be caught at each pattern through its stop, not the
 //! earliest alone: a later run that is slower reaches a connection further on for less than
-//! the earlier run followed by a wait at the stop, where waiting weighs more than riding. A
-//! boarding is dropped once it costs as much as the cheapest journey found, and with it the
-//! pattern's later runs from that label (they are waited for longer); so is any label (no
-//! weight is negative, so neither can end cheaper).
+//! the earlier run followed by a wait at the stop, where waiting weighs more than riding.
+//!
+//! The search is bounded from the start. The earliest-arrival journeys of the same question
+//! ([`Raptor::by_rides`]) are journeys of this one too, so their costs bound the answers: let
+//! `seed(k)` be the least cost of those of at most `k` rides, or of the one of fewest rides when
+//! none has so few. Round `k` drops a boarding or a label once it costs `limit = min(cheapest
+//! found, seed(k) + margin)`, the margin `1e-9 · (1 + seed(k))`, far above rounding and far
+//! below a difference of cost that matters; the pattern's later runs from that label go with
+//! the boarding (they are waited for longer). It changes no answer:
+//! - a label made in round `k` can matter only to the answers of rounds `j ≥ k` (it makes
+//!   useless only labels of as many rides or more); the answer of round `j` costs no more than
+//!   the known journey of at most `max(j, fewest)` rides, at most `seed(k)`; no weight is
+//!   negative, so no label on it costs more;
+//! - a dropped label could only have made useless, or led to, labels and boardings costing at
+//!   least as much, all dropped too (a label it would have made useless stays, but leads only
+//!   to what is dropped);
+//! - of two boardings of one run at the same offset (the cost at boarding less the ride's
+//!   weight times the departure), the one kept is the first; boarded at the same stop or one
+//!   before, it costs no more than the other, so it is never a dropped one;
+//! - the runs of a pattern are left in rank order, never in the order labels boarded them: a
+//!   dropped label boarding a run first would otherwise change which of two journeys equal in
+//!   cost is kept. So the labels that remain are made in the order of the unbounded search,
+//!   with the same ties.
 //!
 //! # Cost
 //!
-//! Per query, the labels made (about 48 bytes each) and the patterns through the stops
-//! labelled, as RAPTOR's rounds. Until a first journey is found a label boards every later run
-//! of a pattern, to the end of the service day, and each boarded run offers a label at every
-//! later stop, most dropped at once by the stop's labels: many times RAPTOR's work per
-//! pattern. A run asks it once per trip at iteration 0 (Delft, 65 959 trips with the earliest
-//! searches: the whole run 6.4 s).
+//! Per query, one earliest-arrival search (its rounds), then the labels made (about 48 bytes
+//! each) and the patterns through the stops labelled, as RAPTOR's rounds. A label boards every
+//! later run of a pattern until the boarding costs the limit, and each boarded run offers a
+//! label at every later stop, most dropped at once by the stop's labels. Bounded from the
+//! start, 10 000 questions on 100 stops, 20 patterns and 200 runs take 1.2 s on one thread,
+//! against 15.6 s when bounded only by the cheapest journey found. A run asks it once per trip
+//! at iteration 0.
 
 use openmobisim_types::ids::{EntityId, StopId};
 use openmobisim_types::time::Second;
 use openmobisim_types::units::Duration;
 use rayon::prelude::*;
 
-use crate::raptor::{Footpath, Journey, Query, Ride};
+use crate::raptor::{Footpath, Journey, Query, Raptor, Ride};
 use crate::timetable::{Timetable, on_clock};
 
 /// What a second of each part of a journey costs, and a transfer. No unit of its own: the
@@ -146,6 +171,10 @@ pub struct Cheapest<'a> {
     rode: Vec<u32>,
     /// The cost of the cheapest journey found so far.
     bound: f64,
+    /// The cost at or above which a label or a boarding is dropped in the round being scanned.
+    limit: f64,
+    /// The earliest-arrival search over the same timetable and slack: its journeys bound the cost.
+    raptor: Raptor<'a>,
 }
 
 impl<'a> Cheapest<'a> {
@@ -171,6 +200,8 @@ impl<'a> Cheapest<'a> {
             queue: Vec::new(),
             rode: Vec::new(),
             bound: f64::INFINITY,
+            limit: f64::INFINITY,
+            raptor: Raptor::new(timetable, boarding_slack),
         }
     }
 
@@ -194,6 +225,13 @@ impl<'a> Cheapest<'a> {
         for &(s, walk) in &q.query.egress {
             assert!(walk.is_finite() && walk.get() >= 0.0, "the egress walk from stop {s}");
         }
+        let known = self.raptor.by_rides(&q.query);
+        if known.is_empty() {
+            return Vec::new();
+        }
+        let priced: Vec<(usize, f64)> =
+            known.iter().map(|j| (j.ride_count(), cost_of(q, j))).collect();
+        self.set_limit(&priced, 1);
         for (&(stop, at), &cost) in q.query.access.iter().zip(&q.access_cost) {
             let label = Label {
                 stop,
@@ -211,6 +249,7 @@ impl<'a> Cheapest<'a> {
             if self.marked_list.is_empty() {
                 break;
             }
+            self.set_limit(&priced, k);
             self.queue_patterns();
             let queue = core::mem::take(&mut self.queue);
             for &p in &queue {
@@ -231,6 +270,16 @@ impl<'a> Cheapest<'a> {
         journeys
     }
 
+    /// The limit of round `k`: the cheapest journey found, or the least cost of a known journey
+    /// (`priced`: rides and cost, fewest rides first) of at most `k` rides, the fewest-rides one's
+    /// when none has so few, above it by far more than rounding; whichever is lower.
+    fn set_limit(&mut self, priced: &[(usize, f64)], k: u8) {
+        let at_most = priced.iter().filter(|p| p.0 <= usize::from(k)).map(|p| p.1);
+        let seed = at_most.reduce(f64::min).unwrap_or(priced[0].1);
+        let margin = 1e-9 * (1.0 + seed);
+        self.limit = self.bound.min(seed + margin);
+    }
+
     /// Whether label `a` makes label `b` useless at their stop (see the module documentation).
     fn covers(a: &Label, b: &Label, w: &Weights) -> bool {
         if (a.rides == 0) != (b.rides == 0)
@@ -247,7 +296,7 @@ impl<'a> Cheapest<'a> {
     /// Add `label` to its stop's bag unless a label there makes it useless or it cannot end
     /// cheaper than the cheapest journey found; drop the labels it makes useless.
     fn offer(&mut self, label: Label, w: &Weights) {
-        if label.cost >= self.bound {
+        if label.cost >= self.limit {
             return;
         }
         let i = label.stop.index();
@@ -324,18 +373,20 @@ impl<'a> Cheapest<'a> {
                 let first = departures.partition_point(|&d| d < ready);
                 for (rank, &dep) in departures.iter().enumerate().skip(first) {
                     let cost = label.cost + wait * f64::from(dep - label.arr) + transfer;
-                    if cost >= self.bound {
+                    if cost >= self.limit {
                         break;
                     }
                     let offset = cost - w.in_vehicle * f64::from(dep);
                     let rank = u32::try_from(rank).expect("a rank");
                     // The same run boarded for less makes this boarding useless, and the
                     // other way round; runs are not compared with one another here (their
-                    // labels are, at every stop they reach).
-                    match boarded.iter_mut().find(|b| b.rank == rank) {
-                        Some(b) if b.offset <= offset => {}
-                        Some(b) => *b = Boarded { rank, offset, from: at, board: pos },
-                        None => boarded.push(Boarded { rank, offset, from: at, board: pos }),
+                    // labels are, at every stop they reach). The runs are held in rank order,
+                    // so the order they are left in does not depend on who boarded first.
+                    let new = Boarded { rank, offset, from: at, board: pos };
+                    match boarded.binary_search_by_key(&rank, |b| b.rank) {
+                        Ok(i) if boarded[i].offset <= offset => {}
+                        Ok(i) => boarded[i] = new,
+                        Err(i) => boarded.insert(i, new),
                     }
                 }
             }
@@ -442,7 +493,37 @@ impl<'a> Cheapest<'a> {
         self.labels.clear();
         self.rode.clear();
         self.bound = f64::INFINITY;
+        self.limit = f64::INFINITY;
     }
+}
+
+/// The cost of journey `j` for `q`, by the module documentation: the access cost, each wait,
+/// ride, footpath and transfer, and the egress cost. Of an access or egress stop listed twice,
+/// the cheaper entry the journey fits.
+fn cost_of(q: &CostQuery, j: &Journey) -> f64 {
+    let w = q.weights;
+    let pick = |costs: &[f64], fits: &dyn Fn(usize) -> bool| {
+        (0..costs.len()).filter(|&i| fits(i)).map(|i| costs[i]).reduce(f64::min)
+    };
+    let access = pick(&q.access_cost, &|i| q.query.access[i] == j.access);
+    let egress = pick(&q.egress_cost, &|i| q.query.egress[i].0 == j.egress.0);
+    let mut cost = access.expect("the access") + egress.expect("the egress");
+    let mut reached = f64::from(j.access.1.get());
+    for (i, ride) in j.rides.iter().enumerate() {
+        let mut wait = w.first_wait;
+        if i > 0 {
+            reached = f64::from(j.rides[i - 1].alight.1.get());
+            if let Some(f) = j.footpaths[i - 1] {
+                cost += w.transfer_walk * f.seconds.get();
+                reached += f.seconds.get();
+            }
+            cost += w.transfer;
+            wait = w.transfer_wait;
+        }
+        cost += wait * (f64::from(ride.board.1.get()) - reached);
+        cost += w.in_vehicle * f64::from(ride.alight.1.get() - ride.board.1.get());
+    }
+    cost
 }
 
 /// [`Cheapest::by_rides`] for every query, in parallel (rayon), one scratch per thread. Answer
