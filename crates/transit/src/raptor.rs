@@ -36,7 +36,14 @@
 //! overall: a walk starts only from a ride, never from a walk, so footpaths need not be closed
 //! under composition. A label is kept only if earlier than every earlier one at the stop (local
 //! pruning) and than the best arrival at the door found in an earlier round (target pruning):
-//! neither can drop a journey of earlier arrival, or of equal arrival and fewer rides. The first
+//! neither can drop a journey of earlier arrival, or of equal arrival and fewer rides. The
+//! door arrival bounds the boarding too: a run caught at a stop reached no earlier than the
+//! door leaves after it and labels nothing, so such a stop queues no pattern and is not
+//! boarded at; and a round's own door arrival, which is its rides' and so is known before its
+//! footpaths are walked, bounds those footpaths. The rides label the same stops at the same
+//! seconds. A footpath label at or after its round's door arrival is no longer written, and
+//! none was ever read: every later bound is at or below that arrival, a run boarded from such
+//! a label leaves no earlier, and the last ride and the journey read labels before it. The first
 //! round that reaches the earliest door arrival gives the fewest rides. The last ride is then
 //! chosen by the tie rule among every run that alights at an egress stop in time and can be
 //! caught from the labels of the round before, so the journey depends on the timetable and the
@@ -347,7 +354,7 @@ impl<'a> Raptor<'a> {
             if self.marked_list.is_empty() {
                 break;
             }
-            self.queue_patterns();
+            self.queue_patterns(bound);
             let queue = mem::take(&mut self.queue);
             for &p in &queue {
                 let pos = mem::replace(&mut self.queue_pos[p as usize], INF);
@@ -355,7 +362,7 @@ impl<'a> Raptor<'a> {
             }
             self.queue = queue;
             self.queue.clear();
-            self.walk(k, bound);
+            // The door arrival of this round is its rides', so it bounds its footpaths too.
             let round = &self.rounds[k];
             let at = query
                 .egress
@@ -367,6 +374,7 @@ impl<'a> Raptor<'a> {
                 bound = at;
                 found.push((k, at));
             }
+            self.walk(k, bound);
             for &s in &self.marked_list {
                 self.prev[s.index()] = self.best[s.index()];
             }
@@ -376,8 +384,12 @@ impl<'a> Raptor<'a> {
 
     /// Queue the patterns through the stops marked last round, each from its first such
     /// position, in pattern order; unmark the stops.
-    fn queue_patterns(&mut self) {
+    fn queue_patterns(&mut self, bound: u32) {
         for &s in &self.marked_list {
+            self.marked[s.index()] = false;
+            if self.best[s.index()] >= bound {
+                continue; // reached no earlier than the door: nothing boarded here arrives before it
+            }
             for &(p, pos) in self.tt.patterns_through(s) {
                 let q = &mut self.queue_pos[p as usize];
                 if *q == INF {
@@ -385,7 +397,6 @@ impl<'a> Raptor<'a> {
                 }
                 *q = (*q).min(pos);
             }
-            self.marked[s.index()] = false;
         }
         self.marked_list.clear();
         self.queue.sort_unstable();
@@ -419,12 +430,15 @@ impl<'a> Raptor<'a> {
                     }
                 }
             }
-            if self.prev[i] != INF {
+            // Board here only from a stop reached before the door is (a later one catches no
+            // run that arrives before it), and never at the last stop. An earlier run than the
+            // one held is searched for only when the run just before it can be caught.
+            if self.prev[i] < bound && pos + 1 < pattern.len {
                 let ready = self.prev[i].saturating_add(self.slack);
                 let below = current.map_or(pattern.runs as usize, |(rank, _)| rank as usize);
                 let column = &tt.departures_at(p, pos)[..below];
-                let r = column.partition_point(|&d| d < ready);
-                if r < below {
+                if column.last().is_some_and(|&d| d >= ready) {
+                    let r = column.partition_point(|&d| d < ready);
                     current = Some((u32::try_from(r).expect("a rank"), pos));
                 }
             }
@@ -436,6 +450,9 @@ impl<'a> Raptor<'a> {
         let improved = mem::take(&mut self.ride_improved);
         for &s in &improved {
             let t = self.rounds[k].ride_arr[s.index()];
+            if t >= bound {
+                continue;
+            }
             for w in self.tt.walks(s) {
                 let (to, i) = (w.to, w.to.index());
                 let t2 = t.saturating_add(w.clock);

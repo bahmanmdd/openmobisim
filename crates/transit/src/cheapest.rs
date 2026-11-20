@@ -64,7 +64,8 @@
 //!
 //! # Cost
 //!
-//! Per query, one earliest-arrival search (its rounds), then the labels made (about 48 bytes
+//! Per query, one earliest-arrival search (its rounds; none when the caller holds its answer,
+//! [`Cheapest::by_rides_given`]), then the labels made (about 48 bytes
 //! each) and the patterns through the stops labelled, as RAPTOR's rounds. A label boards every
 //! later run of a pattern until the boarding costs the limit, and each boarded run offers a
 //! label at every later stop, most dropped at once by the stop's labels. Bounded from the
@@ -215,17 +216,32 @@ impl<'a> Cheapest<'a> {
     /// costs that are not one per access and egress stop; a weight or a cost that is negative
     /// or not finite.
     pub fn by_rides(&mut self, q: &CostQuery) -> Vec<Journey> {
+        check(q);
+        let earliest = self.raptor.by_rides(&q.query);
+        self.search(q, &earliest)
+    }
+
+    /// [`Self::by_rides`] for a caller that holds `earliest`, the answer of
+    /// [`Raptor::by_rides`] to `q.query` at the same slack: that search is not made again. It
+    /// must be that very answer: the journeys of another question bound the search wrongly and
+    /// lose a journey.
+    ///
+    /// # Panics
+    ///
+    /// As [`Self::by_rides`]. In debug builds, if `earliest` is not that answer.
+    pub fn by_rides_given(&mut self, q: &CostQuery, earliest: &[Journey]) -> Vec<Journey> {
+        check(q);
+        debug_assert!(
+            earliest == self.raptor.by_rides(&q.query).as_slice(),
+            "the journeys handed over are not the earliest of this question"
+        );
+        self.search(q, earliest)
+    }
+
+    /// The rounds of [`Self::by_rides`], bounded by `known`, the earliest-arrival journeys of
+    /// the same question.
+    fn search(&mut self, q: &CostQuery, known: &[Journey]) -> Vec<Journey> {
         let w = q.weights;
-        let all = [w.first_wait, w.in_vehicle, w.transfer_wait, w.transfer_walk, w.transfer];
-        let fine = |x: &f64| x.is_finite() && *x >= 0.0;
-        assert!(all.iter().all(fine), "a weight is negative or not finite: {w:?}");
-        assert_eq!(q.access_cost.len(), q.query.access.len(), "a cost per access stop");
-        assert_eq!(q.egress_cost.len(), q.query.egress.len(), "a cost per egress stop");
-        assert!(q.access_cost.iter().chain(&q.egress_cost).all(fine), "a cost is negative");
-        for &(s, walk) in &q.query.egress {
-            assert!(walk.is_finite() && walk.get() >= 0.0, "the egress walk from stop {s}");
-        }
-        let known = self.raptor.by_rides(&q.query);
         if known.is_empty() {
             return Vec::new();
         }
@@ -497,6 +513,22 @@ impl<'a> Cheapest<'a> {
     }
 }
 
+/// Refuse a question the search cannot answer: a weight or a cost that is negative or not
+/// finite, costs that are not one per access and egress stop, an egress walk that is negative
+/// or not finite.
+fn check(q: &CostQuery) {
+    let w = q.weights;
+    let all = [w.first_wait, w.in_vehicle, w.transfer_wait, w.transfer_walk, w.transfer];
+    let fine = |x: &f64| x.is_finite() && *x >= 0.0;
+    assert!(all.iter().all(fine), "a weight is negative or not finite: {w:?}");
+    assert_eq!(q.access_cost.len(), q.query.access.len(), "a cost per access stop");
+    assert_eq!(q.egress_cost.len(), q.query.egress.len(), "a cost per egress stop");
+    assert!(q.access_cost.iter().chain(&q.egress_cost).all(fine), "a cost is negative");
+    for &(s, walk) in &q.query.egress {
+        assert!(walk.is_finite() && walk.get() >= 0.0, "the egress walk from stop {s}");
+    }
+}
+
 /// The cost of journey `j` for `q`, by the module documentation: the access cost, each wait,
 /// ride, footpath and transfer, and the egress cost. Of an access or egress stop listed twice,
 /// the cheaper entry the journey fits.
@@ -526,19 +558,26 @@ fn cost_of(q: &CostQuery, j: &Journey) -> f64 {
     cost
 }
 
-/// [`Cheapest::by_rides`] for every query, in parallel (rayon), one scratch per thread. Answer
-/// `i` is query `i`'s, and each depends on nothing but its query: the vector is the same, bit
-/// for bit, at any number of threads.
+/// [`Cheapest::by_rides_given`] for every query, in parallel (rayon), one scratch per thread:
+/// `earliest[i]` is the answer of [`Raptor::by_rides`] to `queries[i].query`, which the caller
+/// holds. Answer `i` is query `i`'s, and each depends on nothing but its query: the vector is
+/// the same, bit for bit, at any number of threads.
 ///
 /// # Panics
 ///
-/// As [`Cheapest::new`] and [`Cheapest::by_rides`].
+/// As [`Cheapest::new`] and [`Cheapest::by_rides`]; if `earliest` is not one answer per query.
 #[must_use]
 pub fn cheapest_by_rides_many(
     timetable: &Timetable,
     boarding_slack: Duration,
     queries: &[CostQuery],
+    earliest: &[&[Journey]],
 ) -> Vec<Vec<Journey>> {
+    assert_eq!(queries.len(), earliest.len(), "the earliest journeys of every query");
     let first = Cheapest::new(timetable, boarding_slack);
-    queries.par_iter().map_init(|| first.clone(), |search, q| search.by_rides(q)).collect()
+    queries
+        .par_iter()
+        .zip(earliest)
+        .map_init(|| first.clone(), |search, (q, known)| search.by_rides_given(q, known))
+        .collect()
 }

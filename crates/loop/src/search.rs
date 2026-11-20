@@ -87,7 +87,7 @@ fn journeys(ctx: &Context<'_>) -> Vec<Vec<Journey>> {
     };
     let (n, max_rides) = (usize::from(ctx.parameters.nearby_stops) - 1, ctx.parameters.max_rides);
     let (mut who, mut queries) = (Vec::new(), Vec::new());
-    let (mut who_cost, mut cost_queries) = (Vec::new(), Vec::new());
+    let (mut who_cost, mut cost_queries, mut same_question) = (Vec::new(), Vec::new(), Vec::new());
     for i in 0..ctx.trip_count() {
         let trip = ctx.trip(i);
         let (access, egress) = (ctx.demand.access(trip), ctx.demand.egress(trip));
@@ -99,6 +99,7 @@ fn journeys(ctx: &Context<'_>) -> Vec<Vec<Journey>> {
             (stop, ctx.start().saturating_add(whole(there(walk))))
         };
         let all: Vec<_> = access.iter().map(at).collect();
+        same_question.push(queries.len());
         let mut ask = |access: Vec<_>, egress: Vec<_>| {
             who.push(i);
             queries.push(raptor::Query { access, egress, max_rides });
@@ -127,7 +128,10 @@ fn journeys(ctx: &Context<'_>) -> Vec<Vec<Journey>> {
     }
     let slack = Duration(f64::from(ctx.parameters.boarding_slack));
     let earliest = by_rides_many(timetable, slack, &queries);
-    let cheapest = cheapest_by_rides_many(timetable, slack, &cost_queries);
+    // The cheapest search is bounded by the earliest journeys of its question, the first
+    // asked for its trip: they are handed over, not searched for again.
+    let known: Vec<&[Journey]> = same_question.iter().map(|&q| earliest[q].as_slice()).collect();
+    let cheapest = cheapest_by_rides_many(timetable, slack, &cost_queries, &known);
     let mut by_trip = vec![Vec::new(); ctx.trip_count()];
     for (i, answer) in who.into_iter().zip(earliest).chain(who_cost.into_iter().zip(cheapest)) {
         for journey in answer {

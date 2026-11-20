@@ -37,7 +37,7 @@
 //!
 //! **Cost:** 32 bytes per car crossing here (entry, exit, trip, and the same crossing again
 //! by trip) and 20 in the table it is built from, 8 per link per mode and 8 per link for the
-//! headway. A read is two binary searches over the link's crossings and one over the
+//! headway. A read is one binary search over the link's crossings and one over the
 //! traveller's own; rule 3 walks the cars between the traveller's own car and its new place.
 
 use openmobisim_graph::network::Network;
@@ -222,7 +222,7 @@ impl LinkTimes {
         let (entry, exits, trips) = (&self.entry[ka..kz], &self.exit[ka..kz], &self.trip[ka..kz]);
         let (t, h) = (t.get(), self.headway[l]);
         let (ahead, behind) = places(entry, trips, t, reader);
-        let own = self.own(l, reader.trip).filter(|&o| o < ahead);
+        let own = if ahead > 0 { self.own(l, reader.trip).filter(|&o| o < ahead) } else { None };
         let last = match own {
             Some(o) => Some(without(entry, exits, o, ahead, free, h)),
             None => ahead.checked_sub(1).map(|a| exits[a]),
@@ -281,7 +281,8 @@ impl LinkTimes {
 /// place of the first recorded car behind it (rules 1, 2 and 4 of the module documentation).
 fn places(entry: &[f64], trips: &[TripId], t: f64, reader: Reader) -> (usize, usize) {
     let before = entry.partition_point(|&e| e < t);
-    let tied = &trips[before..before + entry[before..].partition_point(|&e| e <= t)];
+    // The cars that entered at `t` itself are few: counted one by one, not searched for.
+    let tied = &trips[before..before + entry[before..].iter().take_while(|&&e| e <= t).count()];
     // Of the cars that entered at `t`: those recorded before the traveller's own crossing when
     // it is one of them; else those of a lower trip, less the car whose place it took.
     let mut ahead = before

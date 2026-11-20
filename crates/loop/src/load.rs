@@ -1,5 +1,5 @@
 //! Stage 3, load: the chosen alternatives' route legs as vehicles on the point queue; stage 4,
-//! measure: every alternative of every set re-priced on the new reading; and the realised
+//! measure: every alternative with a car route re-priced on the new reading; and the realised
 //! door-to-door outcome of every trip.
 
 use openmobisim_loading::input::{LoadError, Vehicle};
@@ -53,16 +53,36 @@ pub(crate) fn load(
     point_queue::load(ctx.network, &vehicles, ctx.window)
 }
 
-/// The measure stage: every alternative of every set priced again on `times`, then the path
-/// sizes over each set.
+/// The measure stage: every alternative whose time the loading can change (one with a car
+/// route) priced again on `times`. The others keep the time the search priced them at: a bike,
+/// a walker and a journey read no car's crossing, so pricing them again gives the same number.
+/// The path sizes are the search's: they depend on who is in a set, not on the reading. Both
+/// are checked in debug builds ([`left_alone`]).
 pub(crate) fn measure(ctx: &Context<'_>, times: &LinkTimes, sets: &mut [Vec<Alternative>]) {
     sets.par_iter_mut().enumerate().for_each(|(i, set)| {
-        for alternative in set.iter_mut() {
+        debug_assert!(
+            left_alone(ctx, times, i, set),
+            "trip {i}: the reading changed a time or a path size the measure stage leaves alone"
+        );
+        for alternative in set.iter_mut().filter(|a| a.reads_the_loading()) {
             alternative.time =
                 price(times, ctx.start(), ctx.departure[i], &alternative.legs, ctx.trip(i));
         }
-        path_sizes(ctx.network, set);
     });
+}
+
+/// Whether what the measure stage leaves alone in trip `i`'s `set` is what it would compute on
+/// `times`, to the bit: the time of every alternative without a car route, and every path
+/// size. Read in debug builds only, so that a change that makes either depend on the loading
+/// (a bus on roads, a journey reached by car) fails the tests instead of going unseen.
+fn left_alone(ctx: &Context<'_>, times: &LinkTimes, i: usize, set: &[Alternative]) -> bool {
+    let mut again = set.to_vec();
+    path_sizes(ctx.network, &mut again);
+    set.iter().zip(&again).all(|(a, b)| {
+        let time = || price(times, ctx.start(), ctx.departure[i], &a.legs, ctx.trip(i));
+        a.ln_path_size.to_bits() == b.ln_path_size.to_bits()
+            && (a.reads_the_loading() || time().to_bits() == a.time.to_bits())
+    })
 }
 
 /// What every trip did in the loading: its arrival at the door, seconds after the window's

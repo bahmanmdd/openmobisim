@@ -38,7 +38,10 @@ reach of a trip's ends, is the caller's; the access and egress lists arrive alre
   access second plus the four parts is the door instant, the arrival before it is rounded up.
 - `earliest_many(&timetable, slack, &queries)` and `by_rides_many` answer every query in
   parallel (rayon, one scratch per thread); answer `i` is query `i`'s, the same at any thread
-  count.
+  count. `cheapest_by_rides_many(&timetable, slack, &cost_queries, &earliest)` does the same
+  for `Cheapest::by_rides_given`: the caller hands over, per question, the answer of
+  `Raptor::by_rides` to it (the cheapest search's bound), so that a caller that has asked for
+  it already does not have it searched for twice.
 - `Timetable` accessors, read-only: stop and run counts and external ids, stop positions, a
   run's calls and pattern, a pattern's stops and runs, a stop's footpaths.
 - `Timetable::fingerprint()`, a `u64` (the FNV-1a hash of `openmobisim-types`) over what the

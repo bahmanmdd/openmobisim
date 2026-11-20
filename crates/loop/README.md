@@ -92,12 +92,16 @@ model's unit (minutes in a time-only run: 1 on each of the nine time columns, 0 
   the others keep their alternative.
 - **Load:** the chosen route legs as vehicles on the point queue, each entered on the whole
   second its walk ends; an empty route and a journey load nothing.
-- **Measure:** every alternative of every set, taken or not, priced again by walking its legs
-  on the new reading as its traveller (a route leg entered at the instant it is reached), so
-  the alternative taken costs the time its trip took (`tests/taken_is_the_trip.rs`); then the path sizes (Ben-Akiva and Bierlaire 1999) over each set's car
-  routes (a bike or walk route's `ln PS` is 0: their sets hold one route each, found at
-  iteration 0); a journey ends when its last ride arrives, so the transit crate's rounded
-  `Journey::arrival` is never read.
+- **Measure:** every alternative with a car route, taken or not, priced again by walking its
+  legs on the new reading as its traveller (a route leg entered at the instant it is reached),
+  so the alternative taken costs the time its trip took (`tests/taken_is_the_trip.rs`). A
+  bike's, a walker's and a journey's time is the one the search priced it at: none of them
+  reads a car's crossing, so pricing it again would give the same number, a property, not an
+  option (a journey ends when its last ride arrives, so the transit crate's rounded
+  `Journey::arrival` is never read). The path sizes (Ben-Akiva and Bierlaire 1999) over each
+  set's car routes are the search's, rewritten whenever a set grows: they depend on who is in
+  the set, not on the reading (a bike or walk route's `ln PS` is 0: their sets hold one route
+  each, found at iteration 0).
 - **Assess:** the mean door-to-door time over the finished trips; unfinished = finished before
   the window's end is false (a loaded trip by the loading, plus its last walk; an unloaded one by
   its departure plus its measured time); the offered share, the switch share and the found share

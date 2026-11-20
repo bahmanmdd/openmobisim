@@ -25,15 +25,18 @@
 //! against every simple path enumerated, over random networks (`tests/brute_force.rs`).
 //!
 //! The order is goal-directed (A\*, Hart, Nilsson and Raphael 1968): a node is keyed by its
-//! label plus a lower bound on the rest of the way, the straight-line distance in metres to the
-//! destination times `k`, the least, over the links the mode may use, of the link's free-flow
-//! time over the straight-line distance between its ends (links whose ends coincide skipped).
-//! Any path is at least as long as the straight line between its ends (the triangle
-//! inequality), and no link is crossed faster than free flow (the reading never falls below
-//! it; checked in debug builds), so the bound never overestimates and is consistent: the route
-//! is the one plain Dijkstra finds, with less of the network explored. `k` is shrunk by one
-//! part in a million so that rounding cannot make it overestimate, and it is computed once
-//! per mode in [`Search::new`].
+//! label plus a lower bound on the rest of the way, the mode's free-flow time from the node to
+//! the destination, shrunk by one part in a million. No link is crossed faster than free flow
+//! (the reading never falls below it; checked in debug builds), so the bound never
+//! overestimates and is consistent, and the shrinking keeps rounding from breaking either: the
+//! route is the one plain Dijkstra finds, with less of the network explored.
+//!
+//! The bound is itself a search, backward from the destination over the links entering each
+//! node on free-flow times, and it is run on only as far as it is asked: a node's time to the
+//! destination is final once no time still queued is below it. A query's bound therefore
+//! settles the nodes its route comes near, not the whole network, and reads the same times as
+//! from a backward search run to the end. A [`Search`] keeps the bound of the destination and
+//! mode it last served, so queries to one destination share it.
 //!
 //! # Equal arrivals: the tie rule
 //!
@@ -48,20 +51,22 @@
 //! [`Search::reach`] is the same label-setting from one origin without a destination (plain
 //! Dijkstra: no goal, no bound on the rest of the way), stopped when the least label is more
 //! than a bound after the departure; it returns every node settled, with its earliest arrival.
-//! [`Search::reach_backward`], for a bike or a walker only, runs over the links entering each
-//! node instead, on free-flow times, and gives the time from each node to one destination:
-//! their times do not depend on the instant, so the time to a node is the same read either way
-//! (a car's would need the arrival, which is what is sought). Both return their nodes sorted by
-//! id. The demand module uses them to find, once per stop, the nodes within walking reach.
+//! [`Search::reach_backward`], for a bike or a walker only, is the bound's own search run to a
+//! limit: it gives the time from each node to one destination on free-flow times, which do not
+//! depend on the instant, so the time to a node is the same read either way (a car's would
+//! need the arrival, which is what is sought). Both return their nodes sorted by id. The demand
+//! module uses them to find, once per stop, the nodes within walking reach.
 //!
 //! # Cost
 //!
-//! The scratch is 28 bytes per node, reused across queries: a query resets only the nodes it
-//! touched, so it costs what it explores, not the size of the network. [`fastest_many`] keeps
-//! one scratch per thread.
+//! The scratch is 40 bytes per node (32 of labels, 8 of the bound), reused across queries: a
+//! query resets only the nodes it touched, and a new destination only the nodes its bound
+//! touched, so a query costs what it explores, not the size of the network. [`fastest_many`]
+//! keeps one scratch per thread.
 
 use core::cmp::Ordering;
 use std::collections::BinaryHeap;
+use std::sync::Mutex;
 
 use openmobisim_graph::network::Network;
 use openmobisim_loading::link_times::{LinkTimes, Reader};
@@ -148,32 +153,96 @@ enum Stop {
     Beyond(f64),
 }
 
-/// The column of a link mode in [`Search::per_metre`].
-fn column(mode: Mode) -> usize {
-    match mode {
-        Mode::Car => 0,
-        Mode::Bike => 1,
-        Mode::Walk => 2,
-        Mode::Transit => panic!("transit is not on links: it runs on its timetable"),
-    }
+/// The free-flow time by one mode from every node to one destination: the bound on the rest of
+/// the way (see the module documentation). A label-setting search over the links entering each
+/// node, run on only as far as it is asked.
+#[derive(Clone, Debug)]
+struct ToGoal {
+    /// The destination and the mode it serves; none before the first.
+    goal: Option<(NodeId, Mode)>,
+    /// Per node, the least time to the destination found so far (infinity when untouched).
+    time: Vec<f64>,
+    touched: Vec<NodeId>,
+    heap: BinaryHeap<Entry>,
 }
 
-/// `k` for `mode` (see the module documentation): the least free-flow time per metre of
-/// straight line over the links the mode may use, shrunk by one part in a million; 0 (plain
-/// Dijkstra) when no such link has its ends apart.
-fn per_metre(network: &Network, mode: Mode) -> f64 {
-    let mut least = f64::INFINITY;
-    for link in LinkId::iter_space(network.link_count()) {
-        if !network.modes(link).contains(mode) {
-            continue;
-        }
-        let a = network.node_position(network.upstream(link));
-        let chord = a.distance_to(network.node_position(network.downstream(link)));
-        if chord > 0.0 {
-            least = least.min(network.free_flow_time(link, mode).get() / chord);
+impl ToGoal {
+    /// No destination yet, over `nodes` nodes.
+    fn new(nodes: usize) -> Self {
+        Self {
+            goal: None,
+            time: vec![f64::INFINITY; nodes],
+            touched: Vec::new(),
+            heap: BinaryHeap::new(),
         }
     }
-    if least.is_finite() { least * (1.0 - 1e-6) } else { 0.0 }
+
+    /// Start over for `destination` by `mode`: its time 0, nothing settled yet. Resets what
+    /// the destination before it touched, and nothing else.
+    fn start(&mut self, destination: NodeId, mode: Mode) {
+        for node in self.touched.drain(..) {
+            self.time[node.index()] = f64::INFINITY;
+        }
+        self.heap.clear();
+        self.goal = Some((destination, mode));
+        self.offer(destination, 0.0);
+    }
+
+    /// Offer `node` the time `time` to the destination: taken and queued when less than it had.
+    fn offer(&mut self, node: NodeId, time: f64) {
+        let known = &mut self.time[node.index()];
+        if time < *known {
+            if known.is_infinite() {
+                self.touched.push(node);
+            }
+            *known = time;
+            self.heap.push(Entry { key: time, arrival: time, node: node.raw() });
+        }
+    }
+
+    /// Settle the next node: take the least time off the queue and offer, over each link
+    /// entering its node, that time plus the link's free-flow time to the link's upstream node.
+    fn settle_next(&mut self, net: &Network) {
+        let (Some((_, mode)), Some(Entry { arrival: at, node, .. })) = (self.goal, self.heap.pop())
+        else {
+            return;
+        };
+        let node = NodeId::new(node);
+        if at.total_cmp(&self.time[node.index()]) != Ordering::Equal {
+            return; // a longer time of a node since found nearer
+        }
+        for &link in net.in_links(node) {
+            if net.modes(link).contains(mode) {
+                self.offer(net.upstream(link), at + net.free_flow_time(link, mode).get());
+            }
+        }
+    }
+
+    /// The time from `node` to the destination, infinity where it cannot be reached. The search
+    /// is run on only until that time is known: a time is final once no time still queued is
+    /// below it, and a node never offered one is known to be out of reach when the queue has
+    /// run dry.
+    fn time(&mut self, net: &Network, node: NodeId) -> f64 {
+        while self.heap.peek().is_some_and(|next| next.arrival < self.time[node.index()]) {
+            self.settle_next(net);
+        }
+        self.time[node.index()]
+    }
+
+    /// Every node at most `bound` seconds from the destination, with its time, by node id.
+    fn within(&mut self, net: &Network, bound: f64) -> Vec<(NodeId, Duration)> {
+        while self.heap.peek().is_some_and(|next| next.arrival <= bound) {
+            self.settle_next(net);
+        }
+        let mut out: Vec<(NodeId, Duration)> = self
+            .touched
+            .iter()
+            .filter(|n| self.time[n.index()] <= bound)
+            .map(|&n| (n, Duration(self.time[n.index()])))
+            .collect();
+        out.sort_unstable_by_key(|&(n, _)| n);
+        out
+    }
 }
 
 /// The search over one network and one table of link times, with its scratch. Reusable: every
@@ -182,8 +251,6 @@ fn per_metre(network: &Network, mode: Mode) -> f64 {
 pub struct Search<'a> {
     network: &'a Network,
     times: &'a LinkTimes,
-    /// `k` per link mode: car, bike, walk.
-    per_metre: [f64; 3],
     /// Per node: the earliest arrival found, in seconds since the window's start (infinity when
     /// untouched); the reader for the links out of it; the link it was reached by (null at the
     /// origin); the route's metres and links.
@@ -194,18 +261,19 @@ pub struct Search<'a> {
     hops: Vec<u32>,
     touched: Vec<NodeId>,
     heap: BinaryHeap<Entry>,
+    /// The bound of the destination and mode last served, kept for the next query to them.
+    to_goal: ToGoal,
 }
 
 impl<'a> Search<'a> {
-    /// A search over `network` at the link times `times` (made from a loading on that network):
-    /// the bound's `k` for each link mode, and an empty scratch of 28 bytes per node.
+    /// A search over `network` at the link times `times` (made from a loading on that network),
+    /// with an empty scratch of 40 bytes per node.
     #[must_use]
     pub fn new(network: &'a Network, times: &'a LinkTimes) -> Self {
         let n = network.node_count() as usize;
         Self {
             network,
             times,
-            per_metre: [Mode::Car, Mode::Bike, Mode::Walk].map(|m| per_metre(network, m)),
             arrival: vec![f64::INFINITY; n],
             reader: vec![Reader::stranger(); n],
             via: vec![LinkId::NULL; n],
@@ -213,6 +281,7 @@ impl<'a> Search<'a> {
             hops: vec![0; n],
             touched: Vec::new(),
             heap: BinaryHeap::new(),
+            to_goal: ToGoal::new(n),
         }
     }
 
@@ -226,36 +295,15 @@ impl<'a> Search<'a> {
     /// For [`Mode::Transit`], which is not on links, and for a node the network does not have.
     /// In debug builds, if a link time read is below the link's free-flow time.
     pub fn fastest(&mut self, query: &Query) -> Option<Route> {
-        let from = (query.origin, query.departure.get(), query.reader());
-        let found = self.settle(from, query.mode, Stop::At(query.destination), None);
-        let route = found.then(|| self.route_to(query.destination));
-        self.clean();
-        route
-    }
-
-    /// Per node, the free-flow time by `mode` to `destination`, shrunk by one part in a million
-    /// (infinity where the destination cannot be reached): one backward label-setting over the
-    /// whole network. No link is crossed faster than free flow, so as the bound on the rest of
-    /// the way it never overestimates and is consistent; the shrinking keeps rounding from
-    /// breaking either.
-    fn free_flow_to(&mut self, destination: NodeId, mode: Mode) -> Vec<f64> {
-        self.settle_backward(destination, mode, f64::INFINITY);
-        let mut to_goal = vec![f64::INFINITY; self.arrival.len()];
-        for &node in &self.touched {
-            to_goal[node.index()] = self.arrival[node.index()] * (1.0 - 1e-6);
+        assert!(query.mode != Mode::Transit, "transit is not on links: it runs on its timetable");
+        if self.to_goal.goal != Some((query.destination, query.mode)) {
+            self.to_goal.start(query.destination, query.mode);
         }
-        self.clean();
-        to_goal
-    }
-
-    /// [`Self::fastest`], goal-directed by `to_goal` (from [`Self::free_flow_to`] for the
-    /// query's destination and mode) instead of the straight line: the same route.
-    fn fastest_toward(&mut self, query: &Query, to_goal: &[f64]) -> Option<Route> {
-        if to_goal[query.origin.index()].is_infinite() {
+        if self.to_goal.time(self.network, query.origin).is_infinite() {
             return None;
         }
         let from = (query.origin, query.departure.get(), query.reader());
-        let found = self.settle(from, query.mode, Stop::At(query.destination), Some(to_goal));
+        let found = self.settle(from, query.mode, Stop::At(query.destination));
         let route = found.then(|| self.route_to(query.destination));
         self.clean();
         route
@@ -280,7 +328,7 @@ impl<'a> Search<'a> {
     ) -> Vec<(NodeId, Duration)> {
         let start = self.times.since_start(departure).get();
         assert!(mode != Mode::Transit, "transit is not on links: it runs on its timetable");
-        self.settle((origin, start, Reader::stranger()), mode, Stop::Beyond(bound.get()), None);
+        self.settle((origin, start, Reader::stranger()), mode, Stop::Beyond(bound.get()));
         let out = self.within(start, bound.get());
         self.clean();
         out
@@ -288,8 +336,8 @@ impl<'a> Search<'a> {
 
     /// For a bike or a walker, whose link times are free flow at every instant: every node from
     /// which `mode` reaches `destination` within `bound` seconds, with that time in seconds, by
-    /// node id; the destination among them at 0. Label-setting over the links entering each
-    /// node on their free-flow times, stopped when the least label exceeds `bound`.
+    /// node id; the destination among them at 0. The bound's search over the links entering each
+    /// node on their free-flow times, run until the least time exceeds `bound`.
     ///
     /// # Panics
     ///
@@ -306,10 +354,8 @@ impl<'a> Search<'a> {
             matches!(mode, Mode::Bike | Mode::Walk),
             "a backward reach is for bikes and walkers only, whose times are free flow: {mode}"
         );
-        self.settle_backward(destination, mode, bound.get());
-        let out = self.within(0.0, bound.get());
-        self.clean();
-        out
+        self.to_goal.start(destination, mode);
+        self.to_goal.within(self.network, bound.get())
     }
 
     /// Run the search from `origin` at `start` for `reader` until `stop`. Whether the
@@ -320,19 +366,11 @@ impl<'a> Search<'a> {
         (origin, start, reader): (NodeId, f64, Reader),
         mode: Mode,
         stop: Stop,
-        to_goal: Option<&[f64]>,
     ) -> bool {
         let net = self.network;
-        let (target, k) = match stop {
-            Stop::At(destination) => (net.node_position(destination), self.per_metre[column(mode)]),
-            Stop::Beyond(_) => (net.node_position(origin), 0.0),
-        };
-        let rest = |node: NodeId| match to_goal {
-            Some(to_goal) => to_goal[node.index()],
-            None => net.node_position(node).distance_to(target) * k,
-        };
         self.label(origin, (start, 0.0, 0), LinkId::NULL, reader);
-        self.heap.push(Entry { key: start + rest(origin), arrival: start, node: origin.raw() });
+        let key = start + self.rest(origin, stop);
+        self.heap.push(Entry { key, arrival: start, node: origin.raw() });
         while let Some(Entry { arrival: at, node, .. }) = self.heap.pop() {
             let node = NodeId::new(node);
             if at.total_cmp(&self.arrival[node.index()]) != Ordering::Equal {
@@ -349,65 +387,42 @@ impl<'a> Search<'a> {
                 if !net.modes(link).contains(mode) {
                     continue;
                 }
+                // No link is left before its free-flow time: one that cannot reach its
+                // downstream node before that node's label, nor at the same instant (the tie
+                // rule's case), cannot improve it and is not read.
+                let next = net.downstream(link);
+                let soonest = at + net.free_flow_time(link, mode).get();
+                if soonest > self.arrival[next.index()] {
+                    continue;
+                }
                 let (exit, onward) = self.times.exit(link, mode, Duration(at), reader);
                 debug_assert!(
-                    exit.get() >= at + net.free_flow_time(link, mode).get(),
+                    exit.get() >= soonest,
                     "link {link} is left at {} s, before its free-flow time after {at} s",
                     exit.get()
                 );
-                let next = net.downstream(link);
-                let key = |arrive: f64| arrive + rest(next);
-                let offer = (exit.get(), metres + net.length(link).get(), hops + 1);
-                self.relax(next, offer, (link, onward), key);
+                let (arrive, metres) = (exit.get(), metres + net.length(link).get());
+                // Take the label when it improves (the tie rule); queue the node when it
+                // arrives earlier than before.
+                if self.improves(next, arrive, metres, hops + 1, link) {
+                    let earlier = arrive < self.arrival[next.index()];
+                    self.label(next, (arrive, metres, hops + 1), link, onward);
+                    if earlier {
+                        let key = arrive + self.rest(next, stop);
+                        self.heap.push(Entry { key, arrival: arrive, node: next.raw() });
+                    }
+                }
             }
         }
         false
     }
 
-    /// Run the search backward from `destination` over the links entering each node, on the
-    /// mode's free-flow times, until the least label exceeds `bound` seconds. Each label is the
-    /// time from its node to the destination.
-    fn settle_backward(&mut self, destination: NodeId, mode: Mode, bound: f64) {
-        let net = self.network;
-        self.label(destination, (0.0, 0.0, 0), LinkId::NULL, Reader::stranger());
-        self.heap.push(Entry { key: 0.0, arrival: 0.0, node: destination.raw() });
-        while let Some(Entry { arrival: at, node, .. }) = self.heap.pop() {
-            let node = NodeId::new(node);
-            if at.total_cmp(&self.arrival[node.index()]) != Ordering::Equal {
-                continue; // a later label of a node since reached earlier
-            }
-            if at > bound {
-                return;
-            }
-            let (metres, hops) = (self.metres[node.index()], self.hops[node.index()]);
-            for &link in net.in_links(node) {
-                if !net.modes(link).contains(mode) {
-                    continue;
-                }
-                let time = net.free_flow_time(link, mode).get();
-                let next = net.upstream(link);
-                let offer = (at + time, metres + net.length(link).get(), hops + 1);
-                self.relax(next, offer, (link, Reader::stranger()), |t| t);
-            }
-        }
-    }
-
-    /// Offer `node` the label `(arrive, metres, hops)` by `link`, `reader` the reader for the
-    /// links out of it; when it improves (the tie rule), take it, and queue the node at
-    /// `key(arrive)` if it arrives earlier than before.
-    fn relax(
-        &mut self,
-        node: NodeId,
-        (arrive, metres, hops): (f64, f64, u32),
-        (link, reader): (LinkId, Reader),
-        key: impl Fn(f64) -> f64,
-    ) {
-        if self.improves(node, arrive, metres, hops, link) {
-            let fresh = arrive < self.arrival[node.index()];
-            self.label(node, (arrive, metres, hops), link, reader);
-            if fresh {
-                self.heap.push(Entry { key: key(arrive), arrival: arrive, node: node.raw() });
-            }
+    /// The bound on the rest of the way from `node`: toward a destination, the free-flow time
+    /// to it, shrunk by one part in a million; none for a search stopped beyond a bound.
+    fn rest(&mut self, node: NodeId, stop: Stop) -> f64 {
+        match stop {
+            Stop::At(_) => self.to_goal.time(self.network, node) * (1.0 - 1e-6),
+            Stop::Beyond(_) => 0.0,
         }
     }
 
@@ -486,7 +501,7 @@ impl<'a> Search<'a> {
     }
 }
 
-/// [`Search::fastest`] for every query, in parallel (rayon), one scratch per thread. Result `i`
+/// [`Search::fastest`] for every query, in parallel (rayon), one search per thread. Result `i`
 /// answers query `i`, and each answer depends on nothing but its query: the vector is the same,
 /// bit for bit, for any number of threads.
 ///
@@ -495,30 +510,25 @@ impl<'a> Search<'a> {
 /// As [`Search::fastest`], for any query.
 #[must_use]
 pub fn fastest_many(network: &Network, times: &LinkTimes, queries: &[Query]) -> Vec<Option<Route>> {
-    let first = Search::new(network, times);
-    // The queries by (mode, destination): one exact bound per group, shared by its queries.
+    // In the order of (mode, destination): a thread working through a stretch of them keeps one
+    // bound for the queries to one destination.
     let mut order: Vec<usize> = (0..queries.len()).collect();
-    order.sort_unstable_by_key(|&i| (column(queries[i].mode), queries[i].destination, i));
-    let same = |a: &usize, b: &usize| {
-        queries[*a].mode == queries[*b].mode && queries[*a].destination == queries[*b].destination
-    };
-    let groups: Vec<&[usize]> = order.chunk_by(same).collect();
-    let answered: Vec<Vec<Option<Route>>> = groups
+    order.sort_unstable_by_key(|&i| (queries[i].mode.as_u8(), queries[i].destination, i));
+    // One search per thread of the pool, made when the thread first answers a query. A lone
+    // query is answered on the calling thread, which need not be of the pool: it takes the first.
+    let searches: Vec<Mutex<Option<Search>>> =
+        (0..rayon::current_num_threads()).map(|_| Mutex::new(None)).collect();
+    let answered: Vec<Option<Route>> = order
         .par_iter()
-        .map(|group| {
-            let q = &queries[group[0]];
-            let to_goal = first.clone().free_flow_to(q.destination, q.mode);
-            group
-                .par_iter()
-                .map_init(|| first.clone(), |s, &i| s.fastest_toward(&queries[i], &to_goal))
-                .collect()
+        .map(|&i| {
+            let thread = rayon::current_thread_index().unwrap_or(0);
+            let mut search = searches[thread].lock().expect("no search panicked before");
+            search.get_or_insert_with(|| Search::new(network, times)).fastest(&queries[i])
         })
         .collect();
     let mut out = vec![None; queries.len()];
-    for (group, answers) in groups.iter().zip(answered) {
-        for (&i, answer) in group.iter().zip(answers) {
-            out[i] = answer;
-        }
+    for (&i, answer) in order.iter().zip(answered) {
+        out[i] = answer;
     }
     out
 }

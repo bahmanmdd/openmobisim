@@ -38,7 +38,8 @@ pub struct Alternative {
     pub mode: Mode,
     /// The legs in order.
     pub legs: Vec<Leg>,
-    /// Door to door, seconds, as priced at the last measure.
+    /// Door to door, seconds: as priced at the last measure for an alternative with a car
+    /// route, else as the search priced it, which is the same at every reading.
     pub time: f64,
     /// The natural logarithm of a car route's path size among the set's car routes; 0 for a
     /// lone car route and for every other mode.
@@ -106,6 +107,13 @@ impl Alternative {
     #[must_use]
     pub fn is_route(&self, mode: Mode, links: &[LinkId]) -> bool {
         self.mode == mode && self.route() == Some(links)
+    }
+
+    /// Whether its time depends on the loading: only a car's route does. A bike and a walker
+    /// cross every link at free flow and a journey runs on its timetable, at every iteration.
+    #[must_use]
+    pub fn reads_the_loading(&self) -> bool {
+        self.legs.iter().any(|leg| matches!(leg, Leg::Route { mode: Mode::Car, .. }))
     }
 }
 

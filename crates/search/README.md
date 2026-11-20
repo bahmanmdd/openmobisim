@@ -7,7 +7,7 @@ at the instant the route enters it; and its tree form, every node within a bound
 
 ## Inputs
 - The `Network` (`openmobisim-graph`): per link its upstream and downstream node, length,
-  free-flow time per mode and modes allowed; per node its position in metres.
+  free-flow time per mode and modes allowed; per node the links leaving it and entering it.
 - The link times, `LinkTimes` (`openmobisim-loading`), the reading of a loading on that
   network; an empty loading reads free flow everywhere.
 - A `Query` per route wanted: origin node, destination node, mode (car, bike or walk),
@@ -29,14 +29,13 @@ at the instant the route enters it; and its tree form, every node within a bound
   which the mode reaches the destination within `bound` seconds, with that time in seconds,
   sorted by node id; the destination is among them, at 0.
 - `fastest_many(&network, &times, &queries)` answers every query in parallel (rayon, one
-  scratch per thread); answer `i` is query `i`'s, the same bit for bit at any thread count.
-  The queries are grouped by mode and destination; each group is steered by an exact bound,
-  the free-flow time from every node to that destination (one backward search per group),
-  instead of the straight line. The routes are the same as `fastest`'s, query by query.
+  search per thread); answer `i` is query `i`'s, the same bit for bit at any thread count. The
+  queries are taken in the order of mode and destination, so that a thread keeps one bound (below)
+  for the queries to one destination. The routes are `fastest`'s, query by query.
 
 ## Units
 Seconds and metres. The departure and the arrival are `f64` seconds since the window's start
-(a `Duration`), never rounded, on the clock of `LinkTimes::exit`. The search's bound is in seconds per metre of straight line.
+(a `Duration`), never rounded, on the clock of `LinkTimes::exit`.
 
 ## Meanings and assumptions
 - A route's time is walked link by link: each link entered when the one before it ends, its
@@ -48,16 +47,19 @@ Seconds and metres. The departure and the arrival are `f64` seconds since the wi
 - Fastest means earliest arrival. The search is label-setting Dijkstra over nodes on the
   arrival, exact on first-in-first-out link times (Kaufman and Smith 1993), which the reading
   is by construction. It is goal-directed (A\*, Hart, Nilsson and Raphael 1968) by a lower bound
-  on the rest of the way: the straight-line distance to the destination times the least, over
-  the links the mode may use, of free-flow time over the straight-line distance between the
-  link's ends (links whose ends coincide skipped), shrunk by one part in a million against
-  rounding. It holds because no link time is below free flow (checked in debug builds); it
-  changes how much is explored, never the route.
+  on the rest of the way: the mode's free-flow time from the node to the destination, shrunk by
+  one part in a million against rounding. It holds because no link time is below free flow
+  (checked in debug builds); it changes how much is explored, never the route. The bound is a
+  search backward from the destination on free-flow times, run on only as far as the queries
+  to that destination ask (a time is final once no time still queued is below it): the nodes
+  their routes come near, not the whole network. A `Search` keeps the bound of the destination
+  and mode it last served.
 - The tree form is the same label-setting over the same scratch and tie rule, without the
   goal (plain Dijkstra), stopped when the least label is more than the bound after the
   departure: a node is in when its arrival less the departure is at most the bound. `reach`'s
-  arrival at a node is the one `fastest` finds to it. `reach_backward` runs over the links
-  entering each node on free-flow times, which is exact for a bike and a walker only (their
+  arrival at a node is the one `fastest` finds to it. `reach_backward` is the bound's search
+  run to a limit, over the links entering each node on free-flow times, which is exact for a
+  bike and a walker only (their
   times do not depend on the instant); a car's backward search would need its arrival.
 - Ties: two routes reaching a node at exactly the same instant are decided by the shorter in
   metres, then fewer links, then the lower id of the link arriving at the node.
@@ -96,12 +98,16 @@ the best path arrives within the bound, at that arrival); the bound by hand (a c
 50 km/h crosses 100 m in 7.2 s: within 7.2 s a node and its four neighbours, within 7.1 s the
 node alone); car backward and transit refused; a free-flow car detour by hand on a 5 × 5 grid with two slow links
 (43.2 s against 50.4 s, the route among four of equal time fixed by the tie rule by hand, the
-bike direct in 96 s); the switch between a queued short link and a free long route by Vickrey's
+bike direct in 96 s); two routes of two links arriving at the same instant by car, bike and on
+foot (21.6, 72 and 225 s by hand), the one whose last link has the lower id taken whichever the
+search finds first; the switch between a queued short link and a free long route by Vickrey's
 bottleneck (72 + t/2 against 144 s: short at departures 0 and 100, long at 300, arrivals 72,
 222 and 444 s by hand and equal to the reading's walk to the bit); an empty route at the
 origin, a link forbidding cars, transit refused; a brute force on five fully linked nodes with
 queues (200 queries, the arrival equal to the best of every simple path walked on the reading).
-`fastest_many`'s determinism over 1 and 8 threads and two runs is tested with the whole chain,
-by car, bike and walk on loaded readings (`crates/loop/tests/determinism.rs`). The run time
+`fastest_many` answers six queries of mixed modes and destinations each in its place, by the
+same hand derivations, as a batch and each as a batch of one, and no query with no answer; its
+determinism over 1 and 8 threads and two runs is tested with the whole chain, by car, bike and
+walk on loaded readings (`crates/loop/tests/determinism.rs`). The run time
 on the 100 × 100 grid is reported by hand: `cargo test --release -p openmobisim-search --test
 run_time -- --ignored --nocapture`.
