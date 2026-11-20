@@ -85,7 +85,8 @@ const BAND: f64 = 0.2;
 /// spirit rather than his process: `s = r` when `r > BAND`, else 0, with `r = (c - b) / c`, `c`
 /// the cost of the alternative it holds and `b` the least cost among the alternatives of its
 /// set of the same mode as the one it holds, as the choice that follows reads them (systematic
-/// costs: the times of the last measure, the path sizes of the set as it now is). `s` is 0 when
+/// costs: the times of the last measure and, under the logit, the path sizes of the set as it
+/// now is). `s` is 0 when
 /// `c` is not positive, and never above 1 (`r` passes 1 only when `b` is negative). No other
 /// traveller's costs enter. Only the mode held enters `b`, but an offered traveller chooses over
 /// its whole set, its mode included, so one above the band reconsiders its mode at the rate `r`

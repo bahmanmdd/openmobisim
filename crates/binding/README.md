@@ -95,7 +95,7 @@ page    = result.summary(path, title=None)
   capacity, changes nothing there; it is accepted and recorded at both entry points.
   | `Transit.from_gtfs` | `transfer_walk_max` (m) |
   | `Demand.from_table` | `stop_walk_max` (m) |
-  | `run` | `boarding_slack` (s), `max_rides`, `nearby_stops`, `choice` (`"logit"` or `"deterministic"`), `coefficients` (a dict from every class id to its sixteen, in the order of the loop's choice row: cost per minute of car driving, bike riding, walking, transit in vehicle, access walk, egress walk, first wait, transfer wait, transfer walk; per transfer; per €; per unit of ln PS; the car, bike, walk and transit constants), `nest_scale`, `iteration_cap`, `iteration_floor`, `link_bin` (s), `seed` (an integer from 0 to 2⁶³ − 1, the largest the run's record holds) |
+  | `run` | `boarding_slack` (s), `max_rides`, `nearby_stops`, `choice` (`"logit"` or `"deterministic"`), `coefficients` (a dict from every class id to its sixteen, in the order of the loop's choice row: cost per minute of car driving, bike riding, walking, transit in vehicle, access walk, egress walk, first wait, transfer wait, transfer walk; per transfer; per €; per unit of ln PS, kept as given in the run's record, read times `nest_scale` under `"logit"` and as 0 under `"deterministic"`; the car, bike, walk and transit constants), `nest_scale`, `iteration_cap`, `iteration_floor`, `link_bin` (s), `seed` (an integer from 0 to 2⁶³ − 1, the largest the run's record holds) |
 - **`run`**: `window=(start_s, end_s)`, two seconds of the clock, required, never defaulted;
   `out`, the folder the files go to (created if missing). The demand must have been built on
   the network and the transit given to `run`.

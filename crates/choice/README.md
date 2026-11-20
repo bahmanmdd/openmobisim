@@ -34,9 +34,13 @@ of 1 on each of the loop's time columns and 0 on the rest: its cost is in minute
   `v_j = −cost_j / μ`: `I_n = ln Σ_{j∈n} exp(v_j)`, `P(n) = exp(μ I_n) / Σ_m exp(μ I_m)`,
   `P(j | n) = exp(v_j) / Σ_{k∈n} exp(v_k)`. At `μ = 1`, or with every row in its own nest, it is
   the plain logit `exp(−cost_j) / Σ_k exp(−cost_k)`.
-- The path-size logit (Ben-Akiva and Bierlaire 1999) is the logit with a column holding
+- The path-size logit (Ben-Akiva and Bierlaire 1999) is the plain logit with a column holding
   `ln PS`, the route's path-size factor computed by whoever knows the routes, and a coefficient
-  of −1 on it. There is no third implementation.
+  of −1 on it: n identical copies of a route, each of path size 1/n, count as the one route.
+  Inside a nest of scale `μ` a row's weight is `exp(v_j)`, which holds the path size at the
+  exponent `−β / μ` for a coefficient `β` on `ln PS`; whoever builds the costs weighs `ln PS`
+  by `−μ` for the exponent 1, the path-size logit within the nest. There is no third
+  implementation.
 - Sampling is exact, by Gumbel-max in two stages: the nest of greatest `μ I_n + ε_n`, then in it
   the row of greatest `v_j + ε_j`, each `ε` an independent standard Gumbel draw.
 - The draws come from the choice stream of the run's seed, at addresses made of the trip and the
@@ -69,7 +73,11 @@ fit by chi-square (below 20.52, the 0.999 quantile at 5 degrees of freedom); thr
 three, one and two rows at `μ` of 0.2, 0.5, 0.9 and 1 against the formula written out in the
 test within 1e-12, 20 000 draws each by chi-square, the plain logit at `μ = 1`, nest ids 7 and
 4 000 000 000 giving the shares of 0 and 1; the path-size logit on three car routes of equal
-time, `P_A = 1 / (3 − φ)` (0.4545 at φ = 0.8, 0.4 at φ = 0.5, 1/3 without the term); a car
+time, `P_A = 1 / (3 − φ)` (0.4545 at φ = 0.8, 0.4 at φ = 0.5, 1/3 without the term); the path
+size inside a nest at `μ` of 0.5 and 0.25, `ln PS` weighed `−μ`: three car routes of path sizes
+0.5, 0.6 and 2/3 in one nest and a bike in another against the closed form with the path size
+at the exponent 1 by hand within 1e-12, and one route split into two copies of half its path
+size leaving every other row's probability unchanged and giving each copy half; a car
 nest of 288 s and 345.6 s routes against a 3 000 s walk at 0.03 per minute, `P(walk)` and
 `P(short | car)` by hand at `μ` of 0.5 and 1, 6 000 draws within three standard deviations; two
 classes over the same rows, `1 / (1 + e³)` and `1 / (1 + e⁻³)`; the deterministic least cost

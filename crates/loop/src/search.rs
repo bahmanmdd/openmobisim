@@ -235,8 +235,9 @@ fn offer(
 }
 
 /// The search stage: every trip's sets grown by what the search found at `times`, the path
-/// sizes of a set that grew rewritten over its new members (the choice that follows reads them;
-/// a path size depends on who is in the set, not on the reading); the count of trips for which
+/// sizes of a set that grew rewritten over its new members (the logit's choice that follows
+/// reads them; a path size depends on who is in the set, not on the reading); the count of
+/// trips for which
 /// it found an alternative cheaper, without the path-size term, than every alternative of its
 /// mode in their set (the first alternative of a mode counts): a route that beats the routes
 /// of its mode changes what the traveller can do, whatever the other modes cost.

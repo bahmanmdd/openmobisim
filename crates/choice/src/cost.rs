@@ -13,7 +13,9 @@
 //!
 //! The path-size logit is this cost with a column holding `ln PS` (the path-size factor of a
 //! route, computed upstream by whoever knows the routes) and a coefficient of −1 on it: a route
-//! that shares its links with others is made dearer by `−ln PS ≥ 0`.
+//! that shares its links with others is made dearer by `−ln PS ≥ 0`. In the nested logit a
+//! row's cost is divided by the nest scale `μ` inside its nest (see [`crate::model`]), so the
+//! coefficient that gives the path-size logit within a nest is `−μ`.
 
 use core::fmt;
 

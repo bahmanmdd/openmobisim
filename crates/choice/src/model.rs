@@ -20,9 +20,11 @@
 //!
 //! With `μ = 1`, or with every row in its own nest, it is the plain logit,
 //! `P(j) = exp(−cost_j) / Σ_k exp(−cost_k)`. The path-size logit is the plain logit with an
-//! `ln PS` column weighed −1 (see [`crate::cost`]). Sums of exponentials are taken with the
-//! largest exponent factored out, so a cost of thousands of seconds neither overflows nor
-//! underflows to an empty sum.
+//! `ln PS` column weighed −1 (see [`crate::cost`]). Inside a nest a row's weight `exp(v_j)`
+//! holds the path size at the exponent `−β / μ` for a coefficient `β` on `ln PS`, so whoever
+//! builds the cost weighs `ln PS` by `−μ` for the exponent 1, the path-size logit within the
+//! nest. Sums of exponentials are taken with the largest exponent factored out, so a cost of
+//! thousands of seconds neither overflows nor underflows to an empty sum.
 //!
 //! # Sampling: Gumbel-max in two stages, exact
 //!

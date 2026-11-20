@@ -181,8 +181,9 @@ pub const KEYS: [(&str, &[&str]); 8] = [
 
 /// The comment above the coefficient tables.
 const COEFFICIENTS: &str = "# coefficients: per class, one per column of the choice row: cost per \
-                            minute of each time, per transfer, per euro, per unit of ln PS, and \
-                            each mode's constant";
+                            minute of each time, per transfer, per euro; on ln PS, minus the \
+                            exponent of the path size (read times nest_scale under the logit, as \
+                            0 under the least cost); and each mode's constant";
 
 /// One value of the record.
 enum Value<'a> {

@@ -147,8 +147,9 @@ marked so in the file's schema.
   built from); `window_start_s`, `window_end_s` (seconds of the clock: the window the run
   used), and `window_end_given_s` only when the run moved the end given up to a whole bin (the
   end given, which `run_file` runs from, so it repeats the repair).
-- `[parameters]`: each row of `PARAMETERS.md` the run read, by its name, at the value it used,
-  defaults included, in the table's order, each followed by its unit as a comment, the Unit
+- `[parameters]`: each row of `PARAMETERS.md` the run read, by its name, at the value it used
+  (one exception: the coefficient of `car_ln_path_size` is recorded as given; the logit reads it
+  times `nest_scale`, the least-cost choice as 0, `crates/loop/README.md`), defaults included, in the table's order, each followed by its unit as a comment, the Unit
   column of `PARAMETERS.md` (`capacity_per_lane = 1800.0  # veh/h per lane`): the three build
   values, `stop_walk_max` and `transfer_walk_max` (both absent without transit, where nothing
   reads them), `boarding_slack`,

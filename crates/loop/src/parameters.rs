@@ -62,7 +62,9 @@ pub struct Parameters {
     /// The nest scale of the logit, in (0, 1]; read by [`ChoiceModel::Logit`] only.
     pub nest_scale: f64,
     /// Per user class, in class id order, one coefficient per column of [`COLUMNS`]: cost per
-    /// minute of each time, per transfer, per euro, per unit of `ln PS`, and each mode's
+    /// minute of each time, per transfer, per euro; on `ln PS`, minus the exponent of the path
+    /// size in a car route's weight inside its nest (read times the nest scale under the logit,
+    /// as 0 under the least cost, [`Parameters::as_the_choice_reads`]); and each mode's
     /// constant.
     pub coefficients: Vec<[f64; N]>,
 }
@@ -71,7 +73,8 @@ impl Parameters {
     /// The default coefficients of a class, in the order of [`COLUMNS`]: 0.1 per minute driving,
     /// riding a bike or in a vehicle; 0.165 per minute walking (to and from a stop, between
     /// stops, or the whole way); 0.145 per minute waiting; 0.5 per transfer; 0.6 per euro (a
-    /// value of time of 10 euros per hour); −1 on `ln PS` (the path-size logit's definition);
+    /// value of time of 10 euros per hour); −1 on `ln PS`, the path-size logit (Ben-Akiva and
+    /// Bierlaire 1999) at every nest scale (see [`Parameters::as_the_choice_reads`]);
     /// constants 0 for car and bike, 0.5 for walk, 0.25 for transit. Starting values to be
     /// calibrated per study; the time, walking and waiting weights are in the proportions of
     /// release 0.1's built-in model.
@@ -95,6 +98,41 @@ impl Parameters {
             nest_scale: 0.5,
             coefficients: vec![Self::DEFAULT_COEFFICIENTS; classes as usize],
         }
+    }
+
+    /// These parameters as the run's choice reads them, the copy every stage of a run holds.
+    ///
+    /// The coefficient of `car_ln_path_size`, its sign turned, is the exponent of a car route's
+    /// path size in the route's weight inside its nest: −1 is the path-size logit (Ben-Akiva and
+    /// Bierlaire 1999) at every nest scale, in which n identical copies of a route, each of path
+    /// size 1/n, count as the one route. The nested logit divides a row's whole cost by the nest
+    /// scale μ inside its nest, so a route's weight there is `exp(−cost / μ)`, which holds the
+    /// path size at the exponent `−β / μ` for a coefficient `β` on `ln PS`. Under the logit the
+    /// coefficient is therefore read times μ, for every class: the default −1 is read as −0.5 at
+    /// μ = 0.5 and as −1 at μ = 1.
+    ///
+    /// The path size corrects the logit for routes that overlap; the least-cost choice has no
+    /// such error to correct, so under it the coefficient is read as 0 for every class, whatever
+    /// number was given: its cost is that of the times, the transfers, the money and the
+    /// constants.
+    ///
+    /// A coefficient that is not a finite number is left as given, and so is every coefficient
+    /// under the logit when μ is not a finite number in (0, 1], for the model to refuse the run
+    /// by naming what is wrong. The coefficients of the other columns are read as given.
+    ///
+    /// To be called once, on the parameters as given, as [`crate::run::run`] does: under the
+    /// logit a second reading would multiply the coefficient by the nest scale again.
+    #[must_use]
+    pub fn as_the_choice_reads(&self) -> Self {
+        let mut read = self.clone();
+        let mu = read.nest_scale;
+        let finite = read.coefficients.iter_mut().filter(|row| row[LN_PS].is_finite());
+        match read.choice {
+            ChoiceModel::Deterministic => finite.for_each(|row| row[LN_PS] = 0.0),
+            ChoiceModel::Logit if mu > 0.0 && mu <= 1.0 => finite.for_each(|row| row[LN_PS] *= mu),
+            ChoiceModel::Logit => {}
+        }
+        read
     }
 
     /// The cost of `attributes` (one per column) for class `class`: the systematic utility.

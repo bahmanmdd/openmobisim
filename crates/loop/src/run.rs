@@ -315,6 +315,7 @@ pub fn run(
     window: (Second, Second),
     parameters: &Parameters,
 ) -> Result<Run, RunError> {
+    let parameters = &parameters.as_the_choice_reads();
     let (ctx, repairs) = context(network, demand, timetable, window, parameters)?;
     let model = Model::new(parameters)?;
     let n = ctx.trip_count();

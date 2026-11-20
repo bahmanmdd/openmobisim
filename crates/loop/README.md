@@ -52,7 +52,7 @@ model's unit (minutes in a time-only run: 1 on each of the nine time columns, 0 
   its cost without the path-size term is strictly below that of every alternative of its mode
   in the set (the first alternative of a mode counts as found): a faster car route counts
   for a traveller whose bike is cheaper still. A set that grew has its path sizes rewritten at once, so
-  the choice of the same iteration reads the path sizes of the set it chooses from. Transit offers, to a set without transit, every journey of
+  the logit's choice of the same iteration reads the path sizes of the set it chooses from. Transit offers, to a set without transit, every journey of
   `Raptor::by_rides`: for each number of rides that reaches the door earlier than every smaller
   number, the earliest journey with that many rides, fewest rides first (the last is the
   earliest journey). A journey comes from the demand's access and egress lists, the traveller
@@ -81,12 +81,21 @@ model's unit (minutes in a time-only run: 1 on each of the nine time columns, 0 
   walk to the first boarding (the slack included), so the nine times of any alternative add up
   to its door-to-door time; its own mode's constant 1. The default coefficients (cost, positive
   is worse) are 0.1, 0.1, 0.165, 0.1, 0.165, 0.165, 0.145, 0.145, 0.165, 0.5, 0.6, −1, 0, 0,
-  0.5, 0.25 (`PARAMETERS.md`). The nest is the mode; at iteration 0 everyone chooses. At `k ≥ 1` a
+  0.5, 0.25 (`PARAMETERS.md`). The coefficient of `car_ln_path_size`, its sign turned, is the
+  exponent of the path size in a car route's weight inside its nest: −1 is the path-size logit
+  (Ben-Akiva and Bierlaire 1999) at every nest scale, in which n identical copies of a route,
+  each of path size 1/n, count as the one route. The nested logit divides a row's whole cost by
+  the nest scale μ inside its nest, so the logit reads the coefficient times μ (−0.5 at the
+  default 0.5). Under the least-cost choice it is read as 0, whatever is given: the path size
+  corrects the logit for routes that overlap, and the least cost has no such error to correct.
+  The path sizes are computed and reported all the same, and the run's record keeps the
+  coefficient as given. The nest is the mode; at iteration 0 everyone chooses. At `k ≥ 1` a
   traveller is offered a new choice with probability `max(1 / (k + 1), s)`: the step of the
   method of successive averages (Sheffi 1985), or `s = r = (c − b) / c` when `r` is above 0.2
   (else `s = 0`; never above 1), with `c` the cost of the alternative it holds and `b` the
   least cost among the alternatives of the same mode in its own set, as the choice reads them
-  (systematic costs, the path-size term included, at the times of the last measure); `s = 0`
+  (systematic costs, the path-size term included under the logit, at the times of the last
+  measure); `s = 0`
   when `c` is not positive. Drawn from `Stream::MsaReselection` at (trip, k). A traveller that
   is offered takes the model's choice over its whole set, its mode included, whatever it held;
   the others keep their alternative.
@@ -230,7 +239,16 @@ every part in minutes; the path size of two overlapping car routes, 0 for bike a
 routes; and of three car routes sharing one link among three and one among two, one link
 slower than the rest, by length: 7/12, 14/27 and 17/30); the path size of every car route of
 every set at the end of a run, three routes of 800, 1 000 and 1 200 m sharing their first
-600 m, by hand (`tests/path_size_in_a_run.rs`);
+600 m, by hand (`tests/path_size_in_a_run.rs`); on the same three routes a least-cost run the
+same whatever the coefficient of the path size (0, −1 or −5), each trip's cost the minutes of
+the alternative it takes, and every coefficient read as given but the path size's, read as 0
+(`tests/least_cost_reads_no_path_size.rs`); under the logit the coefficient of the path size
+read as −μ at μ of 0.5, 0.25 and 1, the rest as given, and three car routes with path sizes
+0.5, 0.6 and 2/3 in one nest and a bike in another, a logit built in the test from the
+parameters as read with a nest per mode, against the closed form with the path size at the exponent 1 by hand within 1e-12, and in a
+logit run on the three routes above at μ of 0.5, 0.25 and 1, each trip's cost the minutes of
+the route it takes less μ times the logarithm of its path size by hand, within 1e-9
+(`tests/path_size_in_the_car_nest.rs`);
 the default run against outside answers: without congestion, the closed-form logit
 shares of car, bike, walk and transit (`tests/no_congestion.rs`), and car against bike behind
 a bottleneck, a hand-derived trajectory solved by scipy (`tests/bottleneck_mode_choice.rs`,
