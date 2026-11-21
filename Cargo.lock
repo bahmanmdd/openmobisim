@@ -684,6 +684,7 @@ dependencies = [
 name = "openmobisim-summary"
 version = "0.2.0-dev"
 dependencies = [
+ "arrow-array",
  "openmobisim-demand",
  "openmobisim-graph",
  "openmobisim-io-gtfs",
@@ -692,6 +693,7 @@ dependencies = [
  "openmobisim-map",
  "openmobisim-transit",
  "openmobisim-types",
+ "parquet",
 ]
 
 [[package]]

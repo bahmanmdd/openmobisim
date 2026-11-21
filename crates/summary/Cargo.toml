@@ -22,3 +22,6 @@ openmobisim-io-parquet = { workspace = true }
 
 [dev-dependencies]
 openmobisim-demand = { workspace = true }
+# Editing a written links table by hand (`tests/hand_run.rs`).
+parquet = { workspace = true }
+arrow-array = { workspace = true }

@@ -129,6 +129,10 @@ binding draws a page (`tests/common/mod.rs`, `kept`):
   1.5 wide dashed 3.6 and 2.25, the walkers' (two) 1.5 wide dotted). `src/maps.rs` (unit tests):
   a line along its points, and moved to the right of travel, mitred at a right-angle bend by hand.
   Through the binding (`test_drawing.py`): the car map along a bent link, by hand.
+- `tests/hand_run.rs` also: the hand run's links table with the row of `st2` (3 cars) given to
+  `ab`, which does not allow cars: the reader sets it aside with one warning and the page is built
+  from the rest, 3 × 2 km = 6.0 vehicle-km on `st1`, all in the band 0–15 %, `st1` the one
+  busiest link.
 - `tests/transit.rs`: a hand timetable: 5 boardings, 1.25 rides per transit trip, 25.0 % changing
   vehicle; 5 stops, 2 runs; the transit map, and no kilometres walked on links.
 - `tests/transit.rs` also: with a tram and a bus line, the transit map's hops in the tram's and the

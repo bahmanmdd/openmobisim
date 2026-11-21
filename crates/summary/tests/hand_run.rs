@@ -404,3 +404,70 @@ fn a_share_that_would_change_of_a_quarter_is_shown_as_25_per_cent() {
     let shown: Vec<String> = (0..3).map(|k| value(&html, &format!("it.{k}.would"))).collect();
     assert_eq!(shown, ["0.00", "25.00", "0.00"]);
 }
+
+/// A links table edited by hand: the hand run's row of `st2` (3 cars) given to `ab`, a path for
+/// bikes and walkers that does not allow cars. The reader sets that row aside with one warning and
+/// the page is built from the rest: the cars on `st1` alone, 3 × 2 km = 6.0 vehicle-km, all in the
+/// band 0–15 %, `st1` the one busiest link.
+#[test]
+fn a_links_table_with_cars_on_a_link_without_cars_still_gives_the_page() {
+    use arrow_array::{ArrayRef, RecordBatch, StringArray};
+    use parquet::arrow::ArrowWriter;
+    use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
+
+    let net = network();
+    let dem = demand(&net);
+    let parameters = Parameters {
+        link_bin: 60,
+        iteration_cap: 3,
+        choice: ChoiceModel::Deterministic,
+        coefficients: vec![TIME_ONLY; 2],
+        ..Parameters::defaults(2)
+    };
+    let r =
+        run(&net, &dem, None, (Second(START), Second(START + 3_600)), &parameters).expect("a run");
+    let name = "summary-cars-on-a-path.run";
+    common::kept(&r, &net, &dem, None, &parameters, name);
+    let folder = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join(name);
+    let path = folder.join("links.parquet");
+    let file = std::fs::File::open(&path).expect("open");
+    let batches: Vec<RecordBatch> = ParquetRecordBatchReaderBuilder::try_new(file)
+        .expect("a Parquet file")
+        .build()
+        .expect("a reader")
+        .collect::<Result<_, _>>()
+        .expect("batches");
+    let out = std::fs::File::create(&path).expect("a file");
+    let mut writer = ArrowWriter::try_new(out, batches[0].schema(), None).expect("a writer");
+    for batch in batches {
+        let at = batch.schema().index_of("link_id").expect("a column");
+        let ids = batch.column(at).as_any().downcast_ref::<StringArray>().expect("text");
+        let edited: StringArray =
+            ids.iter().map(|id| id.map(|id| if id == "st2" { "ab" } else { id })).collect();
+        let mut columns: Vec<ArrayRef> = batch.columns().to_vec();
+        columns[at] = std::sync::Arc::new(edited);
+        writer.write(&RecordBatch::try_new(batch.schema(), columns).expect("a batch")).expect("ok");
+    }
+    writer.close().expect("closed");
+
+    let window = r.links.window();
+    let t = openmobisim_io_parquet::read(&folder, &dem, &net, None, window, r.dropped())
+        .expect("it opens");
+    assert_eq!(t.warnings.len(), 1, "{:?}", t.warnings);
+    assert!(t.warnings[0].contains("does not allow cars: ab at 25320"), "{}", t.warnings[0]);
+    let kept = openmobisim_map::Kept::of(&dem, &t.trips, t.routes, t.links, window);
+    let summarised = Summarised {
+        kept: &kept,
+        network: &net,
+        timetable: None,
+        lines: None,
+        iterations: &r.iterations,
+        stopped_by_rule: Some(r.stopped_by_rule),
+        record: "",
+    };
+    let page = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("summary-cars-on-a-path.html");
+    write(&summarised, "hand run", &page).expect("written");
+    let html = std::fs::read_to_string(&page).expect("the summary");
+    check(&html, &[("band.0.km", "6.0"), ("band.0.share", "100.0"), ("busy.0.link", "st1")]);
+    assert!(!has(&html, "busy.1.link"));
+}

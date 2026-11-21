@@ -148,7 +148,7 @@ rest.** `Run.open`, `Run.map` and `Run.summary` meet each condition so:
 | a table's columns in another order, other columns beside them, a list's inner field named `element` | read as written, no warning |
 | a trip without a row in `trips.parquet` | read as not run (the run drops the trips its window cannot hold and writes no row for them); `UserWarning` only when their number is not the record's count of trips the run dropped |
 | a trip's second row; an unknown mode | `UserWarning`; the first row used; read as none |
-| a `links.parquet` row off the record's grid or outside its window; a (link, bin) given twice | `UserWarning` with a count; the row set aside; the first used |
+| a `links.parquet` row off the record's grid or outside its window, or with cars on a link that does not allow cars; a (link, bin) given twice | `UserWarning` with a count; the row set aside; the first used |
 | a trip whose legs are misnumbered, of an unknown kind, lack a value, name a link, run or stop not held, or do not agree with its mode | `UserWarning` with a count; the trip left out of the journeys, counted in both footers |
 | a walk gap or transfer walk without its seconds | `UserWarning`; the journey shows its door-to-door time and no leg split |
 | an `iterations.parquet` without `would_change_share` (a run written before that share was reported) | `UserWarning` naming the column; the summary shows the share as unknown (`—`), as it does for a least-cost run, which does not report it |

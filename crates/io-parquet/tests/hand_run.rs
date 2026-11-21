@@ -529,3 +529,80 @@ fn the_share_that_would_change_is_written_and_read_back_and_a_file_without_it_op
     assert!(warnings[0].contains("would_change_share"), "{}", warnings[0]);
     println!("{}", warnings[0]);
 }
+
+/// A links table edited by hand: the hand run's row of `st2` (3 cars entering in the bin from
+/// 25 320 s) given to `ab`, a path for bikes and walkers that does not allow cars, and given a
+/// bike as well. A run writes no such row; the table opens, that row set aside whole, its bike
+/// with its cars, and the three others read as written (`ab` from 25 200 s, a bike and a walker;
+/// `ab` from 28 200 s, a walker; `st1` from 25 200 s, 3 cars): 1 bike in all, the hand run's.
+/// Exactly one warning names the row.
+#[test]
+fn a_links_row_with_cars_on_a_link_without_cars_is_set_aside_with_one_warning() {
+    use arrow_array::{Array, ArrayRef, RecordBatch, StringArray, UInt32Array};
+    use openmobisim_types::ids::{EntityId, LinkId};
+    use parquet::arrow::ArrowWriter;
+    use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
+
+    let net = network();
+    let dem = demand(&net);
+    let (r, p) = (hand_run(&net, &dem), parameters());
+    let dir = folder("io-parquet-cars-on-a-path");
+    write(&r, &net, &dem, &given(&p, &dem), &dir).expect("written");
+    let path = dir.join("links.parquet");
+    let file = std::fs::File::open(&path).expect("open");
+    let batches: Vec<RecordBatch> = ParquetRecordBatchReaderBuilder::try_new(file)
+        .expect("a Parquet file")
+        .build()
+        .expect("a reader")
+        .collect::<Result<_, _>>()
+        .expect("batches");
+    let mut writer = ArrowWriter::try_new(
+        std::fs::File::create(&path).expect("a file"),
+        batches[0].schema(),
+        None,
+    )
+    .expect("a writer");
+    let mut moved = 0;
+    for batch in batches {
+        let at = batch.schema().index_of("link_id").expect("a column");
+        let ids = batch.column(at).as_any().downcast_ref::<StringArray>().expect("text");
+        let edited: StringArray = ids
+            .iter()
+            .map(|id| {
+                moved += usize::from(id == Some("st2"));
+                id.map(|id| if id == "st2" { "ab" } else { id })
+            })
+            .collect();
+        let b = batch.schema().index_of("bikes").expect("a column");
+        let bikes = batch.column(b).as_any().downcast_ref::<UInt32Array>().expect("counts");
+        let with_a_bike: UInt32Array = (0..bikes.len())
+            .map(|k| Some(if ids.value(k) == "st2" { 1 } else { bikes.value(k) }))
+            .collect();
+        let mut columns: Vec<ArrayRef> = batch.columns().to_vec();
+        columns[at] = std::sync::Arc::new(edited);
+        columns[b] = std::sync::Arc::new(with_a_bike);
+        writer.write(&RecordBatch::try_new(batch.schema(), columns).expect("a batch")).expect("ok");
+    }
+    writer.close().expect("closed");
+    assert_eq!(moved, 1, "the hand run has one row of st2");
+
+    let (links, warnings) =
+        openmobisim_io_parquet::read_links(&path, &net, r.links.window()).expect("it opens");
+    let id = |name: &str| LinkId::new(net.link_ids().id_of(name).expect("a link"));
+    assert_eq!(links.link, [id("ab"), id("ab"), id("st1")]);
+    assert_eq!(links.bin, [0, 50, 0], "from 25 200, 28 200 and 25 200 s, bins of 60 s");
+    assert_eq!(
+        (&links.cars[..], &links.bikes[..], &links.walkers[..]),
+        (&[0, 0, 3][..], &[1, 0, 0][..], &[1, 1, 0][..])
+    );
+    assert_eq!(links.bikes.iter().sum::<u32>(), 1, "the edited row's bike set aside with it");
+    assert_eq!(warnings.len(), 1, "{warnings:?}");
+    assert!(
+        warnings[0].contains(
+            "1 rows set aside: they hold cars on a link that does not allow cars: ab at 25320"
+        ),
+        "{}",
+        warnings[0]
+    );
+    println!("{}", warnings[0]);
+}

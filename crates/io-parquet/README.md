@@ -87,6 +87,7 @@ on with what agrees:
 | a trip's second row in `trips.parquet` | set aside, the first used |
 | a `mode` that is not car, bike, walk or transit | read as none |
 | a `links.parquet` row whose bin is off the record's grid or outside its window | set aside |
+| a `links.parquet` row with cars on a link that does not allow cars (a run writes none) | set aside |
 | a (link, bin) given twice | the first row used |
 | a trip whose legs are misnumbered (not 0 to n − 1 once each), of an unknown kind, without a value their kind needs, or naming a link, run or stop the inputs do not hold | left out of the journeys |
 | a `walk_gap` or `transfer_walk` without its seconds | its seconds unknown (`NaN`): the trip's legs show no split, its door-to-door time stays |
@@ -96,7 +97,8 @@ A trip left out is in no pair of the map and in no transit count; both pages' fo
 many ("N trips left out: their routes do not agree with the trips table"). Undetectable, said
 once: a value changed in place (a time, a count, a stop, `stopped_by_rule`), and a link bin
 replaced by a divisor of it (every bin of 60 s also starts on a grid of 30 s; 60 s replaced by
-120 s is seen only where a bin starts on an odd minute).
+120 s is seen only where a bin starts on an odd minute). Bikes or walkers recorded on a link that
+does not allow them are read as written: nothing in the pages depends on their speed there.
 
 ## Outputs
 `Written`: one `Table` (its `path` and its `rows`) per Parquet file, and `record`, the path of
@@ -301,6 +303,10 @@ is text in its `modes` cell, read like any other text: the reader knows no mode.
   `would_change_share` null and `gap` 0; each read with the input reader and read back by
   `read_iterations` as written, without a warning; the logit's file with the column taken out
   opens, every other value as written, the share unknown (`NaN`), one warning naming the column.
+- **Cars on a link without cars** (`tests/hand_run.rs`): the hand run's links table with the row
+  of `st2` (3 cars entering from 25 320 s) given to `ab`, which does not allow cars, and given a
+  bike: it opens, that row set aside whole (its bike with its cars: 1 bike read in all, the hand
+  run's), the three others read as written, and exactly one warning names it (`ab at 25320`).
 - **Routes on a timetable** (`tests/routes.rs`): a trip walks 100 m to its stop (75 s), rides
   r0 from s1 (200 s) to s3 (400 s), walks the 30 s footpath to s3b, rides r1 from s3b (500 s)
   to s4 (600 s), walks 0 m: five rows read with the Arrow reader alone (kinds, seconds 75, 30

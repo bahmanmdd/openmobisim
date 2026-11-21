@@ -13,8 +13,9 @@
 //!   number is not the number the record says the run dropped; a trip's second row is set aside
 //!   (the first is used); a `mode` that is not a mode is read as none.
 //! - `links.parquet`: a row whose bin does not start on the window's grid, or starts outside the
-//!   window, is set aside; a (link, bin) given twice, the first row is used. The rows are returned
-//!   in link then bin order.
+//!   window, is set aside; a row with cars on a link that does not allow cars (a run writes none)
+//!   is set aside; a (link, bin) given twice, the first row is used. The rows are returned in link
+//!   then bin order.
 //! - `routes.parquet`: a trip whose legs are misnumbered (not 0 to n − 1, each once), of an
 //!   unknown kind, without a value their kind needs, or naming a link, a run or a stop the inputs
 //!   do not hold, is left out of the journeys; a `walk_gap` or `transfer_walk` without its seconds
@@ -24,7 +25,9 @@
 //!   share was reported, is read with the share unknown (`NaN`).
 //!
 //! What the readers cannot see: a value changed in place (a time, a count, a stop), and a link
-//! bin replaced by a divisor of it (every bin of 60 s also starts on a grid of 30 s).
+//! bin replaced by a divisor of it (every bin of 60 s also starts on a grid of 30 s). Bikes or
+//! walkers recorded on a link that does not allow them are read as written: nothing in the pages
+//! depends on their speed there.
 
 use core::fmt;
 use std::collections::HashMap;
@@ -423,7 +426,7 @@ pub fn read_links(
         (r.u32s("cars"), r.floats("car_time_s"), r.u32s("bikes"), r.u32s("walkers"));
     let (origin, step) = (window.origin().get(), window.step_seconds());
     let mut rows: Vec<(LinkId, u32, usize)> = Vec::with_capacity(r.rows());
-    let mut off = Vec::new();
+    let (mut off, mut no_cars) = (Vec::new(), Vec::new());
     for i in 0..r.rows() {
         let id = ids[i].unwrap_or("");
         let link = network
@@ -435,11 +438,12 @@ pub fn read_links(
             .filter(|d| d % step == 0)
             .map(|d| d / step)
             .filter(|&b| b < window.n_steps());
+        let at = || format!("{id} at {}", starts[i].map_or("null".into(), |s| s.to_string()));
+        let car_free = !network.modes(LinkId::new(link)).contains(Mode::Car);
         match bin {
+            Some(_) if car_free && cars[i].unwrap_or_default() > 0 => no_cars.push(at()),
             Some(b) => rows.push((LinkId::new(link), b, i)),
-            None => {
-                off.push(format!("{id} at {}", starts[i].map_or("null".into(), |s| s.to_string())))
-            }
+            None => off.push(at()),
         }
     }
     rows.sort_by_key(|&(l, b, i)| (l, b, i));
@@ -463,6 +467,7 @@ pub fn read_links(
     let mut warnings = Vec::new();
     for (items, what) in [
         (off, "rows set aside: their bin does not start on the record's grid inside its window"),
+        (no_cars, "rows set aside: they hold cars on a link that does not allow cars"),
         (twice, "(link, bin) rows given twice, the first used"),
     ] {
         if !items.is_empty() {

@@ -47,6 +47,11 @@ entries, exits and arrivals alike. Bins are steps of the window (`StepIndex`).
 - The window is half-open. Events run while their instant is before the end. A crossing that
   starts before the end is recorded at its entry with its exact exit, even one past the end;
   none starts at or after the end. A trip arriving at or after the end is unfinished.
+  So a traveller pricing a route reads a link it would enter at or after the end without the
+  cars that would enter it at or after the end: only those that entered before the end are ahead
+  of it, and the costs of trips still travelling at the end read too low. Where every car
+  finishes within the window (the unfinished count 0, the condition that makes means
+  comparable), no crossing is missing and this does not arise.
 - Link time reading: a car entering a link at time `t` leaves at the later of two instants:
   `t` plus the free-flow time, and one headway after the car ahead of it. The headway is
   3 600 s divided by the link's capacity in vehicles per hour. Which recorded car is ahead of

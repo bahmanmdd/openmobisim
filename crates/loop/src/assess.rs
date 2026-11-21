@@ -190,6 +190,20 @@ fn duality_gap(
     if least > 0.0 { (paid - least) / least } else { f64::NAN }
 }
 
+/// The stopping rule's window: the number of last iterations, this one included, over which it
+/// reads the range of the mean trip time. A fixed constant of the rule, not a parameter of a run.
+const STOP_WINDOW: usize = 5;
+
+/// The stopping rule's largest share of trips with an alternative for which the search found a
+/// cheaper one (`found_share`), a fraction: 0.005 is 0.5 % of those trips. A fixed constant of
+/// the rule, not a parameter of a run.
+const STOP_FOUND_SHARE: f64 = 0.005;
+
+/// The stopping rule's largest range of the mean trip time over its window, greatest less least,
+/// as a fraction of this iteration's mean trip time: 0.003 is 0.3 % of it. A fixed constant of the
+/// rule, not a parameter of a run.
+const STOP_MEAN_RANGE: f64 = 0.003;
+
 /// The stopping rule, read after an iteration: stop when at most 0.5 % of trips found a cheaper
 /// alternative in its search and the range of the mean trip time over the last five iterations
 /// (this one included), greatest less least, is at most 0.3 % of this one's; never while one of
@@ -197,19 +211,19 @@ fn duality_gap(
 #[must_use]
 pub fn stops(iterations: &[Iteration]) -> bool {
     let Some(last) = iterations.last() else { return false };
-    if iterations.len() < 5
+    if iterations.len() < STOP_WINDOW
         || last.found_share.is_nan()
-        || last.found_share > 0.005
+        || last.found_share > STOP_FOUND_SHARE
         || !last.mean_trip_time.is_finite()
     {
         return false;
     }
-    let tail = &iterations[iterations.len() - 5..];
+    let tail = &iterations[iterations.len() - STOP_WINDOW..];
     if !tail.iter().all(|it| it.mean_trip_time.is_finite()) {
         return false;
     }
     let (lo, hi) = tail.iter().fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), it| {
         (lo.min(it.mean_trip_time), hi.max(it.mean_trip_time))
     });
-    hi - lo <= 0.003 * last.mean_trip_time
+    hi - lo <= STOP_MEAN_RANGE * last.mean_trip_time
 }

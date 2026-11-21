@@ -30,6 +30,11 @@
 //!    [`LinkTimes::exit`] returns the reader for the next link, which carries that car.
 //!
 //! Before the link's first car, and on a link nobody entered by car: free flow, `t + τ`.
+//! The loading records no crossing that begins at or after the window's end, so a traveller
+//! reads a link it would enter at or after the end without the cars that would enter it at or
+//! after the end: only those that entered before the end are ahead of it, and the costs of trips
+//! still travelling at the end read too low. Where every car finishes within the window, no
+//! crossing is missing and this does not arise.
 //! Nothing is interpolated and no bin is read. A traveller walking its own route from its own
 //! departure reads the time it took, to the bit. On a route it did not take, the reading can
 //! be one headway off where its own car, removed from a queue, would have been replaced by a
