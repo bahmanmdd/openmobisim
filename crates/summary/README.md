@@ -41,10 +41,19 @@ same title gives the same bytes. Every number a test reads carries a `data-k` na
   delay %).
 - **Transit, bikes and walking**: boardings; rides per transit trip, with the share that change
   vehicle; kilometres cycled; kilometres walked on the network.
-- **Convergence**: the mean trip by iteration and the iterations table (mean trip min, switched %,
-  offered %, found cheaper %, unfinished trips, duality gap %), and which of the stopping rule and
-  the iteration cap ended the run (or that the record does not say, for a record without
-  `stopped_by_rule`). The gap is reported, never judged.
+- **Convergence**: the mean trip by iteration and the iterations table (mean trip min,
+  switched %, offered %, found cheaper %, would change %, unfinished trips, duality gap %), and which of
+  the stopping rule and the iteration cap ended the run (or that the record does not say, for a
+  record without `stopped_by_rule`). Would change is, under the logit, the share of the trips
+  with an alternative that the logit, choosing again at the costs the iteration measured, would
+  put on another alternative than the one they hold; the duality gap is reported under the
+  least-cost choice. Each is reported, never judged, and the one a model does not report shows
+  as `—`, as every missing value of the page does. Under the least-cost choice the routes in use
+  cost the same at the equilibrium, so the share of travellers not on their lowest-cost
+  alternative does not settle, and the gap, which weighs each traveller by what it would save,
+  is the measure. Under the logit the model puts a share of travellers on an alternative that is
+  not their lowest-cost one, so the gap does not reach zero, and the share who would change is
+  the measure.
 - **Computation time**: the five stages (search, choose, load, measure, assess), seconds summed over
   the iterations; the network's links, nodes and kilometres by mode, and its timetable's stops and
   runs.

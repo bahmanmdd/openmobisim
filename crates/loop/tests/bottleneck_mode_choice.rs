@@ -123,8 +123,10 @@ impl Outcome {
     }
 }
 
-/// The run at `scale` times the population (demand and capacity scaled together).
-fn bottleneck(scale: usize, parameters: &Parameters) -> Outcome {
+/// The case at `scale` times the population (demand and capacity scaled together): the street
+/// and the path, and the travellers' rows and demand. With `aside`, the network also holds a
+/// walk-only link 10 km to the north, W1→W2, which none of the travellers' modes reaches.
+fn street_and_path(scale: usize, aside: bool) -> (Network, Vec<TripRow>, Demand) {
     let b = Parameters::DEFAULT_COEFFICIENTS;
     assert_eq!((COLUMNS[0], COLUMNS[1], COLUMNS[12], COLUMNS[13]), DRIVE_RIDE_CAR_BIKE);
     assert!(b[0].to_bits() == 0.1_f64.to_bits() && b[1].to_bits() == 0.1_f64.to_bits());
@@ -138,10 +140,14 @@ fn bottleneck(scale: usize, parameters: &Parameters) -> Outcome {
         signal_at_downstream_end: false,
     };
     let street = car_link(2_000.0, 50.0, CAPACITY_VEH_H * scale as f64);
-    let net = network(
-        &[("O", 0.0, 0.0), ("D", 1_500.0, 0.0)],
-        &[("street", "O", "D", street), ("path", "O", "D", path)],
-    );
+    let walk = LinkRow { modes: ModeSet::of(&[Mode::Walk]), ..path };
+    let mut nodes = vec![("O", 0.0, 0.0), ("D", 1_500.0, 0.0)];
+    let mut links = vec![("street", "O", "D", street), ("path", "O", "D", path)];
+    if aside {
+        nodes.extend([("W1", 0.0, 10_000.0), ("W2", 1_500.0, 10_000.0)]);
+        links.push(("walk", "W1", "W2", walk));
+    }
+    let net = network(&nodes, &links);
     // RATIO × 1 200 veh/h is one traveller a second at once the population.
     let rows: Vec<TripRow> = (0..DEMAND_S as usize * scale)
         .map(|i| TripRow {
@@ -155,6 +161,12 @@ fn bottleneck(scale: usize, parameters: &Parameters) -> Outcome {
         .collect();
     let dem = Demand::build(&rows, &["default".to_string()], &net, None, Metres(1_500.0))
         .expect("a demand");
+    (net, rows, dem)
+}
+
+/// The run at `scale` times the population (demand and capacity scaled together).
+fn bottleneck(scale: usize, parameters: &Parameters) -> Outcome {
+    let (net, rows, dem) = street_and_path(scale, false);
     let started = std::time::Instant::now();
     // Six hours: at iteration 0 (free-flow shares) the last car waits about 2.3 h.
     let result: Run =
@@ -539,4 +551,168 @@ fn a_run_at_another_time_coefficient_is_refused_by_the_tolerance() {
     );
     assert!((time - 706.6).abs() <= 4.0 * third_hour_time_sd(SCALE), "the other theory holds");
     assert!((time - STEADY_CAR_S).abs() > 4.0 * third_hour_time_sd(SCALE), "and is refused");
+}
+
+/// Who would change after iteration 0, by hand, at once the population (10 800 travellers, one
+/// a second for three hours).
+///
+/// At iteration 0 everyone chooses at free flow. A traveller's choice compares its two costs
+/// with random numbers fixed for the run: it takes the car when `ε_car − ε_bike`, a logistic
+/// number of its own, exceeds the cost difference, that is when its own uniform number
+/// `u = 1 − F(ε_car − ε_bike)` (`F` the logistic distribution function) is below the logit car
+/// share at those costs. At free flow the car share is
+/// `p0 = 1 / (1 + exp((144 − 360) / 600)) = 0.58904`, so the travellers with `u < p0` take the
+/// car. The cars join the bottleneck at the rate `q p0` against its capacity `c = q / 3`: the
+/// queue grows along departure time at `(q / c) p0 − 1 = 3 p0 − 1 = 0.76712` seconds per
+/// second, and a car departing at `t` meets the delay `w(t) = 0.76712 t`. The measure stage
+/// prices every traveller's car, taken or not, at the delay behind the cars that entered before
+/// it, the point queue's own expression (no bin is read: `openmobisim-loading`'s link times), so
+/// a bike holder reads `w(t)` too. At that delay the logit car share is
+/// `p(w) = 1 / (1 + exp((144 + w − 360) / 600))`, at most `p0`. A car holder (`u < p0`) would
+/// change exactly when `u ≥ p(w(t))`; a bike holder (`u ≥ p0 ≥ p(w(t))`) never, the car having
+/// only become costlier. A traveller's `u` is independent of the queue ahead of it (its own car
+/// is never ahead of it), so the share that would change has the mean
+/// `Σ_i (p0 − p(w(t_i))) / N` over the `N = 10 800` departures `t_i = 0, 1, …, 10 799` s:
+/// 0.52461, and the binomial standard deviation `√(Σ_i π_i (1 − π_i)) / N`, `π_i = p0 − p(w(t_i))`:
+/// 0.004633.
+///
+/// The queue is itself random (each traveller's car is a draw), so the delays met scatter about
+/// `w(t)`, most where `p(w)` still changes, in the first quarter hour. This adds a spread of
+/// about 0.7 of the binomial standard deviation: a replay of the point queue over 3 000 draws of
+/// the travellers' numbers (a Python script outside the simulator, the queue of each draw
+/// replayed car by car by `max(t + 144, the car ahead's exit + 3 s)`) gave a total spread of 1.24
+/// binomial standard deviations, its mean 0.004 of them from the hand value. Judged within 4
+/// binomial standard deviations, 3.2 of the total spread.
+///
+/// For bikes: the bike is the alternative whose cost does not change; nobody holding it would
+/// change.
+#[test]
+fn after_iteration_0_the_share_that_would_change_is_the_hand_value_within_sampling_error() {
+    let (net, rows, dem) = street_and_path(1, false);
+    let n = rows.len();
+    assert_eq!(n, DEMAND_S as usize, "one traveller a second");
+    let p = |w: f64| 1.0 / (1.0 + ((CAR_S + w - BIKE_S) / 600.0).exp());
+    let p0 = p(0.0);
+    let rate = (RATIO * p0) - 1.0;
+    let by_hand: Vec<f64> = (0..n).map(|t| p0 - p(rate * t as f64)).collect();
+    let want = by_hand.iter().sum::<f64>() / n as f64;
+    let sd = by_hand.iter().map(|x| x * (1.0 - x)).sum::<f64>().sqrt() / n as f64;
+    assert!((p0 - 0.58904).abs() < 5e-6 && (rate - 0.76712).abs() < 5e-6, "{p0}, {rate}");
+    assert!((want - 0.52461).abs() < 5e-6 && (sd - 0.004633).abs() < 5e-7, "{want}, {sd}");
+    let parameters = Parameters { iteration_cap: 1, ..Parameters::defaults(1) };
+    let started = std::time::Instant::now();
+    let result = run(&net, &dem, None, (Second(0), Second(6 * 3_600)), &parameters).expect("a run");
+    let zero = &result.iterations[0];
+    println!(
+        "iteration 0: would change {:.5} against {want:.5} ± {sd:.5} ({:+.2} standard deviations); the run {:.2} s",
+        zero.would_change_share,
+        (zero.would_change_share - want) / sd,
+        started.elapsed().as_secs_f64()
+    );
+    assert!(
+        (zero.would_change_share - want).abs() <= 4.0 * sd,
+        "would change {} against {want} ± 4 × {sd}",
+        zero.would_change_share
+    );
+}
+
+/// Who would change after iteration 1, by hand: travellers move both ways, from more than one
+/// mode, and a tenth more trips have no alternative. The case of the test above at once the
+/// population (one traveller a second for three hours, `N = 10 800`, `u` each traveller's own
+/// uniform number, `p(w)`, `p0` and `w0(t) = 0.76712 t` as there), plus 1 080 trips open to
+/// transit alone, one every 10 s, which without a timetable have no alternative: they are not in
+/// the share, which is over the 10 800 trips with an alternative. Transit's ends are linked by
+/// walking, so the network holds a walk-only link 10 km aside, which no car or bike reaches.
+///
+/// Iteration 1. Each traveller is offered a new choice with probability 1/2, by a draw of its
+/// own. One not offered keeps its choice of iteration 0, the car when `u < p0`; one offered
+/// chooses at the costs iteration 0 measured, the car when `u < p(w0(t))`. So the car share of
+/// the departures at `t` is `s1(t) = (p0 + p(w0(t))) / 2`, and the queue met by a car departing
+/// at `t` follows `dw1/dt = (q / c) s1(t) − 1 = 3 s1(t) − 1` while it is above 0 (else it stays
+/// at 0), `w1(0) = 0`. The test integrates this by steps of 0.01 s: the queue rises to 690 s
+/// near `t = 2 217 s`, where `s1 = 1/3`, then falls at up to 0.116 s per second and is empty
+/// from about `t = 8 960 s`.
+///
+/// Who would change at the costs iteration 1 measured, `p1(t) = p(w1(t))`:
+/// - not offered, holding the car when `u < p0`: since `w1 ≥ 0`, `p1 ≤ p0`, and those with `u`
+///   between `p1` and `p0` would move from the car to the bike;
+/// - offered, holding the car when `u < p(w0(t))`: those with `u` between `p(w0(t))` and `p1`
+///   would move, from the bike to the car where the queue shrank (`w1 < w0`, most of the
+///   departures), from the car to the bike where it grew.
+///
+/// So a traveller departing at `t` would change with probability
+/// `π(t) = (p0 − p1(t)) / 2 + |p(w0(t)) − p1(t)| / 2`, and the share has the mean
+/// `Σ_t π(t) / N` = 0.26231, of which 0.19330 are moves from the bike to the car; its binomial
+/// standard deviation `√(Σ_t π (1 − π)) / N` is 0.004184. Each traveller's `u` and its draw of
+/// iteration 1 are independent of the queues ahead of it (its own car is never ahead of it).
+/// The queues themselves are random; a replay of both iterations' point queues over 1 000 draws
+/// of the travellers' numbers (the Python script of the test above) gave a total spread of 1.09
+/// binomial standard deviations, its mean 0.05 of them from the hand value. Judged within 4
+/// binomial standard deviations, 3.7 of the total spread. A share taken over every trip, the
+/// 1 080 without an alternative included, would be 0.2385, 5.7 binomial standard deviations off;
+/// one that counted only the moves to the car or only those away from it would be off by 0.069 or
+/// 0.193.
+///
+/// For bikes: the bike holders who would take the car are most of the share.
+#[test]
+fn after_iteration_1_travellers_would_change_both_ways_and_the_share_is_the_hand_value() {
+    let (net, mut rows, _) = street_and_path(1, true);
+    let n = rows.len();
+    assert_eq!(n, DEMAND_S as usize, "one traveller a second");
+    let without = DEMAND_S as usize / 10;
+    rows.extend((0..without).map(|i| TripRow {
+        id: format!("x{i:07}"),
+        origin: at(0.0, 0.0),
+        destination: at(1_500.0, 0.0),
+        departure: Second((10 * i) as u32),
+        class: "default".to_string(),
+        modes: ModeSet::of(&[Mode::Transit]),
+    }));
+    let dem = Demand::build(&rows, &["default".to_string()], &net, None, Metres(1_500.0))
+        .expect("a demand");
+    // The hand value: the queue of iteration 1 by steps of 0.01 s, read at each whole second.
+    let p = |w: f64| 1.0 / (1.0 + ((CAR_S + w - BIKE_S) / 600.0).exp());
+    let (p0, rate) = (p(0.0), RATIO * p(0.0) - 1.0);
+    let mut w1 = vec![0.0; n];
+    let mut w = 0.0_f64;
+    for (t, slot) in w1.iter_mut().enumerate() {
+        *slot = w;
+        for step in 0..100 {
+            let at = t as f64 + f64::from(step) / 100.0;
+            let s1 = (p0 + p(rate * at)) / 2.0;
+            w = (w + (RATIO * s1 - 1.0) / 100.0).max(0.0);
+        }
+    }
+    let pi: Vec<f64> = (0..n)
+        .map(|t| {
+            let (pw0, p1) = (p(rate * t as f64), p(w1[t]));
+            (p0 - p1) / 2.0 + (pw0 - p1).abs() / 2.0
+        })
+        .collect();
+    let to_car = (0..n).map(|t| (p(w1[t]) - p(rate * t as f64)).max(0.0) / 2.0).sum::<f64>();
+    let want = pi.iter().sum::<f64>() / n as f64;
+    let sd = pi.iter().map(|x| x * (1.0 - x)).sum::<f64>().sqrt() / n as f64;
+    println!(
+        "by hand: the queue of iteration 1 peaks at {:.1} s; would change {want:.5} ± {sd:.6}, of which bike to car {:.5}",
+        w1.iter().copied().fold(0.0, f64::max),
+        to_car / n as f64
+    );
+    assert!((want - 0.26231).abs() < 5e-5 && (sd - 0.004184).abs() < 5e-6, "{want}, {sd}");
+    assert!((to_car / n as f64 - 0.19330).abs() < 5e-5, "{to_car}");
+    let parameters = Parameters { iteration_cap: 2, ..Parameters::defaults(1) };
+    let started = std::time::Instant::now();
+    let result = run(&net, &dem, None, (Second(0), Second(6 * 3_600)), &parameters).expect("a run");
+    let one = &result.iterations[1];
+    assert_eq!(one.without_alternative, without as u64, "the trips open to transit alone");
+    println!(
+        "iteration 1: would change {:.5} against {want:.5} ± {sd:.5} ({:+.2} standard deviations); the run {:.2} s",
+        one.would_change_share,
+        (one.would_change_share - want) / sd,
+        started.elapsed().as_secs_f64()
+    );
+    assert!(
+        (one.would_change_share - want).abs() <= 4.0 * sd,
+        "would change {} against {want} ± 4 × {sd}",
+        one.would_change_share
+    );
 }

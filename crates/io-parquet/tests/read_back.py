@@ -43,7 +43,7 @@ ITERATIONS_SCHEMA = [
     ("unfinished", U64, False), ("without_alternative", U64, False),
     ("without_transit", U64, False), ("without_stop", U64, False),
     ("offered_share", F64, True), ("switch_share", F64, True), ("found_share", F64, True),
-    ("gap", F64, True),
+    ("would_change_share", F64, True), ("gap", F64, True),
 ] + [(s, F64, False) for s in STAGES]
 ROUTES_SCHEMA = [
     ("trip_id", STR, False), ("leg", U32, False), ("kind", STR, False), ("seconds", F64, True),
@@ -87,12 +87,12 @@ FINISHED = ["bike", "car1", "car2", "car3", "walk"]
 # 5 finished, 1 unfinished, 1 without an alternative; at iteration 0 all six with an
 # alternative choose (offered 1), after it each is offered with chance 1 / (k + 1) by its own
 # draw, so the share offered is one of 0, 1/6, ..., 1 (SIXTHS: any of them); nobody switches;
-# at iteration 0 all six found their first, after it nothing new; each takes its set's least:
-# gap 0. `lost` is the one trip with transit open to it: no journey offered (1), no stop in
-# reach (1).
+# at iteration 0 all six found their first, after it nothing new; under the least cost the share
+# that would change is not reported (null); each takes its set's least: gap 0. `lost` is the one
+# trip with transit open to it: no journey offered (1), no stop in reach (1).
 SIXTHS = [i / 6 for i in range(7)]
 ITERATIONS = [
-    (k, 445.2, 5, 1, 1, 1, 1, offered, 0.0, found, 0.0)
+    (k, 445.2, 5, 1, 1, 1, 1, offered, 0.0, found, N, 0.0)
     for k, offered, found in [(0, 1.0, 1.0), (1, SIXTHS, 0.0), (2, SIXTHS, 0.0)]
 ]
 

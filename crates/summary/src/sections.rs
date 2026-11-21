@@ -483,6 +483,7 @@ pub(crate) fn convergence(s: &Summarised<'_>) -> String {
                 Cell::named(k("switched"), num(100.0 * i.switch_share, 2)),
                 Cell::named(k("offered"), num(100.0 * i.offered_share, 2)),
                 Cell::named(k("found"), num(100.0 * i.found_share, 2)),
+                Cell::named(k("would"), num(100.0 * i.would_change_share, 2)),
                 Cell::named(
                     k("unfinished"),
                     count(usize::try_from(i.unfinished).unwrap_or(usize::MAX)),
@@ -497,6 +498,7 @@ pub(crate) fn convergence(s: &Summarised<'_>) -> String {
         "switched (%)",
         "offered (%)",
         "found cheaper (%)",
+        "would change (%)",
         "unfinished (trips)",
         "duality gap (%)",
     ];
@@ -507,9 +509,16 @@ pub(crate) fn convergence(s: &Summarised<'_>) -> String {
     };
     format!(
         "<div class=\"grid2\"><div>{chart}</div><div>{}</div></div><p class=\"note\">{} \
-         after {} iterations. Iteration 0 chooses on free-flow times. The duality gap is the chosen \
-         alternatives' cost over the least in each set, less one, summed over the trips with an \
-         alternative: reported, not judged.</p>",
+         after {} iterations. Iteration 0 chooses on free-flow times. Each model reports the one \
+         measure that can reach zero, never judged; the other shows as —. Under the least-cost \
+         choice it is the duality gap, the chosen alternatives' cost over the least in each set, \
+         less one, summed over the trips with an alternative: the routes in use cost the same at \
+         the equilibrium, so the share of travellers not on their lowest-cost alternative does \
+         not settle, and the gap, which weighs each traveller by what it would save, is the \
+         measure. Under the logit it is the share who would change, the trips with an \
+         alternative that the logit, choosing again at the costs the iteration measured, would \
+         put on another alternative than the one they hold: the logit puts a share of travellers \
+         on an alternative that is not their lowest-cost one, so the gap does not reach zero.</p>",
         table(&head, rows, 1),
         by,
         its.len()

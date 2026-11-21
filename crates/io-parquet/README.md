@@ -67,7 +67,9 @@ pages need:
   `Route { mode, links }`, `Ride(Ride)`, `TransferWalk(Footpath)`, the transit crate's two
   types); none without an alternative; `None` for a trip left out of the journeys (below). Each
   distinct link id is looked up once.
-- `Iteration`s, the loop's rows, in the file's order.
+- `Iteration`s, the loop's rows, in the file's order, and the warnings. A file without
+  `would_change_share`, written by a run before that share was reported, opens with the share
+  unknown (`NaN`) and a warning naming the column.
 - `warnings`: what was found and set aside, each naming its file and the first five trips or
   links with their count, for the caller to show.
 
@@ -108,11 +110,20 @@ clock, null where there is no value:
 - `links.parquet`, one row per (link, bin of entry) that someone entered, in link id order
   then bin: `link_id` (Utf8), `bin_start_s` (UInt32), `cars` (UInt32), `car_time_s`,
   `first_exit_s`, `last_exit_s` (Float64, nullable), `bikes`, `walkers` (UInt32).
-- `iterations.parquet`, one row per iteration in order: `iteration` (UInt32),
-  `mean_trip_time_s` (Float64, nullable), `finished`, `unfinished`, `without_alternative`,
-  `without_transit`, `without_stop` (UInt64), `offered_share`, `switch_share`, `found_share`,
+- `iterations.parquet`, one row per iteration in order: `iteration` (UInt32), `mean_trip_time_s`
+  (Float64, nullable), `finished`, `unfinished`, `without_alternative`, `without_transit`,
+  `without_stop` (UInt64), `offered_share`, `switch_share`, `found_share`, `would_change_share`,
   `gap` (Float64, nullable), `search_s`, `choose_s`, `load_s`, `measure_s`, `assess_s`
-  (Float64).
+  (Float64). `would_change_share` is, under the logit, the share of trips with an alternative
+  that the logit, choosing again over their own set at the costs the iteration measured, would
+  put on another alternative than the one they hold (0 at the fixed point of the iterations),
+  null under the least-cost choice; `gap` is the relative duality gap under the least-cost
+  choice, null under the logit. Under the least-cost choice the routes in use cost the same at
+  the equilibrium, so the share of travellers not on their lowest-cost alternative does not
+  settle, and the gap, which weighs each traveller by what it would save, is the measure. Under
+  the logit the model puts a share of travellers on an alternative that is not their lowest-cost
+  one, so the gap does not reach zero, and the share who would change is the measure.
+  (`crates/loop/README.md`, "Assess".)
 - `routes.parquet`, what each trip took at the last iteration, one row per trip and leg, in
   trip id order then leg order; a trip without an alternative has no row, and routes nobody took
   are not written: `trip_id` (Utf8), `leg` (UInt32, from 0), `kind` (Utf8), `seconds` (Float64,
@@ -204,8 +215,9 @@ fractions.
 - **Null, never `NaN`.** The loop's `NaN` means "no value" in exactly these places, written as
   null: `arrival_s` and `travel_time_s` of a trip unfinished or without an alternative; `cost`
   of a trip without an alternative; `mean_trip_time_s` when no trip finished; `offered_share`,
-  `switch_share`, `found_share` and `gap` when no trip has an alternative, and `gap` when the least costs sum
-  to 0. In the links table `car_time_s`, `first_exit_s` and `last_exit_s` are null where `cars`
+  `switch_share`, `found_share`, `would_change_share` and `gap` when no trip has an alternative;
+  `would_change_share` under the least-cost choice; `gap` under the logit and when the least
+  costs sum to 0. In the links table `car_time_s`, `first_exit_s` and `last_exit_s` are null where `cars`
   is 0 (the loading holds 0 for the time and `NaN` for the exits there).
 - `mode` is null exactly for a trip without an alternative.
 - A crossing is filed under the bin its vehicle entered the link in, with its exact exit, even
@@ -283,6 +295,12 @@ is text in its `modes` cell, read like any other text: the reader knows no mode.
   difference (CI runs it):
   `python3 crates/io-parquet/tests/read_record.py target/tmp/io-parquet-hand-run`.
   A second write of `run.toml` is byte-identical (`hand_run.rs`).
+- **Who would change** (`tests/hand_run.rs`): the hand run under the logit, where each set holds
+  one alternative and nobody would change: `would_change_share` 0 at each of the three
+  iterations, right after `found_share`, and `gap` null; under the least cost,
+  `would_change_share` null and `gap` 0; each read with the input reader and read back by
+  `read_iterations` as written, without a warning; the logit's file with the column taken out
+  opens, every other value as written, the share unknown (`NaN`), one warning naming the column.
 - **Routes on a timetable** (`tests/routes.rs`): a trip walks 100 m to its stop (75 s), rides
   r0 from s1 (200 s) to s3 (400 s), walks the 30 s footpath to s3b, rides r1 from s3b (500 s)
   to s4 (600 s), walks 0 m: five rows read with the Arrow reader alone (kinds, seconds 75, 30

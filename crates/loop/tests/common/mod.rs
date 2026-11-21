@@ -427,12 +427,12 @@ pub fn seed_mean(label: &str, v: &[f64]) -> f64 {
 /// Print the iterations table (run with `--nocapture` to see it).
 pub fn print_iterations(run: &Run) {
     println!(
-        "{:>3} {:>10} {:>7} {:>5} {:>7} {:>7} {:>7} {:>8} {:>7}",
-        "it", "mean_s", "fin", "unf", "offer", "switch", "found", "gap", "sec"
+        "{:>3} {:>10} {:>7} {:>5} {:>7} {:>7} {:>7} {:>7} {:>8} {:>7}",
+        "it", "mean_s", "fin", "unf", "offer", "switch", "found", "would", "gap", "sec"
     );
     for it in &run.iterations {
         println!(
-            "{:>3} {:>10.2} {:>7} {:>5} {:>7.4} {:>7.4} {:>7.4} {:>8.5} {:>7.3}",
+            "{:>3} {:>10.2} {:>7} {:>5} {:>7.4} {:>7.4} {:>7.4} {:>7.4} {:>8.5} {:>7.3}",
             it.iteration,
             it.mean_trip_time,
             it.finished,
@@ -440,6 +440,7 @@ pub fn print_iterations(run: &Run) {
             it.offered_share,
             it.switch_share,
             it.found_share,
+            it.would_change_share,
             it.gap,
             it.stage_seconds.iter().sum::<f64>()
         );

@@ -422,7 +422,7 @@ fn the_routes_file_has_18_rows_and_each_table_reads_back_as_written() {
         (r.links.cars(), r.links.bikes(), r.links.walkers())
     );
     assert!(same(&l.car_time, &r.links.car_time().iter().map(|d| d.get()).collect::<Vec<_>>()));
-    let iterations = openmobisim_io_parquet::read_iterations(
+    let (iterations, _) = openmobisim_io_parquet::read_iterations(
         &folder("io-parquet-routes").join("iterations.parquet"),
     )
     .expect("read back");
@@ -443,4 +443,89 @@ fn the_routes_file_has_18_rows_and_each_table_reads_back_as_written() {
         assert!(taken, "trip {trip}");
     }
     assert!(tables.warnings.is_empty(), "{:?}", tables.warnings);
+}
+
+/// Who would change, written and read back. Each model reports the one measure that can reach 0.
+/// The hand run under the logit (time alone, the same coefficients): every trip has one
+/// alternative, which the logit chooses at any cost, so nobody would change: `would_change_share`
+/// is 0 at each of the three iterations, the column right after `found_share`; the gap is not
+/// reported under the logit: null. The hand run as it is, under the least cost: the share is not
+/// reported, null, and the gap is 0 (each trip takes its set's least). `read_iterations` reads
+/// both back as written (null as `NaN`), without a warning. The logit's file without the column,
+/// as a run written before that share was reported has it, opens: every other value as written,
+/// the share unknown (`NaN`), and one warning naming the column.
+#[test]
+fn the_share_that_would_change_is_written_and_read_back_and_a_file_without_it_opens_with_a_warning()
+{
+    use openmobisim_io_parquet::{Cells, read_iterations, read_table};
+    use parquet::arrow::ArrowWriter;
+    use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
+
+    let net = network();
+    let dem = demand(&net);
+    let p = Parameters { choice: ChoiceModel::Logit, ..parameters() };
+    let r = run(&net, &dem, None, (Second(START), Second(START + 3_600)), &p).expect("a run");
+    let written = write(&r, &net, &dem, &given(&p, &dem), &folder("io-parquet-would-change"))
+        .expect("written");
+    let table = read_table(&written.iterations.path).expect("read");
+    let names = table.names();
+    let at = |name: &str| names.iter().position(|n| n == name).expect("a column");
+    assert_eq!(at("would_change_share"), at("found_share") + 1, "right after found_share");
+    assert_eq!(
+        table.column("would_change_share").expect("a column"),
+        Cells::Float(vec![Some(0.0); 3])
+    );
+    assert_eq!(table.column("gap").expect("a column"), Cells::Float(vec![None; 3]));
+    let (rows, warnings) = read_iterations(&written.iterations.path).expect("read back");
+    assert!(warnings.is_empty(), "{warnings:?}");
+    assert_eq!(format!("{rows:?}"), format!("{:?}", r.iterations), "as written");
+    assert!(rows.iter().all(|it| it.would_change_share == 0.0 && it.gap.is_nan()));
+
+    // The least cost: the share null, the gap 0.
+    let (least_cost, q) = (hand_run(&net, &dem), parameters());
+    let written_least =
+        write(&least_cost, &net, &dem, &given(&q, &dem), &folder("io-parquet-least-cost"))
+            .expect("written");
+    let table = read_table(&written_least.iterations.path).expect("read");
+    assert_eq!(table.column("would_change_share").expect("a column"), Cells::Float(vec![None; 3]));
+    assert_eq!(table.column("gap").expect("a column"), Cells::Float(vec![Some(0.0); 3]));
+    let (rows, warnings) = read_iterations(&written_least.iterations.path).expect("read back");
+    assert!(warnings.is_empty(), "{warnings:?}");
+    assert_eq!(format!("{rows:?}"), format!("{:?}", least_cost.iterations), "as written");
+
+    // The same file without the column.
+    let file = std::fs::File::open(&written.iterations.path).expect("open");
+    let batches: Vec<_> = ParquetRecordBatchReaderBuilder::try_new(file)
+        .expect("a Parquet file")
+        .build()
+        .expect("a reader")
+        .collect::<Result<_, _>>()
+        .expect("batches");
+    let old = folder("io-parquet-without-would-change");
+    std::fs::create_dir_all(&old).expect("a folder");
+    let path = old.join("iterations.parquet");
+    let mut writer: Option<ArrowWriter<std::fs::File>> = None;
+    for mut batch in batches {
+        batch.remove_column(at("would_change_share"));
+        let w = writer.get_or_insert_with(|| {
+            let out = std::fs::File::create(&path).expect("a file");
+            ArrowWriter::try_new(out, batch.schema(), None).expect("a writer")
+        });
+        w.write(&batch).expect("written");
+    }
+    writer.expect("a batch").close().expect("closed");
+    assert!(!read_table(&path).expect("read").names().iter().any(|n| n == "would_change_share"));
+    let (rows, warnings) = read_iterations(&path).expect("it opens");
+    let unknown: Vec<_> = r
+        .iterations
+        .iter()
+        .map(|it| openmobisim_loop::assess::Iteration {
+            would_change_share: f64::NAN,
+            ..it.clone()
+        })
+        .collect();
+    assert_eq!(format!("{rows:?}"), format!("{unknown:?}"), "every other value as written");
+    assert_eq!(warnings.len(), 1, "{warnings:?}");
+    assert!(warnings[0].contains("would_change_share"), "{}", warnings[0]);
+    println!("{}", warnings[0]);
 }

@@ -38,8 +38,14 @@
 //! the offered share is a binomial share of mean `p = 1 / (k + 1)` and standard deviation
 //! `sqrt(p (1 - p) / n)` over the `n` trips; it is judged within 4 of those standard deviations.
 //!
+//! Who would change: after its first choice no traveller's costs change and its random numbers
+//! are fixed for the run, so the model, choosing again over its set at the costs just measured,
+//! picks the alternative it holds. The share that would change is exactly 0 at every iteration
+//! (by hand, not a tolerance). The gap is not a number at every iteration: under the logit it is
+//! not reported.
+//!
 //! For bikes: the bike is one of the modes judged, at 360 s and its closed-form share (0.4027
-//! of the trips without transit).
+//! of the trips without transit), and a bike holder is one of those who would not change.
 
 #![allow(
     clippy::cast_precision_loss,
@@ -283,6 +289,32 @@ fn car_bike_and_walk_take_their_closed_form_shares_and_their_hand_times() {
 fn with_transit_every_traveller_has_its_own_hand_time_and_the_counts_their_expected_sums() {
     let statistic = four_modes(0);
     assert!(statistic < CHI_SQUARE_999_DF3, "chi-square {statistic}");
+}
+
+/// The four modes of the test above: at every iteration the share that would change is exactly 0
+/// and the gap is not a number (the header).
+#[test]
+fn with_costs_that_never_change_nobody_would_change_and_the_logit_has_no_gap() {
+    let net = street_and_path();
+    let tt = timetable();
+    let rows = trips(&[Mode::Car, Mode::Bike, Mode::Walk, Mode::Transit]);
+    let dem = Demand::build(&rows, &["default".to_string()], &net, Some(&tt), Metres(1_500.0))
+        .expect("a demand");
+    let started = std::time::Instant::now();
+    let result = run(&net, &dem, Some(&tt), (Second(0), Second(7_200)), &Parameters::defaults(1))
+        .expect("a run");
+    println!("the run {:.2} s", started.elapsed().as_secs_f64());
+    common::print_iterations(&result);
+    assert_eq!(result.iterations.len(), 5, "the five iterations of the test above");
+    for it in &result.iterations {
+        let k = it.iteration;
+        assert!(
+            it.would_change_share.to_bits() == 0.0_f64.to_bits(),
+            "iteration {k}: would change {}",
+            it.would_change_share
+        );
+        assert!(it.gap.is_nan(), "iteration {k}: gap {}", it.gap);
+    }
 }
 
 /// A measurement, not a test: the statistic over 20 seeds, to see that seed 0 is not a lucky

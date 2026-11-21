@@ -19,7 +19,9 @@
 //!   `walk-late` (at 07:50); 07:15 and 07:30 none.
 //! - Kilometres cycled 1 × 1.5 = 1.5; walked 2 × 1.5 = 3.0.
 //! - Iterations (`read_back.py`): mean 445.2 s = 7.42 min each; at iteration 0 everyone offered
-//!   and found (100 %), nobody switched; 1 unfinished; gap 0.
+//!   and found (100 %), nobody switched; 1 unfinished; gap 0. Under the least cost the share that
+//!   would change is not reported: "—" at every iteration. Under the logit (the last test), each
+//!   set holding one alternative, nobody would change (0.00 %) and the gap is not reported: "—".
 //! - The network: car 2 links, 3 nodes, 3.0 km; bike and walk each 1 link, 2 nodes, 1.5 km.
 
 mod common;
@@ -31,6 +33,7 @@ use openmobisim_demand::demand::Demand;
 use openmobisim_demand::input::TripRow;
 use openmobisim_graph::geometry::{Position, Xy};
 use openmobisim_graph::network::{BuildValues, LinkRow, Network, NetworkBuilder};
+use openmobisim_loop::assess::Iteration;
 use openmobisim_loop::parameters::{ChoiceModel, Parameters};
 use openmobisim_loop::run::run;
 use openmobisim_summary::{Summarised, write};
@@ -98,17 +101,26 @@ fn demand(network: &Network) -> Demand {
 
 /// The hand run's summary, written once to each of `names` in the test folder; their texts.
 fn written_to(names: &[&str]) -> Vec<String> {
+    written_with(ChoiceModel::Deterministic, |_| {}, names)
+}
+
+/// The hand run under the choice model `choice`, its iterations table changed by `edit` (to show
+/// a value the hand run does not give), its summary written once to each of `names` in the test
+/// folder; their texts.
+fn written_with(choice: ChoiceModel, edit: fn(&mut [Iteration]), names: &[&str]) -> Vec<String> {
     let net = network();
     let dem = demand(&net);
     let parameters = Parameters {
         link_bin: 60,
         iteration_cap: 3,
-        choice: ChoiceModel::Deterministic,
+        choice,
         coefficients: vec![TIME_ONLY; 2],
         ..Parameters::defaults(2)
     };
     let window = (Second(START), Second(START + 3_600));
     let r = run(&net, &dem, None, window, &parameters).expect("a run");
+    let mut iterations = r.iterations.clone();
+    edit(&mut iterations);
     let kept = common::kept(
         &r,
         &net,
@@ -123,7 +135,7 @@ fn written_to(names: &[&str]) -> Vec<String> {
         network: &net,
         timetable: None,
         lines: None,
-        iterations: &r.iterations,
+        iterations: &iterations,
         stopped_by_rule: Some(r.stopped_by_rule),
         record,
     };
@@ -244,11 +256,13 @@ fn the_roads_bikes_walking_iterations_and_network_are_the_hand_values() {
             ("it.0.mean", "7.42"),
             ("it.0.offered", "100.00"),
             ("it.0.found", "100.00"),
+            ("it.0.would", "—"),
             ("it.0.switched", "0.00"),
             ("it.0.unfinished", "1"),
             ("it.0.gap", "0.00"),
             ("it.2.mean", "7.42"),
             ("it.2.found", "0.00"),
+            ("it.2.would", "—"),
             ("it.2.switched", "0.00"),
             ("stopped-by", "The iteration cap"),
         ],
@@ -355,4 +369,38 @@ fn the_static_maps_coordinates_sides_and_widths_are_the_hand_values() {
     assert!(walk.contains(
         "<path class=\"k-walk\" stroke-width=\"1.5\" stroke-dasharray=\"0.1 3\" d=\"M20 20L1196 20\"/>"
     ));
+}
+
+/// Each model reports the one measure that can reach 0, and the other shows as missing ("—",
+/// never "NaN"). Under the least cost (the test of the tiles above) the share that would change
+/// is "—" and the gap 0.00. The hand run under the logit, the other parameters the same: each set
+/// holds one alternative, which the logit chooses at any cost, so nobody would change, 0.00 % at
+/// each of the three iterations, and the gap is "—".
+#[test]
+fn under_the_logit_the_gap_is_missing_and_nobody_would_change() {
+    let html = written_with(ChoiceModel::Logit, |_| {}, &["summary-logit.html"]).remove(0);
+    for k in 0..3 {
+        assert_eq!(value(&html, &format!("it.{k}.would")), "0.00", "iteration {k}");
+        assert_eq!(value(&html, &format!("it.{k}.gap")), "—", "iteration {k}");
+    }
+    let least_cost = written("summary-least-cost.html");
+    for k in 0..3 {
+        assert_eq!(value(&least_cost, &format!("it.{k}.would")), "—", "iteration {k}");
+        assert_eq!(value(&least_cost, &format!("it.{k}.gap")), "0.00", "iteration {k}");
+    }
+    assert!(!html.contains("NaN") && !least_cost.contains("NaN"), "a NaN on a page");
+}
+
+/// The share is shown in per cent with two decimals: the logit run's iterations table with the
+/// share of iteration 1 set to 0.25 by the test shows 25.00 there, and 0.00 at iterations 0 and 2.
+#[test]
+fn a_share_that_would_change_of_a_quarter_is_shown_as_25_per_cent() {
+    let html = written_with(
+        ChoiceModel::Logit,
+        |rows| rows[1].would_change_share = 0.25,
+        &["summary-quarter.html"],
+    )
+    .remove(0);
+    let shown: Vec<String> = (0..3).map(|k| value(&html, &format!("it.{k}.would"))).collect();
+    assert_eq!(shown, ["0.00", "25.00", "0.00"]);
 }

@@ -309,6 +309,7 @@ fn row(mean: f64, found: f64) -> Iteration {
         offered_share: 1.0,
         switch_share: 0.0,
         found_share: found,
+        would_change_share: f64::NAN,
         gap: 0.0,
         stage_seconds: [0.0; 5],
     }

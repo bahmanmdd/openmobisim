@@ -20,6 +20,8 @@
 //!   do not hold, is left out of the journeys; a `walk_gap` or `transfer_walk` without its seconds
 //!   is read with its seconds unknown (`NaN`), the trip kept. [`read`] then leaves out each trip
 //!   whose legs do not agree with its mode in `trips.parquet` (see [`agrees`]).
+//! - `iterations.parquet`: a file without `would_change_share`, written by a run before that
+//!   share was reported, is read with the share unknown (`NaN`).
 //!
 //! What the readers cannot see: a value changed in place (a time, a count, a stop), and a link
 //! bin replaced by a divisor of it (every bin of 60 s also starts on a grid of 30 s).
@@ -182,35 +184,59 @@ struct Reading {
     at: HashMap<String, usize>,
 }
 
+/// Where the column `name` of the writer's `schema` is among the file's columns `found`, of the
+/// writer's type (a list's inner field by its type alone): none when the file has no such
+/// column, an error naming the two types when it has one of another type.
+fn find(found: &Schema, schema: &Schema, name: &str) -> Result<Option<usize>, String> {
+    let want = schema.field_with_name(name).expect("a column of the writer's");
+    let Ok(i) = found.index_of(name) else { return Ok(None) };
+    if same_type(found.field(i).data_type(), want.data_type()) {
+        Ok(Some(i))
+    } else {
+        Err(format!(
+            "column {name} is {}; it is read as {}",
+            found.field(i).data_type(),
+            want.data_type()
+        ))
+    }
+}
+
 impl Reading {
-    /// Open `file` and find the columns `needed` of the writer's `schema` by name, each of the
-    /// writer's type (a list's inner field by its type alone).
-    fn open(file: &Path, schema: &Schema, needed: &[&str]) -> Result<Self, OutputError> {
+    /// Open `file` and find the columns `needed` of the writer's `schema`, and those of
+    /// `optional` it holds, by name ([`find`]). A missing column of `needed` is refused; a
+    /// missing one of `optional` is left for the caller to read as unknown.
+    fn open(
+        file: &Path,
+        schema: &Schema,
+        needed: &[&str],
+        optional: &[&str],
+    ) -> Result<Self, OutputError> {
         let error = |why: String, io: bool| OutputError { file: file.to_path_buf(), why, io };
         let f = File::open(file).map_err(|e| error(e.to_string(), true))?;
         let builder = ParquetRecordBatchReaderBuilder::try_new(f)
             .map_err(|e| error(format!("not a readable Parquet file: {e}"), false))?;
         let found = builder.schema().clone();
         let mut at = HashMap::new();
-        for name in needed {
-            let want = schema.field_with_name(name).expect("a column of the writer's");
-            let Ok(i) = found.index_of(name) else {
-                return Err(error(format!("it has no column {name}"), false));
-            };
-            if !same_type(found.field(i).data_type(), want.data_type()) {
-                let why = format!(
-                    "column {name} is {}; it is read as {}",
-                    found.field(i).data_type(),
-                    want.data_type()
-                );
-                return Err(error(why, false));
+        for (name, required) in
+            needed.iter().map(|n| (n, true)).chain(optional.iter().map(|n| (n, false)))
+        {
+            match find(&found, schema, name).map_err(|why| error(why, false))? {
+                Some(i) => {
+                    at.insert((*name).to_owned(), i);
+                }
+                None if required => return Err(error(format!("it has no column {name}"), false)),
+                None => {}
             }
-            at.insert((*name).to_owned(), i);
         }
         let reader = builder.build().map_err(|e| error(e.to_string(), false))?;
         let batches =
             reader.collect::<Result<Vec<_>, _>>().map_err(|e| error(e.to_string(), false))?;
         Ok(Self { file: file.to_path_buf(), batches, at })
+    }
+
+    /// Whether the file holds the column `name` (one of those asked for).
+    fn has(&self, name: &str) -> bool {
+        self.at.contains_key(name)
     }
 
     fn refuse(&self, why: String) -> OutputError {
@@ -316,8 +342,12 @@ pub fn read_trips(
     demand: &Demand,
     dropped: u64,
 ) -> Result<(TripRows, Vec<String>), OutputError> {
-    let r =
-        Reading::open(path, &trips::schema(), &["trip_id", "mode", "travel_time_s", "finished"])?;
+    let r = Reading::open(
+        path,
+        &trips::schema(),
+        &["trip_id", "mode", "travel_time_s", "finished"],
+        &[],
+    )?;
     let n = demand.trip_count() as usize;
     let mut out = TripRows {
         mode: vec![None; n],
@@ -387,7 +417,7 @@ pub fn read_links(
     window: StepGrid,
 ) -> Result<(Links, Vec<String>), OutputError> {
     let needed = ["link_id", "bin_start_s", "cars", "car_time_s", "bikes", "walkers"];
-    let r = Reading::open(path, &links::schema(), &needed)?;
+    let r = Reading::open(path, &links::schema(), &needed, &[])?;
     let (ids, starts) = (r.texts("link_id"), r.u32s("bin_start_s"));
     let (cars, time, bikes, walkers) =
         (r.u32s("cars"), r.floats("car_time_s"), r.u32s("bikes"), r.u32s("walkers"));
@@ -442,17 +472,26 @@ pub fn read_links(
     Ok((out, warnings))
 }
 
-/// Read `iterations.parquet`, its rows in the file's order.
+/// The column of `iterations.parquet` a run written before it was reported lacks.
+const WOULD_CHANGE: &str = "would_change_share";
+
+/// Read `iterations.parquet`, its rows in the file's order, and its warnings. A file without
+/// `would_change_share` (a run written before that share was reported) is read with the share
+/// unknown (`NaN`), warned.
 ///
 /// # Errors
 ///
-/// [`OutputError`]: the file cannot be read or a column is missing or of another type.
-pub fn read_iterations(path: &Path) -> Result<Vec<Iteration>, OutputError> {
+/// [`OutputError`]: the file cannot be read, or a column other than `would_change_share` is
+/// missing, or a column is of another type.
+pub fn read_iterations(path: &Path) -> Result<(Vec<Iteration>, Vec<String>), OutputError> {
     let schema = iterations::schema();
     let names: Vec<&str> = schema.fields().iter().map(|f| f.name().as_str()).collect();
-    let r = Reading::open(path, &schema, &names)?;
+    let needed: Vec<&str> = names.iter().copied().filter(|&n| n != WOULD_CHANGE).collect();
+    let r = Reading::open(path, &schema, &needed, &[WOULD_CHANGE])?;
     let number = r.u32s("iteration");
-    let counts: Vec<Vec<u64>> = names[2..7].iter().map(|n| r.u64s(n)).collect();
+    let counts =
+        ["finished", "unfinished", "without_alternative", "without_transit", "without_stop"]
+            .map(|n| r.u64s(n));
     let share = |name: &str| r.floats(name);
     let (mean, offered, switch, found, gap) = (
         share("mean_trip_time_s"),
@@ -461,8 +500,19 @@ pub fn read_iterations(path: &Path) -> Result<Vec<Iteration>, OutputError> {
         share("found_share"),
         share("gap"),
     );
-    let stages: Vec<Vec<f64>> = names[11..16].iter().map(|n| r.floats(n)).collect();
-    Ok((0..r.rows())
+    let mut warnings = Vec::new();
+    let would = if r.has(WOULD_CHANGE) {
+        share(WOULD_CHANGE)
+    } else {
+        warnings.push(format!(
+            "{}: it has no column {WOULD_CHANGE} (a run written before that share was reported): \
+             the share of trips that would change is read as unknown",
+            path.display()
+        ));
+        vec![f64::NAN; r.rows()]
+    };
+    let stages = iterations::STAGES.map(|n| r.floats(n));
+    let rows = (0..r.rows())
         .map(|k| Iteration {
             iteration: number[k].unwrap_or_default(),
             mean_trip_time: mean[k],
@@ -474,10 +524,12 @@ pub fn read_iterations(path: &Path) -> Result<Vec<Iteration>, OutputError> {
             offered_share: offered[k],
             switch_share: switch[k],
             found_share: found[k],
+            would_change_share: would[k],
             gap: gap[k],
             stage_seconds: [0, 1, 2, 3, 4].map(|s| stages[s][k]),
         })
-        .collect())
+        .collect();
+    Ok((rows, warnings))
 }
 
 /// Per trip of the demand, in its order, the legs it took, in order: none without an
@@ -540,7 +592,7 @@ pub fn read_routes(
 ) -> Result<(Routes, Vec<String>), OutputError> {
     let schema = routes::schema();
     let names: Vec<&str> = schema.fields().iter().map(|f| f.name().as_str()).collect();
-    let r = Reading::open(path, &schema, &names)?;
+    let r = Reading::open(path, &schema, &names, &[])?;
     // Each distinct link id is looked up once.
     let mut known: HashMap<&str, Option<LinkId>> = HashMap::new();
     let lookup =

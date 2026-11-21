@@ -315,6 +315,59 @@ fn under_the_logit_at_iteration_1_everyone_is_offered_at_the_plain_step() {
     }
 }
 
+/// The gap under the least cost, at every iteration, against the gap the test computes from the
+/// run's outputs alone: each trip's set, the alternative it holds and each alternative's time.
+/// This is an identity between a run's outputs, not a hand value: the reported gap is its
+/// definition applied to the reported sets and costs. A
+/// run returns those as they stand after its last iteration, so the case of the first test is
+/// run to exactly `K` iterations for `K` from 1 to 10 and the last row of each run is judged.
+/// Time is the only cost (1 per minute on each of the nine time columns, 0 on the rest) and
+/// every trip starts and ends at a node, so an alternative's cost is its door-to-door time in
+/// minutes, `time / 60`. The gap is `Σ (c_held − c_least) / Σ c_least` over these costs, within
+/// 1e-12. The share that would change is not reported under the least cost: it is not a number
+/// at every iteration (at the equilibrium the routes in use cost the same, so that share does
+/// not settle; the gap is the measure).
+///
+/// For bikes: these travellers are car-only; the gap reads every alternative alike.
+#[test]
+fn under_the_least_cost_the_gap_is_the_one_over_the_sets_and_the_share_who_would_change_is_not_reported()
+ {
+    let net = network(
+        &[("O", 0.0, 0.0), ("P", 2_000.0, 100.0), ("Q", 2_000.0, -100.0), ("D", 4_000.0, 0.0)],
+        &[
+            ("op", "O", "P", car_link(2_000.0, 50.0, 1_200.0)),
+            ("pd", "P", "D", car_link(2_000.0, 50.0, 36_000.0)),
+            ("oq", "O", "Q", car_link(3_200.0, 50.0, 36_000.0)),
+            ("qd", "Q", "D", car_link(3_200.0, 50.0, 36_000.0)),
+        ],
+    );
+    let rows = stream(&net, "c", "O", "D", 1_800.0, 1.0, Second(0));
+    let dem = demand(&net, &rows);
+    let started = std::time::Instant::now();
+    for k in 1..=10_u32 {
+        let parameters = Parameters { iteration_floor: k, ..time_only(k) };
+        let result =
+            run(&net, &dem, None, (Second(0), Second(3 * 3_600)), &parameters).expect("a run");
+        assert_eq!(result.iterations.len(), k as usize, "exactly {k} iterations");
+        let (mut paid, mut least) = (0.0, 0.0);
+        for i in 0..rows.len() {
+            let trip = TripId::from_index(i);
+            let held = result.taken(trip).expect("an alternative").time / 60.0;
+            paid += held;
+            least += result.set(trip).iter().map(|a| a.time / 60.0).fold(f64::INFINITY, f64::min);
+        }
+        let last = result.iterations.last().expect("a row");
+        let gap = (paid - least) / least;
+        println!("iteration {}: gap {:.3e} against {gap:.3e}", last.iteration, last.gap);
+        assert!((last.gap - gap).abs() <= 1e-12, "iteration {}: gap {}", last.iteration, last.gap);
+        for it in &result.iterations {
+            let (k, would) = (it.iteration, it.would_change_share);
+            assert!(would.is_nan(), "iteration {k}: would change {would}");
+        }
+    }
+    println!("the ten runs {:.1} s", started.elapsed().as_secs_f64());
+}
+
 /// The first test's case over seeds 0 to 19, its parameters otherwise: each quantity it
 /// compares with theory as the residual against its theoretical value, mean ± standard error
 /// over the seeds.

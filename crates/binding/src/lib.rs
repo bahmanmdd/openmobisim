@@ -571,14 +571,20 @@ impl Run {
         let dropped = self.ended.dropped();
         let t = openmobisim_io_parquet::read(folder, demand, network, timetable, window, dropped)
             .map_err(refused)?;
+        let mut warnings = t.warnings;
         let iterations = match page {
             Some(Page::Map) => Vec::new(),
-            _ => openmobisim_io_parquet::read_iterations(&self.iterations).map_err(refused)?,
+            _ => {
+                let (rows, more) =
+                    openmobisim_io_parquet::read_iterations(&self.iterations).map_err(refused)?;
+                warnings.extend(more);
+                rows
+            }
         };
         let record = std::fs::read_to_string(&self.record)
             .map_err(|e| PyOSError::new_err(format!("{}: {e}", self.record.display())))?;
         let kept = Kept::of(demand, &t.trips, t.routes, t.links, window);
-        Ok(Read { kept, iterations, record, warnings: t.warnings })
+        Ok(Read { kept, iterations, record, warnings })
     }
 
     /// Write the run's `page` to `path`, read from its files; the readers' warnings are shown.

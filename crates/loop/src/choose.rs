@@ -54,8 +54,10 @@ impl Model {
     }
 }
 
-/// The choice of trip `i` over `set`: the model's row.
-fn choice(
+/// The choice of trip `i` over `set`: the model's row. The same at any moment for the same costs
+/// and set (under the logit the traveller's draws are fixed for the run), so the assess stage
+/// reads it too.
+pub(crate) fn choice(
     ctx: &Context<'_>,
     model: &Model,
     i: usize,

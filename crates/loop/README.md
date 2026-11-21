@@ -31,7 +31,8 @@ stopping rule; and the three tables a run returns. Depends on `openmobisim-types
   `stop_walk_max` of their origin or destination, which a larger `stop_walk_max` can reach; the
   rest have stops at both ends and no journey between them), the offered share (trips offered a
   new choice; 1 at iteration 0, where everyone chooses), the switch share, the found share, the
-  relative gap, and the seconds of each stage. `stopped_by_rule` says whether the rule or the cap ended
+  share that would change (under the logit; `NaN` under the least-cost choice), the relative
+  gap (under the least-cost choice; `NaN` under the logit), and the seconds of each stage. `stopped_by_rule` says whether the rule or the cap ended
   the run.
 
 ## Units
@@ -112,17 +113,36 @@ model's unit (minutes in a time-only run: 1 on each of the nine time columns, 0 
   the set, not on the reading (a bike or walk route's `ln PS` is 0: their sets hold one route
   each, found at iteration 0).
 - **Assess:** the mean door-to-door time over the finished trips; unfinished = finished before
-  the window's end is false (a loaded trip by the loading, plus its last walk; an unloaded one by
-  its departure plus its measured time); the offered share, the switch share and the found share
-  over the trips with an alternative; the gap `Σ (c_taken − c_least) / Σ c_least` over the sets at the measured
-  costs, reported, never judged.
+  the window's end is false (a loaded trip by the loading, plus its last walk; an unloaded one
+  by its departure plus its measured time); the offered share, the switch share and the found
+  share over the trips with an alternative; and the one measure of the distance to the fixed
+  point that can reach 0 under the run's model, reported, never judged. Under the least-cost
+  choice it is the gap `Σ (c_taken − c_least) / Σ c_least` over the sets at the measured costs,
+  and the share that would change is `NaN`, never computed. Under the logit it is the share that
+  would change, and the gap is `NaN`. The share that would change is, of the trips with an
+  alternative, those for which the logit's choice over their own set, at the costs this
+  iteration measured and the set as it stands after this iteration, is not the alternative they
+  hold; the next iteration's choice reads the same unless its search adds an alternative first.
+  A traveller's choice at given costs is fixed: it takes the nest (a mode) of greatest inclusive
+  value times the nest scale μ plus that nest's random number, then in it the alternative of
+  greatest `−cost / μ` plus the alternative's own random number, each random number drawn once
+  per traveller for the whole run (`crates/choice/README.md`). So
+  the share is a count, made with the choose stage's own choice, not an estimate; when it is 0
+  nobody would change and the run is at the fixed point of its iterations, for the sets it has
+  found. Why each model has its own measure: under the least-cost choice the routes in use cost
+  the same at the equilibrium, so the share of travellers not on their lowest-cost alternative
+  does not settle, and the gap, which weighs each traveller by what it would save, is the
+  measure; under the logit the model puts a share of travellers on an alternative that is not
+  their lowest-cost one, so the gap does not reach zero, and the share who would change is the
+  measure.
 - **Stop** after an iteration when its found share is at most 0.5 % and the range of the last
   five mean trip times, greatest less least, is at most 0.3 % of the latest (never while one of
   the five has no finished trip); not before `iteration_floor` iterations have run; always at
   the cap. The rule reads the slope of the mean, which the method of successive averages makes
   about the residual over the iteration count, so a run it stops early can still be short of
-  equilibrium; the floor lets a test run to a fixed count. The offered, switch and found shares and the gap are `NaN`
-  when no trip has an alternative.
+  equilibrium; the floor lets a test run to a fixed count. The offered, switch and found shares,
+  and the share that would change or the gap of the run's model, are `NaN` when no trip has an
+  alternative.
 - **What the choice is over.** A traveller chooses among the alternatives in its set, and the
   set holds what the search found: per mode the fastest route at iteration 0, for cars also
   every route that was the fastest at a later iteration's reading, and the transit journeys
@@ -176,8 +196,8 @@ model's unit (minutes in a time-only run: 1 on each of the nine time columns, 0 
   heavily oversaturated small networks); and the chance jumps at the band. Under the logit for
   every traveller, and under the least-cost choice for a traveller within the band, the plain
   method's limit stays: after `K` iterations about one such traveller in `K` still holds
-  the choice it made at each earlier iteration, on that iteration's costs. The gap reports what
-  is left.
+  the choice it made at each earlier iteration, on that iteration's costs. The share that would
+  change (under the logit) or the gap (under the least-cost choice) reports what is left.
 - Money is 0 for every alternative until a source of money comes through the door; gaps are
   walked at the walking speed by every mode. Transit's walking legs are not on links: the
   links table counts the walkers of walk alternatives only.
@@ -215,7 +235,9 @@ interacts with nothing and is counted per bin; its gaps are walked. A bike rides
 on).
 
 ## Tests
-`cargo test -p openmobisim-loop`. Each expected value comes from outside the crate: test 3,
+`cargo test -p openmobisim-loop`. Each expected value comes from outside the crate, but for one
+identity between a run's outputs, not a hand value: the reported gap against its definition
+applied to the reported sets and costs (`tests/two_routes.rs`). Test 3,
 two routes with a bottleneck against Vickrey's closed form (`t* = 345.6 s`, mean 452.5 s, the
 split `c1 / q = 2/3` after `t*`, equal times at `t2`); test 4, Braess with capacities against
 the capacity-constrained steady state by hand (Cominetti, Correa and Olver 2022: 19 min in
@@ -262,11 +284,21 @@ shares of car, bike, walk and transit (`tests/no_congestion.rs`), a nest of two 
 two runs (the earliest and a cheaper one arriving later) against a bike, the nested logit's
 closed form at nest scales 0.5 and 1 (`tests/two_journeys_and_a_bike.rs`), and car against bike behind
 a bottleneck, a hand-derived trajectory solved by scipy (`tests/bottleneck_mode_choice.rs`,
-`tests/fixtures/bottleneck/`; release only, skipped by `cargo test`); two car routes, one
+`tests/fixtures/bottleneck/`; release only, skipped by `cargo test`); the share that would
+change under the logit: exactly 0 at every iteration where no cost changes, with the gap `NaN`
+(`tests/no_congestion.rs`, `tests/two_journeys_and_a_bike.rs`); under the least cost on the two
+routes of test 3, the gap against the identity above within 1e-12, and the share that would
+change `NaN`, at each of iterations 0 to 9 (`tests/two_routes.rs`); car against bike behind the
+bottleneck, by hand: after iteration 0, the mean over departure time of the free-flow car share
+less the car share at the delay met, 0.52461, within 4 binomial standard deviations of 0.004633;
+after iteration 1, with a tenth more trips without an alternative and travellers moving both
+from the car to the bike and from the bike to the car, 0.26231 within 4 of 0.004184
+(`tests/bottleneck_mode_choice.rs`); two car routes, one
 behind a bottleneck, in one car nest at μ = 0.5, path sizes 0.625 and 0.75: the third hour's
 share on the bottleneck's route against capacity over demand, 1/3, and its trip against the
 steady state by hand, 273.25 s (`tests/bottleneck_route_choice.rs`; release only, skipped by
-`cargo test`). CI runs these two by name with the release-only cases of tests 4 and 5:
+`cargo test`). CI runs the release-only test of each of these two files by name with the
+release-only cases of tests 4 and 5:
 `cargo test --release -p openmobisim-loop --test bottleneck_mode_choice --test
 bottleneck_route_choice --test braess --test nguyen_dupuis -- --ignored --exact
 one_run_follows_the_trajectory_and_reaches_the_steady_state_within_sampling_error

@@ -48,8 +48,15 @@
 //! by Pearson's chi-square at the 0.999 quantile with 2 degrees of freedom (13.816; a correct
 //! sampler fails once in a thousand seeds), as `no_congestion.rs` does.
 //!
+//! Who would change: no cost ever changes and each traveller's random numbers are fixed for the
+//! run, so the model, choosing again over its set at the costs just measured, picks the
+//! alternative it holds: the share that would change is exactly 0 at every iteration, at the
+//! default nest scale (by hand, not a tolerance). The gap is not a number at every iteration:
+//! under the logit it is not reported.
+//!
 //! For bikes: the bike is the nest of one against the transit nest of two; its share is one of
-//! the three counts judged (0.476774 at μ = 0.5, 0.392313 at μ = 1), at 600 s exactly.
+//! the three counts judged (0.476774 at μ = 0.5, 0.392313 at μ = 1), at 600 s exactly; a bike
+//! holder is one of those who would not change.
 
 #![allow(clippy::cast_precision_loss, reason = "counts of trips, far below 2^53")]
 
@@ -206,4 +213,40 @@ fn at_nest_scale_1_two_journeys_and_a_bike_take_the_plain_logit_shares() {
     assert!((p[0] - 0.392_313).abs() < 1e-6 && (p[1] - 0.322_809).abs() < 1e-6, "{p:?}");
     let statistic = at_scale(1.0);
     assert!(statistic < CHI_SQUARE_999_DF2, "chi-square {statistic}");
+}
+
+/// At the default nest scale: at every iteration the share that would change is exactly 0 and
+/// the gap is not a number (the header).
+#[test]
+fn with_costs_that_never_change_nobody_would_change_and_the_logit_has_no_gap() {
+    let (net, tt) = path_and_stops();
+    let rows: Vec<TripRow> = (0..TRAVELLERS)
+        .map(|i| TripRow {
+            id: format!("t{i:06}"),
+            origin: at(0.0, 0.0),
+            destination: at(2_500.0, 0.0),
+            departure: Second(0),
+            class: "default".to_string(),
+            modes: ModeSet::of(&[Mode::Bike, Mode::Transit]),
+        })
+        .collect();
+    let dem = Demand::build(&rows, &["default".to_string()], &net, Some(&tt), Metres(1_500.0))
+        .expect("a demand");
+    let started = std::time::Instant::now();
+    let result = run(&net, &dem, Some(&tt), (Second(0), Second(3_600)), &Parameters::defaults(1))
+        .expect("a run");
+    println!(
+        "the run {:.2} s, {} iterations",
+        started.elapsed().as_secs_f64(),
+        result.iterations.len()
+    );
+    for it in &result.iterations {
+        let k = it.iteration;
+        assert!(
+            it.would_change_share.to_bits() == 0.0_f64.to_bits(),
+            "iteration {k}: would change {}",
+            it.would_change_share
+        );
+        assert!(it.gap.is_nan(), "iteration {k}: gap {}", it.gap);
+    }
 }

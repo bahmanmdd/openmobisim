@@ -12,8 +12,16 @@
 //! | `offered_share` | Float64 | yes | the share of trips with an alternative that were offered a new choice in this iteration's choice (1 at iteration 0, where everyone chooses); null when no trip has one |
 //! | `switch_share` | Float64 | yes | the share of trips with an alternative that changed it in this iteration's choice; null when no trip has one |
 //! | `found_share` | Float64 | yes | the share of trips with an alternative whose search found one cheaper than every alternative of its mode in their set; null likewise |
-//! | `gap` | Float64 | yes | the relative duality gap, Σ (chosen − least) / Σ least; null when no trip has an alternative or the least costs sum to 0 |
+//! | `would_change_share` | Float64 | yes | under the logit, the share of trips with an alternative that the logit, choosing again over their own set at the costs this iteration measured, the set as it stands after this iteration (the next iteration's choice reads the same unless its search adds an alternative first), would put on another alternative than the one they hold; 0 when the run is at the fixed point of its iterations; null under the least-cost choice, and when no trip has an alternative |
+//! | `gap` | Float64 | yes | under the least-cost choice, the relative duality gap, Σ (chosen − least) / Σ least; null under the logit, when no trip has an alternative, or when the least costs sum to 0 |
 //! | `search_s`, `choose_s`, `load_s`, `measure_s`, `assess_s` | Float64 | no | the seconds each stage took, wall clock |
+//!
+//! Each model reports the one measure that can reach 0. Under the least-cost choice the routes
+//! in use cost the same at the equilibrium, so the share of travellers not on their lowest-cost
+//! alternative does not settle, and the gap, which weighs each traveller by what it would save,
+//! is the measure. Under the logit the model puts a share of travellers on an alternative that
+//! is not their lowest-cost one, so the gap does not reach zero, and the share who would change
+//! is the measure.
 
 use std::sync::Arc;
 
@@ -24,7 +32,7 @@ use openmobisim_loop::assess::Iteration;
 use crate::{WriteError, column, value};
 
 /// The five stages, in the order of `Iteration::stage_seconds`.
-const STAGES: [&str; 5] = ["search_s", "choose_s", "load_s", "measure_s", "assess_s"];
+pub(crate) const STAGES: [&str; 5] = ["search_s", "choose_s", "load_s", "measure_s", "assess_s"];
 
 /// The iterations table as one batch.
 pub(crate) fn batch(rows: &[Iteration]) -> Result<RecordBatch, WriteError> {
@@ -44,6 +52,7 @@ pub(crate) fn batch(rows: &[Iteration]) -> Result<RecordBatch, WriteError> {
         nullable(|r| r.offered_share),
         nullable(|r| r.switch_share),
         nullable(|r| r.found_share),
+        nullable(|r| r.would_change_share),
         nullable(|r| r.gap),
     ];
     for k in 0..STAGES.len() {
@@ -66,6 +75,7 @@ pub(crate) fn schema() -> Schema {
         Field::new("offered_share", DataType::Float64, true),
         Field::new("switch_share", DataType::Float64, true),
         Field::new("found_share", DataType::Float64, true),
+        Field::new("would_change_share", DataType::Float64, true),
         Field::new("gap", DataType::Float64, true),
     ];
     for name in STAGES {

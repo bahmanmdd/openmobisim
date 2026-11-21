@@ -18,12 +18,16 @@ in the bins from 25 200 s and 28 200 s, st1 from 25 200 s, st2 from 25 320 s (bi
    `element`) and its columns in reverse order: read as written, no warning, the same pages.
 6. An empty route (a trip whose two doors are one node): an empty list of links, not null, and
    both pages written.
+7. iterations.parquet without its column would_change_share, as a run written before that share
+   was reported has it: the run opens with one warning naming the file and the column, and the
+   summary is written, giving the warning again and showing the share as unknown (a dash).
 
 For bikes: the bike's journey is the one whose routes disagree or lack seconds above.
 """
 
 import math
 import re
+import warnings
 from pathlib import Path
 
 import pyarrow as pa
@@ -139,3 +143,19 @@ def test_an_empty_route_is_an_empty_list_and_both_pages_take_it(tmp_path):
     assert [(r["kind"], r["links"]) for r in rows] == [("walk_gap", None), ("bike", []), ("walk_gap", None)], rows
     assert Path(result.map(tmp_path / "map.html")).is_file()
     assert Path(result.summary(tmp_path / "summary.html")).is_file()
+
+
+def test_an_iterations_table_without_the_share_who_would_change_opens_with_a_warning(tmp_path):
+    fresh = hand_files(tmp_path)
+    iterations = tmp_path / "run" / "iterations.parquet"
+    table = pq.read_table(iterations)
+    pq.write_table(table.drop_columns(["would_change_share"]), iterations)
+    warning = (f"{iterations}: it has no column would_change_share (a run written before that "
+               "share was reported): the share of trips that would change is read as unknown")
+    run, said = opened(fresh.record)
+    assert said == [warning], said
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        summary = Path(run.summary(tmp_path / "summary.html")).read_text(encoding="utf-8")
+    assert [str(w.message) for w in caught] == [warning]
+    assert re.search(r'data-k="it\.0\.would">([^<]*)<', summary).group(1) == "\u2014"
