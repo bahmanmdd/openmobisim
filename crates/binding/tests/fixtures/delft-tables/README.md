@@ -20,9 +20,13 @@ not vouched for.
   1e-5 m. All 88 512 links have a class (19 names, every one of the map's table); 42 958 have inner
   points, 45 554 are straight. Every polyline's length (WGS84) is its `length_m` within 1.3e-9
   relative, but for 50 walk and bike links of 0.1 to 0.5 m that version 1 gave its least length,
-  0.5 m. Of 42 598 pairs of links each way between two nodes, 42 523 have one's points the other's
-  reversed; 75 (47 car, 28 bike) do not (read as two roads between the same junctions, such as
-  two carriageways; not checked one by one). Adding the columns
+  0.5 m. Of the 85 189 links that have a link of their own mode the other way between the same two
+  nodes, 85 162 are paired, one each way, within each mode and each two nodes: where two nodes have
+  more links one way than the other, the pairs are as many as the fewer, matched so that as many as
+  possible have one's points the other's reversed, and 27 links (13 car, 14 bike) are left without
+  a pair. Of the 42 581 pairs, 42 523 have one's points the other's reversed; 58 (37 car, 21 bike)
+  do not (read as two roads between the same junctions, such as two carriageways; not checked one
+  by one). Adding the columns
   took the file from 1 349 448 to 2 165 625 bytes; less the two columns, its text is the old one
   byte for byte (SHA-256 6918508b…5ad5b of the 5 848 933 decompressed bytes).
 - `trips.csv.gz`: `trip_id`, `origin_lon`, `origin_lat`, `destination_lon`, `destination_lat`,

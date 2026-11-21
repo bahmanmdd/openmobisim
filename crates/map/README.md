@@ -41,13 +41,17 @@ the message shown), `data-links`, `data-rows` (rows of car traffic), `data-pairs
 What the page lets a reader do:
 - switch the layers: road traffic, transit, cyclists, walkers;
 - colour the road traffic by delay over free flow, volume or volume ÷ capacity;
-- show the whole window or one bin (the time slider), and play the bins in turn;
+- show the whole window or one bin (the time slider), and play road traffic's bins in turn, one every
+  0.45 s: Pause, the whole window ticked and road traffic hidden stop the play;
 - choose a pair (every pair held is listed, the busiest first; ‹ › step through them), or pick its
   two places on the map; see its journeys, hover one to see it alone, click one to zoom to it,
   tick its modes on or off;
 - click a link or a transit hop for its facts and the pairs that use it, then a pair to show it;
 - zoom with the wheel, the buttons or the five levels (overview to detail), and fit the network;
-- save the view as a PNG (twice the screen's resolution) or an SVG, with its legend;
+- save the view as a PNG (twice the screen's resolution) or an SVG, with its title, subtitle and
+  legend; the subtitle, on the page and in the exports, is road traffic's caption (the bins shown,
+  the ribbons' width and colour), written only while road traffic is drawn, as each other layer's
+  words are;
 - switch to the night theme;
 - keep the view (theme, colouring, bin, layers, pair, link, place and zoom) in the page's address
   after `#`, to come back to it or share it.
@@ -201,6 +205,8 @@ A bike's journey is a journey like any other, in its pair beside the car's, draw
 is counted per link in `bv` and drawn as the cyclists' layer on the same links as the cars, its
 time is its realised door-to-door time. A link's hover and its analysis count its cyclists, and a
 clicked link lists the pairs whose bike journeys use it with those whose car and walk journeys do.
+Play and the time slider step road traffic only: the cyclists' layer, counted over the window, is
+drawn the same at every bin, and stays drawn when road traffic is hidden.
 
 ## Tests
 `cargo test -p openmobisim-map`. Each expected value is a hand number, read back from the written
@@ -250,7 +256,13 @@ are written by `openmobisim_io_parquet::write` and read back, as the binding dra
   click rule (st1, its pair's row, st2, the empty map; ×, st1, the empty map; the pair from the
   address, st1, the empty map; that address opened again, the empty map) each end with the link last
   clicked open, the pair open and its row marked. Where the cyclists' line, 3 000 cyclists wide,
-  lies over st1's ribbon, the bike link. With st1 bent and classed (`test_drawing.py`), a click on
+  lies over st1's ribbon, the bike link. Play, then the whole window ticked: over 1.2 s (more than
+  two steps) the box ticked, the slider off, the address's bin "all", the button "Play", the
+  subtitle "all bins, 07:00–08:00", st1's and st2's ribbons drawn. Play, then road traffic
+  unticked: over 1.2 s the play stopped at one bin, the slider on it, the cyclists ticked and their
+  pixels unchanged. The PNG's and the SVG's subtitle road traffic's caption, "07:00–07:01 · one
+  ribbon per direction · width = road capacity, colour = volume", then nothing with road traffic
+  unticked. With st1 bent and classed (`test_drawing.py`), a click on
   the bend picks st1, named by its class, and one on its chord the cycleway there. An address naming a pair, link, hop or bin the page does not hold, or a bike or
   walk link a car-only link or on a page without that layer, opens the page without them. A run
   with a hand GTFS feed (`test_names.py`): the stops' names, the tram's kind and line, the places

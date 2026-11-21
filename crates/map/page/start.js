@@ -178,11 +178,13 @@ function exportAs(kind) {
 function wire() {
   $("theme").addEventListener("click", () => { setTheme(S.theme === "paper" ? "night" : "paper"); subtitle(); redraw(false); writeHash(); });
   $("colour").addEventListener("change", (e) => { S.colour = e.target.value; subtitle(); redraw(false); writeHash(); });
-  $("allbins").addEventListener("change", (e) => { if (e.target.checked) setBins(0, NB); else setBins(+$("bin").value, +$("bin").value + 1); $("bin").disabled = e.target.checked; });
+  $("allbins").addEventListener("change", (e) => { if (e.target.checked) { stopPlay(); setBins(0, NB); } else setBins(+$("bin").value, +$("bin").value + 1); $("bin").disabled = e.target.checked; });
   $("bin").addEventListener("input", (e) => { $("allbins").checked = false; $("bin").disabled = false; setBins(+e.target.value, +e.target.value + 1); });
   $("play").addEventListener("click", () => {
-    S.playing = !S.playing; $("play").textContent = S.playing ? "Pause" : "Play";
-    if (S.playing) { $("allbins").checked = false; $("bin").disabled = false; const tick = () => { if (!S.playing) return; const nb = (S.bins[1] - S.bins[0] === NB || S.bins[0] + 1 >= NB ? 0 : S.bins[0] + 1); $("bin").value = nb; setBins(nb, nb + 1); setTimeout(tick, 450); }; tick(); }
+    if (S.playing) { stopPlay(); return; }
+    S.playing = true; $("play").textContent = "Pause"; $("allbins").checked = false; $("bin").disabled = false;
+    const tick = () => { const nb = (S.bins[1] - S.bins[0] === NB || S.bins[0] + 1 >= NB ? 0 : S.bins[0] + 1); $("bin").value = nb; setBins(nb, nb + 1); PLAY = setTimeout(tick, 450); };
+    tick();
   });
   document.querySelectorAll("#levels button").forEach((b, i) => b.addEventListener("click", () => goLevel(i)));
   $("zin").addEventListener("click", () => zoomAt(W / 2, H / 2, 0.5)); $("zout").addEventListener("click", () => zoomAt(W / 2, H / 2, 2));

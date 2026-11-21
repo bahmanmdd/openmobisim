@@ -395,3 +395,136 @@ def test_a_line_drawn_on_top_of_a_ribbon_wins_where_the_pointer_is_on_both(tmp_p
         assert text_of(page, "#linkinfo").startswith("Bike link · 1,500 m"), text_of(page, "#linkinfo")
     finally:
         page.close()
+
+
+# The controls as the page shows them: the "Whole period" box ticked, the time slider off, the
+# slider's bin, the bin the address names ("all": the whole window), the Play button's word.
+CONTROLS = """[document.getElementById('allbins').checked, document.getElementById('bin').disabled,
+  document.getElementById('bin').value, new URLSearchParams(location.hash.slice(1)).get('b'),
+  document.getElementById('play').textContent]"""
+# Play has stepped: the address names a bin after the first.
+STEPPED = "/^[1-9][0-9]*$/.test(new URLSearchParams(location.hash.slice(1)).get('b') || '')"
+
+
+def readings(page, expression, seconds=1.2):
+    """The distinct values of `expression`, read every 0.1 s for `seconds` s: over 1.2 s, more than
+    two of Play's steps (0.45 s each), one value when nothing steps."""
+    seen, end = [], time.monotonic() + seconds
+    while time.monotonic() < end:
+        value = page.run(expression)
+        seen += [] if value in seen else [value]
+        time.sleep(0.1)
+    return seen
+
+
+def playing(binary, tmp_path, layers):
+    """The hand map with `layers` ticked, coloured by volume, centred on st1 at 5 m a pixel, the
+    whole window shown; Play pressed and seen stepping."""
+    from cdp import Page
+
+    path = Path(hand_run(*hand_tables(), tmp_path / "run").map(tmp_path / "hand.html"))
+    page = Page(binary, tmp_path / "profile", path.as_uri() + f"#c=volume&ly={layers}&z=750.0,0.0,5.000")
+    page.wait("document.body && document.body.dataset.state === 'ready'")
+    click_on(page, "#play")
+    page.wait(STEPPED)
+    return page
+
+
+def test_whole_period_ticked_while_playing_stops_the_play_and_shows_the_whole_window(tmp_path):
+    """Play, then the "Whole period" box ticked: the play stops and the whole window is shown, the
+    box, the slider and what is drawn agreeing. The hand map, road traffic alone; its window 07:00 to
+    08:00 in 60 bins of 60 s; st1's cars enter it in bin 0, st2's in bin 2, so both ribbons are drawn
+    only for the whole window (or bins 0 to 2 together). By the rule, over 1.2 s one reading: the box
+    ticked, the slider off, the address's bin "all", the button "Play", the subtitle "all bins,
+    07:00–08:00", st1's ribbon (x = 750 px) and st2's (x = 1 000 px) drawn. For bikes: Play and the
+    whole window are road traffic's bins; the cyclists' layer is counted over the whole window and
+    not stepped (the test below)."""
+    binary = chrome()
+    if binary is None:
+        pytest.skip("no Chrome or Chromium binary")
+    page = playing(binary, tmp_path, "r")
+    try:
+        click_on(page, "#allbins")
+        seen = readings(page, f"""[{CONTROLS}, document.getElementById('subtitle').textContent.slice(0, 21),
+            {BLUES}.length > 0, {BLUES.replace("getImageData(750, 440", "getImageData(1000, 440")}.length > 0]""")
+        assert len(seen) == 1, seen
+        (whole, off, _, bin_, button), subtitle, st1, st2 = seen[0]
+        assert (whole, off, bin_, button, subtitle, st1, st2) == (True, True, "all", "Play", "all bins, 07:00–08:00", True, True), seen
+    finally:
+        page.close()
+
+
+# The cyclists' teal (paper theme, #04938e) drawn 1 px wide on the line y = 475 px, half on each
+# of two rows of pixels over the surface: green above red by 40 and at least the blue. The
+# network's grey and the volume's blues are not.
+TEALS = BLUES.replace("b > g + 20 && r < 60 && b > 100", "g > r + 40 && g >= b")
+
+
+def test_road_traffic_hidden_while_playing_stops_the_play(tmp_path):
+    """Play, then the "Road traffic" layer unticked (its group, the Pause button with it, hidden): the
+    play stops at the bin it showed. The hand map, road traffic and cyclists ticked. By the rule,
+    over 1.2 s one reading: the box unticked, the slider on, at the bin the address names, the button
+    "Play", the address's layers the cyclists alone ("b"). For bikes: the cyclists' layer stays
+    ticked and drawn (its teal at x = 750 px on its line, y = 475 px), and the map's pixels are the
+    same at every reading: Play steps road traffic only, the cyclists are counted over the window."""
+    binary = chrome()
+    if binary is None:
+        pytest.skip("no Chrome or Chromium binary")
+    page = playing(binary, tmp_path, "rb")
+    try:
+        click_on(page, "#layerrows input[data-layer=road]")
+        pixels = """(() => { const c = document.getElementById('map'), d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+          let h = 0; for (let i = 0; i < d.length; i++) h = (Math.imul(h, 31) + d[i]) | 0; return h; })()"""
+        seen = readings(page, f"""[{CONTROLS}, new URLSearchParams(location.hash.slice(1)).get('ly'),
+            document.querySelector('#layerrows input[data-layer=bike]').checked, {pixels}]""")
+        assert len(seen) == 1, seen
+        (whole, off, slider, bin_, button), layers, cyclists, _ = seen[0]
+        assert (whole, off, slider, button, layers, cyclists) == (False, False, bin_, "Play", "b", True), seen
+        assert 474 in page.run(TEALS), page.run(TEALS)
+    finally:
+        page.close()
+
+
+# Installed in the page before its exports: every text filled on a canvas with its place, and each
+# file saved (the link the page clicks to download it) kept instead of downloaded.
+RECORD = """(() => { const fill = CanvasRenderingContext2D.prototype.fillText;
+  CanvasRenderingContext2D.prototype.fillText = function (t, x, y) { window.texts.push([String(t), x, y]); return fill.apply(this, arguments); };
+  HTMLAnchorElement.prototype.click = function () { window.saved = this.href; }; return true; })()"""
+
+
+def export_subtitles(page):
+    """The subtitles of the PNG and the SVG exports, each saved by a real click on its button: the
+    PNG's the text filled at the subtitle's place, (16, 48) px; the SVG's its text element there."""
+    page.run("window.texts = []")
+    click_on(page, "#exportpng")
+    png = [t for t, x, y in page.run("window.texts") if (x, y) == (16, 48)]
+    page.run("window.svg = null")
+    click_on(page, "#exportsvg")
+    page.run("fetch(window.saved).then((r) => r.text()).then((t) => { window.svg = t; }), true")
+    page.wait("window.svg !== null")
+    return png, re.findall(r'<text x="16" y="48"[^>]*>(.*?)</text>', page.run("window.svg"))
+
+
+def test_the_exports_subtitle_says_only_what_is_drawn(tmp_path):
+    """The subtitle of the PNG and the SVG exports: road traffic's caption (the bin shown, what its
+    ribbons' width and colour mean) while road traffic is drawn, and nothing once it is unticked, as
+    each other layer's words are written only while it is drawn. The hand map, road traffic and
+    cyclists ticked, coloured by volume, bin 0 (07:00–07:01). For bikes: with road traffic unticked
+    the cyclists are still drawn, and the exports say what their lines mean in the cyclists' own
+    legend ("Cyclists · width = cyclists"), not in the subtitle."""
+    binary = chrome()
+    if binary is None:
+        pytest.skip("no Chrome or Chromium binary")
+    from cdp import Page
+
+    path = Path(hand_run(*hand_tables(), tmp_path / "run").map(tmp_path / "hand.html"))
+    page = Page(binary, tmp_path / "profile", path.as_uri() + "#c=volume&ly=rb&b=0&z=750.0,0.0,5.000")
+    try:
+        page.wait("document.body && document.body.dataset.state === 'ready'")
+        page.run(RECORD)
+        caption = "07:00–07:01 · one ribbon per direction · width = road capacity, colour = volume"
+        assert export_subtitles(page) == ([caption], [caption])
+        click_on(page, "#layerrows input[data-layer=road]")
+        assert export_subtitles(page) == ([""], [""])
+    finally:
+        page.close()

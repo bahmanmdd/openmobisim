@@ -231,7 +231,8 @@ function layerRows() {
   $("layerrows").innerHTML = rows.map(([k, name, hint]) => `<label title="${hint}"><input type="checkbox" data-layer="${k}"${S.ly[k] ? " checked" : ""}> ${mark[k]} ${name}</label>`).join("");
   document.querySelectorAll("#layerrows input").forEach((box) => box.addEventListener("change", (e) => {
     const k = e.target.dataset.layer; S.ly[k] = e.target.checked;
-    $("trafficgroup").hidden = !HAS_TRAFFIC || !S.ly.road; renderLegend();
+    if (!S.ly.road) stopPlay();  // road traffic hidden, its Pause button with it: the play stops
+    $("trafficgroup").hidden = !HAS_TRAFFIC || !S.ly.road; subtitle();
     S.hover = -1; S.hoverItem = null; redraw(false); writeHash();
   }));
 }

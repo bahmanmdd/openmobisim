@@ -308,14 +308,18 @@ function linkPanel() {
 // A time of day, "08:15", from seconds of the clock.
 function clock(seconds) { const m = Math.round(seconds / 60), h = Math.floor(m / 60); return String(h).padStart(2, "0") + ":" + String(m % 60).padStart(2, "0"); }
 function binLabel() {
-  if (!HAS_TRAFFIC) return "no traffic recorded";
   const [a, b] = S.bins, s = META.bin_seconds;
   return (b - a === NB && NB > 1 ? "all bins, " : "") + clock(START + a * s) + "–" + clock(START + b * s);
 }
 function setBins(a, b) { S.bins = [a, b]; aggregate(a, b); subtitle(); redraw(false); writeHash(); }
+// Play steps road traffic's bins, one every 0.45 s; Pause, the whole period ticked and road traffic hidden stop it, so
+// the box, the slider and what is drawn agree.
+let PLAY = 0;
+function stopPlay() { S.playing = false; clearTimeout(PLAY); $("play").textContent = "Play"; }
 const COLOUR_WORDS = { delay: "delay over free flow", volume: "volume", vc: "volume over capacity" };
+// The subtitle is road traffic's caption, written only while road traffic is drawn, as each other layer's words are.
 function subtitle() {
-  $("subtitle").textContent = binLabel() + " · one ribbon per direction · width = road capacity, colour = " + COLOUR_WORDS[S.colour];
+  $("subtitle").textContent = HAS_TRAFFIC && S.ly.road ? binLabel() + " · one ribbon per direction · width = road capacity, colour = " + COLOUR_WORDS[S.colour] : "";
   renderLegend();
 }
 // What the road's colour shows now: its title, its bands or ramp.
