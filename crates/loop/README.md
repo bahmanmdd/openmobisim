@@ -90,13 +90,13 @@ model's unit (minutes in a time-only run: 1 on each of the nine time columns, 0 
   corrects the logit for routes that overlap, and the least cost has no such error to correct.
   The path sizes are computed and reported all the same, and the run's record keeps the
   coefficient as given. The nest is the mode; at iteration 0 everyone chooses. At `k ≥ 1` a
-  traveller is offered a new choice with probability `max(1 / (k + 1), s)`: the step of the
-  method of successive averages (Sheffi 1985), or `s = r = (c − b) / c` when `r` is above 0.2
-  (else `s = 0`; never above 1), with `c` the cost of the alternative it holds and `b` the
-  least cost among the alternatives of the same mode in its own set, as the choice reads them
-  (systematic costs, the path-size term included under the logit, at the times of the last
-  measure); `s = 0`
-  when `c` is not positive. Drawn from `Stream::MsaReselection` at (trip, k). A traveller that
+  traveller is offered a new choice with probability `1 / (k + 1)`, the step of the method of
+  successive averages (Sheffi 1985), under the logit; under the least-cost choice with
+  probability `max(1 / (k + 1), s)`, `s = r = (c − b) / c` when `r` is above 0.2 (else `s = 0`;
+  never above 1), with `c` the cost of the alternative it holds and `b` the least cost among
+  the alternatives of the same mode in its own set, as the choice reads them (systematic costs
+  at the times of the last measure); `s = 0` when `c` is not positive. Drawn from
+  `Stream::MsaReselection` at (trip, k). A traveller that
   is offered takes the model's choice over its whole set, its mode included, whatever it held;
   the others keep their alternative.
 - **Load:** the chosen route legs as vehicles on the point queue, each entered on the whole
@@ -139,9 +139,18 @@ model's unit (minutes in a time-only run: 1 on each of the nine time columns, 0 
   alternative, at measured costs. A window long enough for every trip to finish (the
   unfinished count 0) makes the means comparable.
 - **Who chooses again.** Everyone is offered a new choice at least at the plain method's rate
-  `1 / (k + 1)` (under the deterministic model a traveller holding its cheapest keeps it; under
-  the logit its taste decides). A traveller whose best alternative of the same mode would save
-  more than 20 % of the cost of the one it holds (one more than 25 % dearer than that best) is
+  `1 / (k + 1)`; an offered traveller takes the model's choice (under the deterministic model a
+  traveller holding the lowest-cost alternative of its set keeps it; under the logit the
+  choice follows the logit's probabilities at the alternatives' costs). Under the logit that is
+  the rate for every traveller. The logit's shares put some travellers on an alternative that is
+  not the lowest-cost one of its mode, and when the costs change, travellers have to move both
+  toward the lower-cost and toward the higher-cost alternative. A rate that rose with the cost a
+  traveller would save would rise only for the holders of a higher-cost alternative: moves
+  toward the lower cost would be asked for often and moves toward the higher cost rarely, and
+  the higher-cost alternatives would hold too few travellers by an amount that falls only as
+  `1 / k`. Under the least-cost choice every traveller belongs on the lowest-cost alternative of
+  its set, and a traveller whose best alternative of the same mode would save
+  more than 20 % of the cost of the one it holds (one costing more than 25 % above that best) is
   offered at the larger rate of the share it would save, after Smith's proportional switching
   (1984; his flows move between pairs of routes in proportion to their cost difference, by a
   small step), outside a band of indifference (Mahmassani and Chang 1987). When cost is
@@ -158,16 +167,15 @@ model's unit (minutes in a time-only run: 1 on each of the nine time columns, 0 
   does not fall with `k`. Measured without a band (Braess below, 4 500 travellers, 20 seeds,
   the mean trip less 1 140 s, mean ± standard error): −8.5 ± 2.1 s under the plain method;
   −13.9 ± 2.5, −17.5 ± 2.7 and −24.3 ± 3.3 s at constant rates 0.25, 0.5 and 0.75. Near
-  equilibrium only the plain step acts for the least-cost choice; under the logit a traveller
-  may hold, by its taste, an alternative more than the band dearer than the cheapest of its
-  mode, and is then offered at the rate `r` every iteration and, at unchanged costs, repeats
-  its choice. Limits: `r` is the same in any unit of cost but not after a constant is added to
+  equilibrium only the plain step acts. Limits of the least cost's rule: `r` is the same in any
+  unit of cost but not after a constant is added to
   every cost (a long shared leg, a mode constant or a fare shrinks it, and below the band the
   rule is the plain method); it favours short trips (5 min lost beside a 10 min best is
   `r = 0.33`, beside a 60 min best 0.077); above the band the rate does not fall with `k`, so
   travellers behind one queue who read the same cost can move together (an early swing on
-  heavily oversaturated small networks); and the chance jumps at the band. Within the band the
-  plain method's limit stays: after `K` iterations about one such traveller in `K` still holds
+  heavily oversaturated small networks); and the chance jumps at the band. Under the logit for
+  every traveller, and under the least-cost choice for a traveller within the band, the plain
+  method's limit stays: after `K` iterations about one such traveller in `K` still holds
   the choice it made at each earlier iteration, on that iteration's costs. The gap reports what
   is left.
 - Money is 0 for every alternative until a source of money comes through the door; gaps are
@@ -250,15 +258,22 @@ logit run on the three routes above at μ of 0.5, 0.25 and 1, each trip's cost t
 the route it takes less μ times the logarithm of its path size by hand, within 1e-9
 (`tests/path_size_in_the_car_nest.rs`);
 the default run against outside answers: without congestion, the closed-form logit
-shares of car, bike, walk and transit (`tests/no_congestion.rs`), and car against bike behind
+shares of car, bike, walk and transit (`tests/no_congestion.rs`), a nest of two journeys on
+two runs (the earliest and a cheaper one arriving later) against a bike, the nested logit's
+closed form at nest scales 0.5 and 1 (`tests/two_journeys_and_a_bike.rs`), and car against bike behind
 a bottleneck, a hand-derived trajectory solved by scipy (`tests/bottleneck_mode_choice.rs`,
-`tests/fixtures/bottleneck/`; release only, skipped by `cargo test`; CI
-runs it: `cargo test --release -p openmobisim-loop --test bottleneck_mode_choice --test braess
---test nguyen_dupuis -- --ignored --exact
+`tests/fixtures/bottleneck/`; release only, skipped by `cargo test`); two car routes, one
+behind a bottleneck, in one car nest at μ = 0.5, path sizes 0.625 and 0.75: the third hour's
+share on the bottleneck's route against capacity over demand, 1/3, and its trip against the
+steady state by hand, 273.25 s (`tests/bottleneck_route_choice.rs`; release only, skipped by
+`cargo test`). CI runs these two by name with the release-only cases of tests 4 and 5:
+`cargo test --release -p openmobisim-loop --test bottleneck_mode_choice --test
+bottleneck_route_choice --test braess --test nguyen_dupuis -- --ignored --exact
 one_run_follows_the_trajectory_and_reaches_the_steady_state_within_sampling_error
+one_run_reaches_the_steady_state_of_the_route_logit_within_sampling_error
 with_the_added_link_every_trip_takes_19_min_split_in_thirds_with_8_min_queues
 the_steady_hour_is_the_capacity_constrained_equilibrium
-over_twenty_seeds_each_queued_link_enters_at_its_capacity_within_3_percent`);
+over_twenty_seeds_each_queued_link_enters_at_its_capacity_within_3_percent`;
 determinism of the whole chain over 1 and 8 threads and two runs (`tests/determinism.rs`: 3 000
 trips, four modes, three transit lines, the nested logit; the demand, the sets and the three
 tables compared to the bit), the one thread-count comparison of the search, the demand and

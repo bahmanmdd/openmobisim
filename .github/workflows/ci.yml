@@ -36,10 +36,11 @@ jobs:
         run: cargo test --workspace
       - name: Convergence tier (release; tests 4 and 6 at a large population to a fixed count)
         run: cargo test --release -p openmobisim-loop --test braess --test sioux_falls -- --ignored
-      - name: Car against bike behind a bottleneck, one run; Braess's 19-minute case and Nguyen-Dupuis's steady hour over 5 seeds; Nguyen-Dupuis's queued links over 20 seeds (release only)
+      - name: Car against bike behind a bottleneck, one run; two car routes, one behind a bottleneck, one run; Braess's 19-minute case and Nguyen-Dupuis's steady hour over 5 seeds; Nguyen-Dupuis's queued links over 20 seeds (release only)
         run: >-
-          cargo test --release -p openmobisim-loop --test bottleneck_mode_choice --test braess --test nguyen_dupuis -- --ignored --exact
+          cargo test --release -p openmobisim-loop --test bottleneck_mode_choice --test bottleneck_route_choice --test braess --test nguyen_dupuis -- --ignored --exact
           one_run_follows_the_trajectory_and_reaches_the_steady_state_within_sampling_error
+          one_run_reaches_the_steady_state_of_the_route_logit_within_sampling_error
           with_the_added_link_every_trip_takes_19_min_split_in_thirds_with_8_min_queues
           the_steady_hour_is_the_capacity_constrained_equilibrium
           over_twenty_seeds_each_queued_link_enters_at_its_capacity_within_3_percent

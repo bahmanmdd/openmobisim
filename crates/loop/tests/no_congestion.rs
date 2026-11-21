@@ -32,12 +32,11 @@
 //! chi-square at the 0.999 quantile (a correct sampler fails once in a thousand seeds); and,
 //! since tastes are fixed and costs never change, nobody switches and nothing new is found
 //! after iteration 0, so the stopping rule of the specification ends the run at its first
-//! reading of five iterations. Without transit each mode holds one alternative, so the least
-//! cost of a traveller's mode is the cost it holds and nobody saves a share above the band: at
-//! iteration 0 everyone chooses (offered share exactly 1) and at `k >= 1` each traveller is
-//! offered with the plain step `1 / (k + 1)` by its own draw, so the offered share is a binomial
-//! share of mean `p = 1 / (k + 1)` and standard deviation `sqrt(p (1 - p) / n)` over the `n`
-//! trips; it is judged within 4 of those standard deviations.
+//! reading of five iterations. Under the logit every traveller is offered a new choice at the
+//! plain step, whatever it holds: at iteration 0 everyone chooses (offered share exactly 1) and
+//! at `k >= 1` each traveller is offered with the plain step `1 / (k + 1)` by its own draw, so
+//! the offered share is a binomial share of mean `p = 1 / (k + 1)` and standard deviation
+//! `sqrt(p (1 - p) / n)` over the `n` trips; it is judged within 4 of those standard deviations.
 //!
 //! For bikes: the bike is one of the modes judged, at 360 s and its closed-form share (0.4027
 //! of the trips without transit).
@@ -190,8 +189,9 @@ fn settled_at_once(result: &Run) {
     assert_eq!(result.iterations.len(), 5, "at the first five iterations");
 }
 
-/// The offered share of a run where nobody is above the band: exactly 1 at iteration 0, then
-/// within 4 binomial standard deviations of the plain step `1 / (k + 1)` over `n` trips.
+/// The offered share of a logit run, where every traveller is offered at the plain step,
+/// whatever it holds: exactly 1 at iteration 0, then within 4 binomial standard deviations of
+/// the plain step `1 / (k + 1)` over `n` trips.
 fn offered_at_the_plain_step(result: &Run, n: usize) {
     assert!(result.iterations[0].offered_share.to_bits() == 1.0_f64.to_bits(), "iteration 0");
     for it in &result.iterations[1..] {

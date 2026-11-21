@@ -12,7 +12,8 @@
 //! The equilibrium test is judged over seeds 0 to 4: in every seed, part 1 (the queue and the
 //! record) and the long route at free flow; on the mean over the five seeds, the short route's
 //! share, `t*`, the mean trip and the equal times, since one seed scatters about as much as
-//! their tolerances. The iteration-1 test is judged on seed 0 against its hand probabilities.
+//! their tolerances. The two iteration-1 tests, under the least cost and under the logit, are
+//! judged on seed 0 against their hand probabilities.
 
 #![allow(
     clippy::cast_precision_loss,
@@ -27,8 +28,9 @@ use common::{
     SEEDS, car_link, demand, departed_in, far_from_best, link, mean_se, mean_time, network,
     print_iterations, replay_queues, seed_mean, share_via, stream, time_only, took,
 };
-use openmobisim_loop::parameters::Parameters;
+use openmobisim_loop::parameters::{ChoiceModel, Parameters};
 use openmobisim_loop::run::run;
+use openmobisim_types::ids::{EntityId, TripId};
 use openmobisim_types::time::Second;
 
 /// The hour in seconds.
@@ -205,6 +207,107 @@ fn at_iteration_1_the_found_and_switch_shares_are_the_hand_values() {
     assert!(switched(0, 173) == 0.0, "a trip holding its best stays");
     for (from, to) in [(173, 715), (715, 1_257), (1_257, 1_800)] {
         let ((want, sd), got) = (by_hand(from, to), switched(from, to));
+        assert!(
+            (got - want).abs() <= 3.0 * sd + 1e-12,
+            "trips {from} to {to}: {got} against {want}"
+        );
+    }
+}
+
+/// The iteration-1 case of the test above under the logit at the default parameters. Under the
+/// least cost (above) a traveller whose best route would save more than 20 % of the cost of the
+/// one it holds is offered a new choice at the rate `r` of that saving; under the logit it is
+/// not: everyone is offered at the plain step. The two tests together pin both.
+///
+/// The default model: the nested logit with a nest per mode at μ = 0.5, 0.1 per minute driving
+/// (1/600 per second), the car constant 0, −1 on `car_ln_path_size`. The trips start and end
+/// at nodes (no walk between door and node), and the two routes share no link, so each route's
+/// path size is 1 and its `ln PS` 0: a route's cost is its seconds over 600. Both routes are in
+/// the one car nest, so the logit share of the long route is
+/// `1 / (1 + exp((t_long − t_short) / (600 μ)))`, `600 μ = 300 s`.
+///
+/// Iteration 0: every set holds the short route alone (288 s against 460.8 s at free flow), so
+/// everyone takes it, and, as above, the trip departing at `t = 2 n` reads it at `288 + n` s
+/// (car `n` leaves the bottleneck at `144 + 3 n`). Iteration 1: the search finds the long route
+/// for `n` from 173 to 1 799, the 1 627 trips whose short route reads above 460.8 s (found share
+/// `1 627 / 1 800`, exactly, as above). Each of the 1 800 travellers is offered a new choice
+/// with probability `1 / (1 + 1) = 1/2`, by its own draw: the offered share is a binomial share
+/// of mean 1/2 and standard deviation `√(1/4 / 1 800) = 0.0118`, judged within 4 of them, as
+/// `no_congestion.rs` judges its offered share. An offered traveller with `n` below 173 has
+/// one route and keeps it; one with `n` from 173 takes the long route with the logit probability
+/// at the times it reads, `P(n) = 1 / (1 + exp(−(288 + n − 460.8) / 300))
+/// = 1 / (1 + exp(−(n − 172.8) / 300))` (0.5002 at `n = 173`, 0.9956 at `n = 1 799`). So it
+/// switches with probability `p(n) = P(n) / 2`, and the switch share is
+/// `Σ_{n = 173}^{1 799} p(n) / 1 800 ≈ 150 ln((1 + e^{(1 799.5 − 172.8) / 300}) /
+/// (1 + e^{(172.5 − 172.8) / 300})) / 1 800 = 0.3945` (the sum itself: 0.39451), at
+/// `± √Σ p (1 − p) / 1 800 = 0.0110` (one standard deviation), judged at three, as the test
+/// above judges its own; so are the shares that switch in thirds in order of departure (`n` from
+/// 173 to 714: 0.3501 ± 0.0204; to 1 256: 0.4653 ± 0.0214; the rest: 0.4939 ± 0.0215). With the
+/// rule of the least cost the offered share would be 0.6146, 9.7 standard deviations of the
+/// offered share (0.0118) above 1/2.
+///
+/// For bikes: these travellers are car-only; a bike holder, alone in its mode, is offered at the
+/// plain step under either model.
+#[test]
+fn under_the_logit_at_iteration_1_everyone_is_offered_at_the_plain_step() {
+    let net = network(
+        &[("O", 0.0, 0.0), ("P", 2_000.0, 100.0), ("Q", 2_000.0, -100.0), ("D", 4_000.0, 0.0)],
+        &[
+            ("op", "O", "P", car_link(2_000.0, 50.0, 1_200.0)),
+            ("pd", "P", "D", car_link(2_000.0, 50.0, 36_000.0)),
+            ("oq", "O", "Q", car_link(3_200.0, 50.0, 36_000.0)),
+            ("qd", "Q", "D", car_link(3_200.0, 50.0, 36_000.0)),
+        ],
+    );
+    let rows = stream(&net, "c", "O", "D", 1_800.0, 1.0, Second(0));
+    let dem = demand(&net, &rows);
+    let parameters = Parameters { iteration_cap: 2, ..Parameters::defaults(1) };
+    assert_eq!(parameters.choice, ChoiceModel::Logit, "the default model");
+    assert!(parameters.nest_scale.to_bits() == 0.5_f64.to_bits(), "the default nest scale");
+    let b = &parameters.coefficients[0];
+    assert!(b[0].to_bits() == 0.1_f64.to_bits() && b[12] == 0.0, "0.1 per minute, constant 0");
+    let started = std::time::Instant::now();
+    let result = run(&net, &dem, None, (Second(0), Second(3 * 3_600)), &parameters).expect("a run");
+    println!("the run {:.2} s", started.elapsed().as_secs_f64());
+    print_iterations(&result);
+    let one = &result.iterations[1];
+    assert!((result.iterations[0].found_share - 1.0).abs() < 1e-12, "everyone found at 0");
+    assert!((one.found_share - 1_627.0 / 1_800.0).abs() < 1e-12, "found {}", one.found_share);
+    for i in 0..rows.len() {
+        let set = result.set(TripId::from_index(i));
+        let ln_ps: Vec<f64> = set.iter().map(|a| a.ln_path_size).collect();
+        assert!(ln_ps.iter().all(|&x| x == 0.0), "trip {i}: path sizes 1: {ln_ps:?}");
+    }
+    let offered_sd = (0.25_f64 / 1_800.0).sqrt();
+    println!("offered at iteration 1 {:.6} against 0.5 ± {offered_sd:.4}", one.offered_share);
+    assert!(
+        (one.offered_share - 0.5).abs() <= 4.0 * offered_sd,
+        "offered {} against 0.5 ± 4 × {offered_sd}",
+        one.offered_share
+    );
+    // The hand probabilities of the text above, summed over the trips `from..to`: the mean
+    // and the standard deviation of the share that switches.
+    let by_hand = |from: usize, to: usize| {
+        let p = |n: usize| {
+            if n < 173 { 0.0 } else { 0.5 / (1.0 + (-(n as f64 - 172.8) / 300.0).exp()) }
+        };
+        let count = (to - from) as f64;
+        let mean = (from..to).map(p).sum::<f64>() / count;
+        let sd = (from..to).map(|n| p(n) * (1.0 - p(n))).sum::<f64>().sqrt() / count;
+        (mean, sd)
+    };
+    let (want, sd) = by_hand(0, 1_800);
+    assert!((want - 0.3945).abs() < 5e-4, "the hand value {want}");
+    println!("switched at iteration 1 {:.4} against {want:.4} ± {sd:.4}", one.switch_share);
+    assert!((one.switch_share - want).abs() <= 3.0 * sd, "switch {}", one.switch_share);
+    let long = link(&net, "oq");
+    let switched = |from: usize, to: usize| {
+        (from..to).filter(|&n| took(&result, n, long)).count() as f64 / (to - from) as f64
+    };
+    assert!(switched(0, 173) == 0.0, "a trip with one route keeps it");
+    for (from, to) in [(173, 715), (715, 1_257), (1_257, 1_800)] {
+        let ((want, sd), got) = (by_hand(from, to), switched(from, to));
+        println!("trips {from} to {to}: switched {got:.4} against {want:.4} ± {sd:.4}");
         assert!(
             (got - want).abs() <= 3.0 * sd + 1e-12,
             "trips {from} to {to}: {got} against {want}"

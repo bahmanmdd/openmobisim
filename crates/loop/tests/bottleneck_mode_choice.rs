@@ -6,9 +6,8 @@
 //! its downstream end; a path O→D for bikes, 1 500 m (360 s at 15 km/h), never congested.
 //! Travellers leave O at a constant rate `q = 3 c` for three hours, each open to car and bike,
 //! choosing by the default model (the nested logit; one alternative per mode, so the nest scale
-//! plays no part). With one alternative per mode, who is offered a new choice at iteration `k`
-//! is the plain method of successive averages, `1 / (k + 1)`: the loop's added chance reads
-//! only alternatives of the mode a traveller holds, and here there is no other.
+//! plays no part). Under the logit every traveller is offered a new choice at iteration `k` at
+//! the plain step of the method of successive averages, `1 / (k + 1)`, whatever it holds.
 //!
 //! The default utilities here. Every trip starts and ends at a node, so no walk between door
 //! and node (`walk_min` 0); the street is the one car route, so its path size is 1 and

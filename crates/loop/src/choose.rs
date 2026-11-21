@@ -1,7 +1,7 @@
 //! Stage 2, choose: the choice model over each traveller's set; who is offered a new choice is
-//! decided by the step of the method of successive averages, raised to the share of its cost a
-//! traveller would save on its best alternative of the same mode when that share is above a
-//! band.
+//! decided by the step of the method of successive averages; under the least-cost choice that
+//! step is raised to the share of its cost a traveller would save on its best alternative of the
+//! same mode when that share is above a band, under the logit it is not.
 
 use openmobisim_choice::cost::{ChoiceError, Coefficients, Row, Traveller};
 use openmobisim_choice::model::{Choice, Deterministic, Logit};
@@ -73,34 +73,49 @@ fn choice(
     Ok(u32::try_from(j).unwrap_or(u32::MAX))
 }
 
-/// The band of indifference: a traveller whose best alternative of the same mode would save a
-/// share of the cost of the one it holds at or below this is offered a new choice only with the
-/// plain step of the method of successive averages (Mahmassani and Chang 1987). A fixed
-/// constant of the rule, not a parameter of a run.
+/// The band of indifference of the least-cost choice: a traveller whose best alternative of the
+/// same mode would save a share of the cost of the one it holds at or below this is offered a
+/// new choice only with the plain step of the method of successive averages (Mahmassani and
+/// Chang 1987). A fixed constant of the rule, not a parameter of a run.
 const BAND: f64 = 0.2;
 
 /// The chance that trip `i`, holding the alternative at `held` of `set`, is offered a new choice
-/// at `iteration`: `max(1 / (iteration + 1), s)`. The first term is the step of the plain method
-/// of successive averages. The second is after Smith's proportional switching (1984), in its
-/// spirit rather than his process: `s = r` when `r > BAND`, else 0, with `r = (c - b) / c`, `c`
-/// the cost of the alternative it holds and `b` the least cost among the alternatives of its
-/// set of the same mode as the one it holds, as the choice that follows reads them (systematic
-/// costs: the times of the last measure and, under the logit, the path sizes of the set as it
-/// now is). `s` is 0 when
-/// `c` is not positive, and never above 1 (`r` passes 1 only when `b` is negative). No other
-/// traveller's costs enter. Only the mode held enters `b`, but an offered traveller chooses over
-/// its whole set, its mode included, so one above the band reconsiders its mode at the rate `r`
-/// too. Under the logit a traveller holding by taste an alternative more than the band dearer
-/// than the cheapest of its mode is offered at `r` at every iteration. `r` is the same in any
-/// unit of cost but shrinks when a constant is added to every cost.
+/// at `iteration`.
+///
+/// Under the logit: `1 / (iteration + 1)`, the step of the plain method of successive averages,
+/// for every traveller. The logit's shares, computed from the costs of the alternatives, put
+/// some travellers on an alternative that is not the lowest-cost one of its mode. When the costs
+/// change, travellers have to move in both directions: toward the lower-cost alternative and
+/// toward the higher-cost one. A chance that rose with the cost a traveller would save by moving
+/// to the lowest-cost alternative of its mode would rise only for the holders of a higher-cost
+/// alternative. Moves toward the lower cost would then be asked for often and moves toward the
+/// higher cost rarely, and the higher-cost alternatives would hold too few travellers by an
+/// amount that falls only as `1 / k`. So under the logit every traveller is asked at the same
+/// step.
+///
+/// Under the least-cost choice: `max(1 / (iteration + 1), s)`. The second term is after Smith's
+/// proportional switching (1984), in its spirit rather than his process: `s = r` when
+/// `r > BAND`, else 0, with `r = (c - b) / c`, `c` the cost of the alternative it holds and `b`
+/// the least cost among the alternatives of its set of the same mode as the one it holds, as the
+/// choice that follows reads them (systematic costs at the times of the last measure). `s` is 0
+/// when `c` is not positive, and never above 1 (`r` passes 1 only when `b` is negative). No
+/// other traveller's costs enter. Only the mode held enters `b`, but an offered traveller
+/// chooses over its whole set, its mode included, so one above the band reconsiders its mode at
+/// the rate `r` too. Under the least-cost choice every traveller belongs on the lowest-cost
+/// alternative of its set, so the raised chance speeds only moves that every traveller has to
+/// make. `r` is the same in any unit of cost but shrinks when a constant is added to every cost.
 fn chance(ctx: &Context<'_>, i: usize, set: &[Alternative], held: u32, iteration: u32) -> f64 {
+    let plain = 1.0 / f64::from(iteration + 1);
+    if ctx.parameters.choice == ChoiceModel::Logit {
+        return plain;
+    }
     let cost = |a: &Alternative| ctx.parameters.cost(ctx.class[i], &a.attributes());
     let taken = &set[held as usize];
     let c = cost(taken);
     let b = set.iter().filter(|a| a.mode == taken.mode).map(cost).fold(f64::INFINITY, f64::min);
     let r = if c > 0.0 { (c - b) / c } else { 0.0 };
     let s = if r > BAND { r.min(1.0) } else { 0.0 };
-    (1.0 / f64::from(iteration + 1)).max(s)
+    plain.max(s)
 }
 
 /// A trip's outcome of the choose stage: the alternative it holds after it, whether it was
