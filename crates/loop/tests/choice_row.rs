@@ -44,8 +44,9 @@ use openmobisim_graph::network::LinkRow;
 use openmobisim_loop::alternative::{Alternative, Leg, path_sizes};
 use openmobisim_loop::parameters::{COLUMNS, Parameters};
 use openmobisim_loop::run::run;
+use openmobisim_transit::raptor::{Journey, Ride};
 use openmobisim_transit::timetable::{Call, TimetableBuilder};
-use openmobisim_types::ids::{EntityId, TripId};
+use openmobisim_types::ids::{EntityId, StopId, TransitRunId, TripId};
 use openmobisim_types::mode::{Mode, ModeSet};
 use openmobisim_types::time::Second;
 use openmobisim_types::units::{Duration, Metres};
@@ -255,4 +256,48 @@ fn three_car_routes_take_the_path_size_by_length_over_the_routes_using_each_link
         assert!((got - ps.ln()).abs() < 1e-12, "{links:?}: ln PS {got}, by hand ln {ps}");
         println!("{links:?}: PS {:.6} by hand {ps:.6}", got.exp());
     }
+}
+
+/// A journey of one ride, A at 600 s to C at 1 500 s, reached on second 23 and left with a walk
+/// of 22.5 s; with `rides` false the same journey without its ride.
+fn one_ride(rides: bool) -> Journey {
+    let ride = Ride {
+        run: TransitRunId::new(0),
+        board: (StopId::new(0), Second(600)),
+        alight: (StopId::new(1), Second(1_500)),
+    };
+    Journey {
+        rides: if rides { vec![ride] } else { Vec::new() },
+        footpaths: Vec::new(),
+        access: (StopId::new(0), Second(23)),
+        egress: (StopId::new(1), Duration(22.5)),
+        arrival: Second(1_523),
+    }
+}
+
+/// A transit alternative of a shape the pricing does not know, a car leg before the journey, is
+/// refused: priced, it would fill no column of a journey and cost transit's constant alone.
+#[test]
+#[should_panic(expected = "an alternative is three legs, a walk, a route or a journey, and a walk")]
+fn a_transit_row_with_a_car_leg_before_its_journey_is_refused() {
+    let legs = vec![
+        Leg::Walk(Duration(22.5)),
+        Leg::Route { mode: Mode::Car, links: Vec::new() },
+        Leg::Journey(one_ride(true)),
+        Leg::Walk(Duration(22.5)),
+    ];
+    let a = Alternative { mode: Mode::Transit, legs, time: 1_522.5, ln_path_size: 0.0 };
+    let _ = a.attributes();
+}
+
+/// A journey without a ride has no first boarding to price its first wait from: refused.
+#[test]
+#[should_panic(
+    expected = "a transit alternative is a walk, a journey of at least one ride and a walk"
+)]
+fn a_transit_row_whose_journey_has_no_ride_is_refused() {
+    let legs =
+        vec![Leg::Walk(Duration(22.5)), Leg::Journey(one_ride(false)), Leg::Walk(Duration(22.5))];
+    let a = Alternative { mode: Mode::Transit, legs, time: 1_522.5, ln_path_size: 0.0 };
+    let _ = a.attributes();
 }

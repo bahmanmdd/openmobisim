@@ -1,5 +1,7 @@
 //! The parameters of a run the loop reads (`PARAMETERS.md`), and the choice model's name.
 
+use openmobisim_choice::cost::cost_of;
+
 /// The columns of a choice row, in order: the times of each mode's parts in minutes (a car or
 /// bike alternative's walks between door and node in `walk_min`), the transfers, euros, the
 /// natural logarithm of a car route's path size, and one constant per mode (1 for the
@@ -25,8 +27,89 @@ pub const COLUMNS: [&str; N] = [
 
 /// How many columns a choice row has.
 pub const N: usize = 16;
-/// The column of the path size.
+
+/// The column `car_drive_min`: a car's minutes on the network.
+pub const CAR_DRIVE_MIN: usize = 0;
+/// The column `bike_ride_min`: a bike's minutes on the network.
+pub const BIKE_RIDE_MIN: usize = 1;
+/// The column `walk_min`: a walker's minutes, or a car's or a bike's walks between door and node.
+pub const WALK_MIN: usize = 2;
+/// The column `transit_in_vehicle_min`: a journey's minutes in vehicles.
+pub const TRANSIT_IN_VEHICLE_MIN: usize = 3;
+/// The column `transit_access_min`: a journey's walk to its first stop, minutes.
+pub const TRANSIT_ACCESS_MIN: usize = 4;
+/// The column `transit_egress_min`: a journey's walk from its last stop, minutes.
+pub const TRANSIT_EGRESS_MIN: usize = 5;
+/// The column `transit_first_wait_min`: from the end of the access walk to the first boarding,
+/// minutes.
+pub const TRANSIT_FIRST_WAIT_MIN: usize = 6;
+/// The column `transit_transfer_wait_min`: a journey's waits at transfers, minutes.
+pub const TRANSIT_TRANSFER_WAIT_MIN: usize = 7;
+/// The column `transit_transfer_walk_min`: a journey's walks between stops, minutes.
+pub const TRANSIT_TRANSFER_WALK_MIN: usize = 8;
+/// The column `transit_transfers`: a journey's transfers, its rides less one.
+pub const TRANSIT_TRANSFERS: usize = 9;
+/// The column `money_eur`: euros.
+pub const MONEY_EUR: usize = 10;
+/// The column `car_ln_path_size`: the natural logarithm of a car route's path size.
 pub const LN_PS: usize = 11;
+/// The column `is_car`: the car's constant.
+pub const IS_CAR: usize = 12;
+/// The column `is_bike`: the bike's constant.
+pub const IS_BIKE: usize = 13;
+/// The column `is_walk`: the walker's constant.
+pub const IS_WALK: usize = 14;
+/// The column `is_transit`: transit's constant.
+pub const IS_TRANSIT: usize = 15;
+
+/// Whether `a` and `b` are the same string; a function the compiler can run, for the check below.
+const fn same(a: &str, b: &str) -> bool {
+    let (a, b) = (a.as_bytes(), b.as_bytes());
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut k = 0;
+    while k < a.len() {
+        if a[k] != b[k] {
+            return false;
+        }
+        k += 1;
+    }
+    true
+}
+
+/// Every name above with its column's string, one per column of `COLUMNS` in order: the array
+/// has `N` entries, so a column added to `COLUMNS` (and `N` raised) stops the build until it is
+/// named here.
+const NAMED: [(usize, &str); N] = [
+    (CAR_DRIVE_MIN, "car_drive_min"),
+    (BIKE_RIDE_MIN, "bike_ride_min"),
+    (WALK_MIN, "walk_min"),
+    (TRANSIT_IN_VEHICLE_MIN, "transit_in_vehicle_min"),
+    (TRANSIT_ACCESS_MIN, "transit_access_min"),
+    (TRANSIT_EGRESS_MIN, "transit_egress_min"),
+    (TRANSIT_FIRST_WAIT_MIN, "transit_first_wait_min"),
+    (TRANSIT_TRANSFER_WAIT_MIN, "transit_transfer_wait_min"),
+    (TRANSIT_TRANSFER_WALK_MIN, "transit_transfer_walk_min"),
+    (TRANSIT_TRANSFERS, "transit_transfers"),
+    (MONEY_EUR, "money_eur"),
+    (LN_PS, "car_ln_path_size"),
+    (IS_CAR, "is_car"),
+    (IS_BIKE, "is_bike"),
+    (IS_WALK, "is_walk"),
+    (IS_TRANSIT, "is_transit"),
+];
+
+// Checked when the crate is built, position by position: the k-th name is position k and its
+// string is `COLUMNS[k]`. So a column added, removed or moved in `COLUMNS` stops the build until
+// the names follow it.
+const _: () = {
+    let mut k = 0;
+    while k < N {
+        assert!(NAMED[k].0 == k && same(COLUMNS[k], NAMED[k].1));
+        k += 1;
+    }
+};
 
 /// Which choice model a run uses.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -135,17 +218,22 @@ impl Parameters {
         read
     }
 
-    /// The cost of `attributes` (one per column) for class `class`: the systematic utility.
+    /// The cost of `attributes` (one per column) for class `class`: the systematic utility,
+    /// formed by the choice crate's [`cost_of`], so that it is to the bit the cost the choice
+    /// reads.
     #[must_use]
     pub fn cost(&self, class: usize, attributes: &[f64; N]) -> f64 {
-        let b = &self.coefficients[class];
-        b.iter().zip(attributes).map(|(b, x)| b * x).sum()
+        cost_of(&self.coefficients[class], attributes)
     }
 
     /// The cost of `attributes` without the path-size term: what decides whether a route the
-    /// search found is cheaper than the set's cheapest.
+    /// search found is cheaper than the set's cheapest. The column `car_ln_path_size` is left
+    /// out of the sum (read as 0, its term adds nothing), so two alternatives that differ only
+    /// in their path size have this cost to the bit.
     #[must_use]
     pub fn time_money_cost(&self, class: usize, attributes: &[f64; N]) -> f64 {
-        self.cost(class, attributes) - self.coefficients[class][LN_PS] * attributes[LN_PS]
+        let mut without = *attributes;
+        without[LN_PS] = 0.0;
+        self.cost(class, &without)
     }
 }

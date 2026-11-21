@@ -14,7 +14,10 @@ use common::{at, network};
 use openmobisim_demand::demand::Demand;
 use openmobisim_demand::input::TripRow;
 use openmobisim_graph::network::{LinkRow, Network};
-use openmobisim_loop::parameters::{ChoiceModel, Parameters};
+use openmobisim_loop::parameters::{
+    ChoiceModel, N, Parameters, TRANSIT_ACCESS_MIN, TRANSIT_EGRESS_MIN, TRANSIT_FIRST_WAIT_MIN,
+    TRANSIT_TRANSFER_WAIT_MIN,
+};
 use openmobisim_loop::run::{Run, RunError, run};
 use openmobisim_transit::timetable::{Call, Timetable, TimetableBuilder};
 use openmobisim_types::ids::{EntityId, TripId};
@@ -195,4 +198,112 @@ fn a_negative_transit_coefficient_is_refused() {
     assert_eq!(refused, Err(want));
     // Without a timetable the transit columns are not read.
     assert!(run(&net, &demand, None, window, &parameters).is_ok());
+}
+
+/// As [`one_trip`] with one search per trip end, at the coefficients `b`.
+fn paying(net: &Network, tt: &Timetable, (from, to): (f64, f64), b: [f64; N]) -> Run {
+    let rows = [TripRow {
+        id: "t".to_string(),
+        origin: at(from, 0.0),
+        destination: at(to, 0.0),
+        departure: Second(0),
+        class: "default".to_string(),
+        modes: ModeSet::of(&[Mode::Transit]),
+    }];
+    let demand = Demand::build(&rows, &["default".to_string()], net, Some(tt), Metres(1_500.0))
+        .expect("a demand");
+    let parameters = Parameters {
+        choice: ChoiceModel::Deterministic,
+        nearby_stops: 1,
+        iteration_cap: 1,
+        coefficients: vec![b],
+        ..Parameters::defaults(1)
+    };
+    run(net, &demand, Some(tt), (Second(0), Second(3_600)), &parameters).expect("a run")
+}
+
+#[test]
+fn the_search_weighs_the_first_wait_and_the_transfer_wait_each_by_its_own_coefficient() {
+    // The class pays 0.1 per minute of first wait and 0.4 per minute waited at a transfer, the
+    // other coefficients the defaults. Stops A at the origin, X at 5 000 m, B at the
+    // destination, 10 000 m; no run goes from A to B, so every journey has two rides. Runs:
+    // r0 A 60 s → X 360 s, r1 A 900 s → X 1 200 s, r2 X 1 260 s → B 1 500 s, r3 X 1 259 s →
+    // B 1 499 s. Each journey rides 9 min (0.9) and pays one transfer and transit's constant
+    // (0.75). The earliest, r0 then r3, at the door at 1 499 s: first wait 1 min × 0.1 +
+    // transfer wait 899 s × 0.4 / 60 + 0.9 + 0.75 = 7.74333. r1 then r2, at 1 500 s: first wait
+    // 15 min × 0.1 + transfer wait 1 min × 0.4 + 0.9 + 0.75 = 3.55, the cheapest (r0 then r2:
+    // 0.1 + 6 + 0.9 + 0.75 = 7.75). Both are offered and the cheaper is taken. With the two
+    // waits' coefficients exchanged the cheapest would be the earliest (0.4 + 1.49833 + 0.9 +
+    // 0.75 = 3.54833 against 6 + 0.1 + 0.9 + 0.75 = 7.75), and the journey at 1 500 s would not
+    // be offered.
+    let net = line(&[("a", 0.0), ("x", 5_000.0), ("b", 10_000.0)]);
+    let tt = timetable(
+        &[("A", 0.0), ("X", 5_000.0), ("B", 10_000.0)],
+        &[
+            &[("A", 60), ("X", 360)],
+            &[("A", 900), ("X", 1_200)],
+            &[("X", 1_260), ("B", 1_500)],
+            &[("X", 1_259), ("B", 1_499)],
+        ],
+    );
+    let mut b = Parameters::DEFAULT_COEFFICIENTS;
+    b[TRANSIT_FIRST_WAIT_MIN] = 0.1;
+    b[TRANSIT_TRANSFER_WAIT_MIN] = 0.4;
+    let r = paying(&net, &tt, (0.0, 10_000.0), b);
+    assert_eq!(times(&r), [1_499.0, 1_500.0], "the earliest, then the cheapest");
+    assert!((r.trips.travel_time[0] - 1_500.0).abs() < 1e-9, "the cheaper is taken");
+    assert!((r.trips.cost[0] - 3.55).abs() < 1e-9, "{}", r.trips.cost[0]);
+    let earliest = Parameters { coefficients: vec![b], ..Parameters::defaults(1) }
+        .cost(0, &r.set(TripId::new(0))[0].attributes());
+    let by_hand = 0.1 + 899.0 * 0.4 / 60.0 + 0.9 + 0.75;
+    assert!((earliest - by_hand).abs() < 1e-9, "{earliest} against {by_hand}");
+}
+
+#[test]
+fn the_search_weighs_the_walk_to_the_first_stop_and_the_walk_from_the_last_each_by_its_own_coefficient()
+ {
+    // The class pays 0.3 per minute walked to the first stop and 0.1 per minute walked from the
+    // last, the other coefficients the defaults; one search per trip end. The door at 0 m, stops
+    // A1 there and A2 at 600 m (450 s); the destination at 10 000 m, stops B1 there and B2 at
+    // 9 400 m (450 s). Run p: A1 600 s → B2 1 500 s; run q: A2 1 050 s → B1 1 949 s. Through
+    // A2 and q, the earliest, at the door at 1 949 s: walk 7.5 min × 0.3 = 2.25, wait 10 min ×
+    // 0.145 = 1.45, ride 899 s × 0.1 / 60 = 1.49833, no walk after, transit 0.25: 5.44833.
+    // Through p and B2, at 1 950 s: no walk before, wait 1.45, ride 15 min × 0.1 = 1.5, walk
+    // 7.5 min × 0.1 = 0.75, 0.25: 3.95, the cheapest. Both are offered and the cheaper is
+    // taken. With the two walks' coefficients exchanged the cheapest would be the earliest
+    // (0.75 + 1.45 + 1.49833 + 0.25 = 3.94833 against 1.45 + 1.5 + 2.25 + 0.25 = 5.45), and the
+    // journey at 1 950 s would not be offered.
+    let net = line(&[("a", 0.0), ("a2", 600.0), ("b2", 9_400.0), ("b", 10_000.0)]);
+    let tt = timetable(
+        &[("A1", 0.0), ("A2", 600.0), ("B2", 9_400.0), ("B1", 10_000.0)],
+        &[&[("A1", 600), ("B2", 1_500)], &[("A2", 1_050), ("B1", 1_949)]],
+    );
+    let mut b = Parameters::DEFAULT_COEFFICIENTS;
+    b[TRANSIT_ACCESS_MIN] = 0.3;
+    b[TRANSIT_EGRESS_MIN] = 0.1;
+    let r = paying(&net, &tt, (0.0, 10_000.0), b);
+    assert_eq!(times(&r), [1_949.0, 1_950.0], "the earliest, then the cheapest");
+    assert!((r.trips.travel_time[0] - 1_950.0).abs() < 1e-9, "the cheaper is taken");
+    assert!((r.trips.cost[0] - 3.95).abs() < 1e-9, "{}", r.trips.cost[0]);
+}
+
+#[test]
+fn the_search_weighs_a_transfer_by_its_own_coefficient_and_not_by_that_of_the_wait() {
+    // The default coefficients: 0.5 per transfer, 0.145 per minute waited. Stops A at the
+    // origin, X at 5 000 m, B at the destination, 10 000 m. A direct run d A 600 s → B 1 500 s;
+    // runs t1 A 60 s → X 500 s and t2 X 620 s → B 1 501 s. The direct journey, the earliest:
+    // wait 10 min × 0.145 = 1.45, ride 15 min × 0.1 = 1.5, transit 0.25: 3.2. With the
+    // transfer, at the door a second later: first wait 1 min × 0.145 = 0.145, rides (440 +
+    // 881) s × 0.1 / 60 = 2.20167, transfer wait 2 min × 0.145 = 0.29, one transfer 0.5,
+    // 0.25: 3.38667, dearer, so it is not offered: two rides make no journey cheaper than one.
+    // Were the transfer weighed by the coefficient of a minute of waiting, 0.145, it would cost
+    // 3.03167, below 3.2, and be offered.
+    let net = line(&[("a", 0.0), ("x", 5_000.0), ("b", 10_000.0)]);
+    let tt = timetable(
+        &[("A", 0.0), ("X", 5_000.0), ("B", 10_000.0)],
+        &[&[("A", 600), ("B", 1_500)], &[("A", 60), ("X", 500)], &[("X", 620), ("B", 1_501)]],
+    );
+    let r = paying(&net, &tt, (0.0, 10_000.0), Parameters::DEFAULT_COEFFICIENTS);
+    assert_eq!(times(&r), [1_500.0], "the direct journey alone");
+    assert!((r.trips.cost[0] - 3.2).abs() < 1e-9, "{}", r.trips.cost[0]);
 }

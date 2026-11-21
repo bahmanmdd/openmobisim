@@ -14,6 +14,10 @@ use rayon::prelude::*;
 
 use crate::alternative::{Alternative, Leg, path_sizes, price};
 use crate::context::Context;
+use crate::parameters::{
+    TRANSIT_ACCESS_MIN, TRANSIT_EGRESS_MIN, TRANSIT_FIRST_WAIT_MIN, TRANSIT_IN_VEHICLE_MIN,
+    TRANSIT_TRANSFER_WAIT_MIN, TRANSIT_TRANSFER_WALK_MIN, TRANSIT_TRANSFERS,
+};
 use crate::whole;
 
 /// The network modes the search runs for at `iteration`: cars every iteration; bikes and
@@ -64,11 +68,11 @@ fn nearest(list: &[(StopId, Duration)], n: usize) -> Vec<(StopId, Duration)> {
 fn weights(ctx: &Context<'_>, class: usize) -> Weights {
     let b = &ctx.parameters.coefficients[class];
     Weights {
-        first_wait: b[6] / 60.0,
-        in_vehicle: b[3] / 60.0,
-        transfer_wait: b[7] / 60.0,
-        transfer_walk: b[8] / 60.0,
-        transfer: b[9],
+        first_wait: b[TRANSIT_FIRST_WAIT_MIN] / 60.0,
+        in_vehicle: b[TRANSIT_IN_VEHICLE_MIN] / 60.0,
+        transfer_wait: b[TRANSIT_TRANSFER_WAIT_MIN] / 60.0,
+        transfer_walk: b[TRANSIT_TRANSFER_WALK_MIN] / 60.0,
+        transfer: b[TRANSIT_TRANSFERS],
     }
 }
 
@@ -116,14 +120,14 @@ fn journeys(ctx: &Context<'_>) -> Vec<Vec<Journey>> {
         let (b, w) = (&ctx.parameters.coefficients[ctx.class[i]], weights(ctx, ctx.class[i]));
         let reach = |&(_, walk): &(StopId, Duration)| {
             let wait = f64::from(whole(there(walk))) - there(walk);
-            b[4] / 60.0 * walk.get() + w.first_wait * wait
+            b[TRANSIT_ACCESS_MIN] / 60.0 * walk.get() + w.first_wait * wait
         };
         who_cost.push(i);
         cost_queries.push(CostQuery {
             query: raptor::Query { access: all, egress: egress.to_vec(), max_rides },
             weights: w,
             access_cost: access.iter().map(reach).collect(),
-            egress_cost: egress.iter().map(|e| b[5] / 60.0 * e.1.get()).collect(),
+            egress_cost: egress.iter().map(|e| b[TRANSIT_EGRESS_MIN] / 60.0 * e.1.get()).collect(),
         });
     }
     let slack = Duration(f64::from(ctx.parameters.boarding_slack));

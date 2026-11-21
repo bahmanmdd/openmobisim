@@ -44,7 +44,7 @@ use openmobisim_io_parquet::{
     Files, Given as RunGiven, OutputError, Source, Transit as RunTransit, WriteError,
 };
 use openmobisim_loop::assess::Iteration;
-use openmobisim_loop::parameters::{ChoiceModel, Parameters};
+use openmobisim_loop::parameters::{ChoiceModel, N, Parameters};
 use openmobisim_map::{Kept, MapError, Mapped};
 use openmobisim_summary::{Summarised, SummaryError};
 use openmobisim_transit::timetable::Timetable;
@@ -667,7 +667,7 @@ fn parameters(given: &Given<'_>, demand: &RustDemand) -> PyResult<Parameters> {
     };
     let mut coefficients = d.coefficients.clone();
     if given.raw("coefficients").is_some() {
-        let rows: BTreeMap<String, [f64; 16]> = given.get("coefficients", BTreeMap::new())?;
+        let rows: BTreeMap<String, [f64; N]> = given.get("coefficients", BTreeMap::new())?;
         if let Some(other) = rows.keys().find(|c| demand.class_ids().id_of(c).is_none()) {
             return Err(PyValueError::new_err(format!(
                 "coefficients: {other} is not a class of the demand"

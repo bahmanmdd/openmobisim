@@ -19,6 +19,9 @@ timetables or the network.
 - `Choice::probabilities(&traveller, &rows)`: each row's probability, in row order, summing
   to 1.
 - `Coefficients::costs(&traveller, &rows)`: each row's cost.
+- `cost_of(coefficients, attributes)`: one row's cost, `Σ_k β[k] · x[k]` added in column order;
+  the one place the sum is formed, read by `Coefficients::costs` and by a caller that reports a
+  cost, so the cost it reports is, to the bit, the one the choice reads.
 
 ## Units
 The cost of a row for a traveller of class `c` is `Σ_k β[c][k] · x[k]`, each attribute `x[k]`

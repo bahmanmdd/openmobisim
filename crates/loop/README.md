@@ -38,20 +38,25 @@ stopping rule; and the three tables a run returns. Depends on `openmobisim-types
 ## Units
 Seconds and metres; `f64` seconds after the window's start inside, `Second` on the clock at the
 boundary; euros for money; the choice row's times in minutes; a cost is `Σ β x` in the choice
-model's unit (minutes in a time-only run: 1 on each of the nine time columns, 0 on the rest).
+model's unit (minutes in a time-only run: 1 on each of the nine time columns, 0 on the rest),
+formed by the choice crate's `cost_of`, so the cost a run reports is the one the choice reads.
 
 ## Meanings and assumptions
 - **An alternative** is its mode and three legs: a walk off the network (the gap between the
   door and its node, or a transit access walk, priced by the demand's seconds and loaded
   nowhere), then a route on the network (car, bike or walk; empty when the origin's node is
-  the destination's) or a journey on the timetable, then a walk. A set is append-only, so an
+  the destination's) or a journey on the timetable, then a walk. An alternative of another shape
+  is a fault of the program, refused with a message naming the legs it has where a journey's
+  parts are priced, and where a trip is loaded and its outcome taken; a car, bike or walk
+  alternative of another shape would still be priced until it is chosen and loaded. A set is
+  append-only, so an
   alternative keeps its position and the traveller's taste (its random draw, fixed for the run:
   `crates/choice/README.md`).
 - **Search:** cars every iteration (`fastest_many` on the last loading's reading, free flow at
   iteration 0); bikes, walkers and transit at iteration 0 only, since their costs never change
   in release 0.2, a property, not an option. A route not yet in the set is appended; it is *found* when
-  its cost without the path-size term is strictly below that of every alternative of its mode
-  in the set (the first alternative of a mode counts as found): a faster car route counts
+  its cost without the path-size term (the sum with that column left out) is strictly below
+  that of every alternative of its mode in the set (the first alternative of a mode counts as found): a faster car route counts
   for a traveller whose bike is cheaper still. A set that grew has its path sizes rewritten at once, so
   the logit's choice of the same iteration reads the path sizes of the set it chooses from. Transit offers, to a set without transit, every journey of
   `Raptor::by_rides`: for each number of rides that reaches the door earlier than every smaller
@@ -74,7 +79,9 @@ model's unit (minutes in a time-only run: 1 on each of the nine time columns, 0 
   minutes: `car_drive_min`, `bike_ride_min`, `walk_min`, `transit_in_vehicle_min`,
   `transit_access_min`, `transit_egress_min`, `transit_first_wait_min`,
   `transit_transfer_wait_min`, `transit_transfer_walk_min`, `transit_transfers`, `money_eur`,
-  `car_ln_path_size`, `is_car`, `is_bike`, `is_walk`, `is_transit`. An alternative fills only
+  `car_ln_path_size`, `is_car`, `is_bike`, `is_walk`, `is_transit` (in the code each position
+  has a name, `CAR_DRIVE_MIN` to `IS_TRANSIT` and `LN_PS` for the path size, checked against
+  `COLUMNS` when the crate is built). An alternative fills only
   its mode's columns: a car or bike its time on the network (door to door less its two gap
   walks; the route is entered at the instant the first walk ends) and its gap walks in
   `walk_min`; a walk
@@ -263,10 +270,13 @@ or the car share against the logit share at the times met; printed, not judged);
 mixed numbers that follow from the three (the mean trip, a queue's delay); by hand, the bike's 360 s and 405 s, the walker's 1 125 s, a journey at 922.5 s,
 the cheaper mode taken, the nearest stop tried alone and two journeys on one run
 (`tests/nearby_stops.rs`), an empty route, an unfinished walker, the boarding slack and the most
-rides, the refusals and the window's repairs, the stopping rule on hand-made rows; the choice row of each mode by hand
+rides, the search weighing a journey's first wait and its waits at transfers each by its own
+coefficient (`tests/cheapest_journey.rs`), the refusals and the window's repairs, the stopping rule on hand-made rows; the choice row of each mode by hand
 (`tests/choice_row.rs`: a car and a bike with gap walks, a walk, a journey with one transfer,
 every part in minutes; the path size of two overlapping car routes, 0 for bike and walk
-routes; and of three car routes sharing one link among three and one among two, one link
+routes; a transit row with a car leg before its journey, or a journey without a ride, refused,
+and so, beside the loading's code, a car alternative with two routes and one ending on a route;
+and of three car routes sharing one link among three and one among two, one link
 slower than the rest, by length: 7/12, 14/27 and 17/30); the path size of every car route of
 every set at the end of a run, three routes of 800, 1 000 and 1 200 m sharing their first
 600 m, by hand (`tests/path_size_in_a_run.rs`); on the same three routes a least-cost run the
@@ -278,7 +288,10 @@ read as −μ at μ of 0.5, 0.25 and 1, the rest as given, and three car routes 
 parameters as read with a nest per mode, against the closed form with the path size at the exponent 1 by hand within 1e-12, and in a
 logit run on the three routes above at μ of 0.5, 0.25 and 1, each trip's cost the minutes of
 the route it takes less μ times the logarithm of its path size by hand, within 1e-9
-(`tests/path_size_in_the_car_nest.rs`);
+(`tests/path_size_in_the_car_nest.rs`); the cost reported equal to the bit to the cost the
+choice reads, for 200 alternatives of each mode built with awkward numbers and two classes, and
+two car routes of 189.5 s, of path sizes 1 and 0.5, costing the same without the path-size
+term to the bit, 0.3645833 by hand (`tests/one_cost.rs`);
 the default run against outside answers: without congestion, the closed-form logit
 shares of car, bike, walk and transit (`tests/no_congestion.rs`), a nest of two journeys on
 two runs (the earliest and a cheaper one arriving later) against a bike, the nested logit's

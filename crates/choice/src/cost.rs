@@ -121,6 +121,16 @@ impl fmt::Display for ChoiceError {
 
 impl core::error::Error for ChoiceError {}
 
+/// The cost of one row: `Σ_k β[k] · x[k]`, the products of each coefficient and its attribute
+/// added in column order (see the module documentation). The one place the sum is formed: the
+/// [`Coefficients`] weigh each row with it, and a caller that reports a cost forms it here too,
+/// so that what it reports is, to the bit, what the choice reads. Columns past the shorter of the
+/// two are not read.
+#[must_use]
+pub fn cost_of(coefficients: &[f64], attributes: &[f64]) -> f64 {
+    coefficients.iter().zip(attributes).map(|(b, x)| b * x).sum()
+}
+
 /// The columns of the rows, by name, and each user class's coefficient on each: what turns a
 /// row into its cost (see the module documentation). Fixed once built.
 #[derive(Clone, Debug, PartialEq)]
@@ -199,7 +209,7 @@ impl Coefficients {
                 let (columns, attributes) = (betas.len(), r.attributes.len());
                 return Err(ChoiceError::RowLength { row, columns, attributes });
             }
-            let cost: f64 = betas.iter().zip(r.attributes).map(|(b, x)| b * x).sum();
+            let cost = cost_of(betas, r.attributes);
             if !cost.is_finite() {
                 return Err(ChoiceError::NotFiniteCost { row });
             }

@@ -36,7 +36,11 @@ use crate::assess::{Iteration, assess, stops};
 use crate::choose::{Model, choose};
 use crate::context::Context;
 use crate::load::{load, measure, realise};
-use crate::parameters::{COLUMNS, Parameters};
+use crate::parameters::{
+    COLUMNS, Parameters, TRANSIT_ACCESS_MIN, TRANSIT_EGRESS_MIN, TRANSIT_FIRST_WAIT_MIN,
+    TRANSIT_IN_VEHICLE_MIN, TRANSIT_TRANSFER_WAIT_MIN, TRANSIT_TRANSFER_WALK_MIN,
+    TRANSIT_TRANSFERS,
+};
 use crate::search::search;
 
 /// Why a run was refused. Each names what it refuses.
@@ -197,8 +201,18 @@ fn context<'a>(
         return Err(RunError::CoefficientRows { classes, rows });
     }
     if timetable.is_some() {
+        // The columns the cheapest-journey search weighs a journey by.
+        let transit = [
+            TRANSIT_IN_VEHICLE_MIN,
+            TRANSIT_ACCESS_MIN,
+            TRANSIT_EGRESS_MIN,
+            TRANSIT_FIRST_WAIT_MIN,
+            TRANSIT_TRANSFER_WAIT_MIN,
+            TRANSIT_TRANSFER_WALK_MIN,
+            TRANSIT_TRANSFERS,
+        ];
         for (class, b) in parameters.coefficients.iter().enumerate() {
-            if let Some(c) = (3..=9).find(|&c| !(b[c].is_finite() && b[c] >= 0.0)) {
+            if let Some(c) = transit.into_iter().find(|&c| !(b[c].is_finite() && b[c] >= 0.0)) {
                 return Err(RunError::TransitWeight { class, column: COLUMNS[c] });
             }
         }
@@ -307,7 +321,8 @@ fn trips(
 /// # Panics
 ///
 /// As the search's and the loading's readings do, for a network and a demand that do not
-/// belong together.
+/// belong together; and on an alternative that is not three legs, a walk, a route or a journey,
+/// and a walk (`Alternative::three_legs`), a fault of the program, which builds no other.
 pub fn run(
     network: &Network,
     demand: &Demand,

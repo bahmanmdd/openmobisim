@@ -11,7 +11,11 @@ use openmobisim_types::mode::Mode;
 use openmobisim_types::time::Second;
 use openmobisim_types::units::Duration;
 
-use crate::parameters::{LN_PS, N};
+use crate::parameters::{
+    BIKE_RIDE_MIN, CAR_DRIVE_MIN, IS_BIKE, IS_CAR, IS_TRANSIT, IS_WALK, LN_PS, N,
+    TRANSIT_ACCESS_MIN, TRANSIT_EGRESS_MIN, TRANSIT_FIRST_WAIT_MIN, TRANSIT_IN_VEHICLE_MIN,
+    TRANSIT_TRANSFER_WAIT_MIN, TRANSIT_TRANSFER_WALK_MIN, TRANSIT_TRANSFERS, WALK_MIN,
+};
 
 /// A leg: one mode between two places.
 #[derive(Clone, Debug, PartialEq)]
@@ -56,8 +60,41 @@ impl Alternative {
         })
     }
 
+    /// The three legs of the alternative: the walk before, the route or the journey, the walk
+    /// after; the one shape the search builds, and the one the pricing of a journey, the loading
+    /// and the outcome of a trip know.
+    ///
+    /// # Panics
+    ///
+    /// For an alternative of any other shape (a leg before the first walk, two legs on the
+    /// network or the timetable, a last leg that is not a walk), with a message naming the shape
+    /// expected and the legs it has: a fault of the program, not of an input, since only the
+    /// search builds alternatives.
+    #[must_use]
+    pub fn three_legs(&self) -> (Duration, &Leg, Duration) {
+        match self.legs.as_slice() {
+            [
+                Leg::Walk(before),
+                between @ (Leg::Route { .. } | Leg::Journey(_)),
+                Leg::Walk(after),
+            ] => (*before, between, *after),
+            _ => panic!(
+                "an alternative is three legs, a walk, a route or a journey, and a walk; this {} \
+                 alternative has {}",
+                self.mode,
+                shape(&self.legs)
+            ),
+        }
+    }
+
     /// The choice row of the alternative's mode, the columns of
     /// [`crate::parameters::COLUMNS`]; times in minutes; a column of another mode is 0.
+    ///
+    /// # Panics
+    ///
+    /// For a transit alternative that is not a walk, a journey of at least one ride and a walk
+    /// (see [`Alternative::three_legs`]): priced otherwise it would fill no column of a journey
+    /// and cost its mode's constant alone.
     #[must_use]
     pub fn attributes(&self) -> [f64; N] {
         let mut x = [0.0; N];
@@ -65,18 +102,25 @@ impl Alternative {
             self.legs.iter().map(|leg| if let Leg::Walk(d) = leg { d.get() } else { 0.0 }).sum();
         match self.mode {
             Mode::Car => {
-                x[0] = (self.time - gaps) / 60.0;
-                x[2] = gaps / 60.0;
+                x[CAR_DRIVE_MIN] = (self.time - gaps) / 60.0;
+                x[WALK_MIN] = gaps / 60.0;
                 x[LN_PS] = self.ln_path_size;
+                x[IS_CAR] = 1.0;
             }
             Mode::Bike => {
-                x[1] = (self.time - gaps) / 60.0;
-                x[2] = gaps / 60.0;
+                x[BIKE_RIDE_MIN] = (self.time - gaps) / 60.0;
+                x[WALK_MIN] = gaps / 60.0;
+                x[IS_BIKE] = 1.0;
             }
-            Mode::Walk => x[2] = self.time / 60.0,
-            Mode::Transit => self.transit_parts(&mut x),
+            Mode::Walk => {
+                x[WALK_MIN] = self.time / 60.0;
+                x[IS_WALK] = 1.0;
+            }
+            Mode::Transit => {
+                self.transit_parts(&mut x);
+                x[IS_TRANSIT] = 1.0;
+            }
         }
-        x[12 + usize::from(self.mode.as_u8())] = 1.0;
         x
     }
 
@@ -85,22 +129,31 @@ impl Alternative {
     /// The first wait runs from the end of the access walk to the first boarding, so it holds
     /// the wait for the whole second the stop is reached on, and the six times add up to the
     /// door-to-door time.
+    ///
+    /// # Panics
+    ///
+    /// For legs that are not a walk, a journey of at least one ride and a walk: a fault of the
+    /// program, which builds no other transit alternative.
     fn transit_parts(&self, x: &mut [f64; N]) {
-        let (Some(Leg::Walk(access)), Some(Leg::Journey(j)), Some(Leg::Walk(egress))) =
-            (self.legs.first(), self.legs.get(1), self.legs.get(2))
-        else {
-            return;
+        let (access, j, egress) = match self.three_legs() {
+            (access, Leg::Journey(j), egress) if !j.rides.is_empty() => (access, j, egress),
+            _ => panic!(
+                "a transit alternative is a walk, a journey of at least one ride and a walk; this \
+                 one has {}",
+                shape(&self.legs)
+            ),
         };
         let board = f64::from(j.rides[0].board.1.get());
-        let alight = j.rides.last().map_or(board, |r| f64::from(r.alight.1.get()));
+        let alight = f64::from(j.rides[j.rides.len() - 1].alight.1.get());
         let first_wait = self.time - access.get() - egress.get() - (alight - board);
-        x[3] = j.in_vehicle().get() / 60.0;
-        x[4] = access.get() / 60.0;
-        x[5] = egress.get() / 60.0;
-        x[6] = first_wait / 60.0;
-        x[7] = (j.wait().get() - (board - f64::from(j.access.1.get()))) / 60.0;
-        x[8] = j.transfer_walk().get() / 60.0;
-        x[9] = f64::from(u32::try_from(j.ride_count()).unwrap_or(u32::MAX)) - 1.0;
+        x[TRANSIT_IN_VEHICLE_MIN] = j.in_vehicle().get() / 60.0;
+        x[TRANSIT_ACCESS_MIN] = access.get() / 60.0;
+        x[TRANSIT_EGRESS_MIN] = egress.get() / 60.0;
+        x[TRANSIT_FIRST_WAIT_MIN] = first_wait / 60.0;
+        x[TRANSIT_TRANSFER_WAIT_MIN] =
+            (j.wait().get() - (board - f64::from(j.access.1.get()))) / 60.0;
+        x[TRANSIT_TRANSFER_WALK_MIN] = j.transfer_walk().get() / 60.0;
+        x[TRANSIT_TRANSFERS] = f64::from(u32::try_from(j.ride_count()).unwrap_or(u32::MAX)) - 1.0;
     }
 
     /// Whether `links` is this alternative's route, by `mode`.
@@ -115,6 +168,23 @@ impl Alternative {
     pub fn reads_the_loading(&self) -> bool {
         self.legs.iter().any(|leg| matches!(leg, Leg::Route { mode: Mode::Car, .. }))
     }
+}
+
+/// `legs` in words, for a message: "walk, route by car, journey of 2 rides, walk".
+fn shape(legs: &[Leg]) -> String {
+    if legs.is_empty() {
+        return "no leg".to_string();
+    }
+    let words: Vec<String> = legs
+        .iter()
+        .map(|leg| match leg {
+            Leg::Walk(_) => "walk".to_string(),
+            Leg::Route { mode, .. } => format!("route by {mode}"),
+            Leg::Journey(j) if j.ride_count() == 1 => "journey of 1 ride".to_string(),
+            Leg::Journey(j) => format!("journey of {} rides", j.ride_count()),
+        })
+        .collect();
+    words.join(", ")
 }
 
 /// The door-to-door seconds of `legs` for a traveller leaving `departure` seconds after the

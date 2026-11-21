@@ -14,26 +14,24 @@ use crate::context::Context;
 
 /// The vehicle of trip `i` on `alternative`: its route leg, entered at the instant the walk
 /// before it ends; none for an empty route or a journey.
+///
+/// # Panics
+///
+/// For an alternative that is not three legs, a walk, a route or a journey, and a walk
+/// ([`Alternative::three_legs`]): a fault of the program, since a second leg on the network
+/// would not be loaded.
 fn vehicle(ctx: &Context<'_>, i: usize, alternative: &Alternative) -> Option<Vehicle> {
-    let mut t = ctx.departure[i];
-    for leg in &alternative.legs {
-        match leg {
-            Leg::Walk(d) => t += d.get(),
-            Leg::Route { mode, links } => {
-                if links.is_empty() {
-                    return None;
-                }
-                return Some(Vehicle {
-                    trip: ctx.trip(i),
-                    mode: *mode,
-                    route: links.clone(),
-                    departure: Duration(t),
-                });
-            }
-            Leg::Journey(_) => return None,
-        }
+    let (before, between, _) = alternative.three_legs();
+    let Leg::Route { mode, links } = between else { return None };
+    if links.is_empty() {
+        return None;
     }
-    None
+    Some(Vehicle {
+        trip: ctx.trip(i),
+        mode: *mode,
+        route: links.clone(),
+        departure: Duration(ctx.departure[i] + before.get()),
+    })
 }
 
 /// The load stage: every chosen route leg loaded on the point queue over the window.
@@ -98,6 +96,12 @@ pub(crate) struct Realised {
 /// the walk after it; an unloaded alternative (an empty route, a journey) arrives at its
 /// departure plus its measured time. A trip is finished when its door arrival is before the
 /// window's end; an unfinished trip's arrival is unknown, `NaN`.
+///
+/// # Panics
+///
+/// For a loaded trip whose alternative is not three legs, a walk, a route or a journey, and a
+/// walk ([`Alternative::three_legs`]): a fault of the program, since the walk after the route is
+/// what takes it from the loading's last node to the door.
 pub(crate) fn realise(
     ctx: &Context<'_>,
     loading: &Loading,
@@ -116,11 +120,8 @@ pub(crate) fn realise(
     for (&trip, &at) in trips.iter().zip(arrivals) {
         let i = trip.index();
         let Some(j) = chosen[i] else { continue };
-        let egress = match sets[i][j as usize].legs.last() {
-            Some(Leg::Walk(d)) => d.get(),
-            _ => 0.0,
-        };
-        arrival[i] = at.get() + egress;
+        let (_, _, egress) = sets[i][j as usize].three_legs();
+        arrival[i] = at.get() + egress.get();
     }
     let mut unfinished = vec![false; n];
     for &trip in loading.unfinished.trips() {
@@ -134,4 +135,100 @@ pub(crate) fn realise(
         }
     }
     Realised { arrival, finished }
+}
+
+#[cfg(test)]
+mod tests {
+    //! An alternative of a shape the loading does not know is refused, not loaded in part: one
+    //! car trip at second 0 on a street a→b of 1 000 m, in a window of an hour.
+
+    use openmobisim_demand::demand::Demand;
+    use openmobisim_graph::geometry::{Position, Xy};
+    use openmobisim_graph::network::{BuildValues, LinkRow, Network, NetworkBuilder};
+    use openmobisim_loading::input::Vehicle;
+    use openmobisim_loading::point_queue;
+    use openmobisim_types::ids::{EntityId, LinkId, TripId};
+    use openmobisim_types::mode::{Mode, ModeSet};
+    use openmobisim_types::time::{Second, StepGrid};
+    use openmobisim_types::units::{Duration, Metres};
+
+    use super::{realise, vehicle};
+    use crate::alternative::{Alternative, Leg};
+    use crate::context::Context;
+    use crate::parameters::Parameters;
+
+    /// The street a→b, its link, and a demand of no trip (the stages read the context's trips).
+    fn street() -> (Network, LinkId, Demand) {
+        let mut b = NetworkBuilder::new();
+        b.add_node("a", Position::Metres(Xy::new(0.0, 0.0)));
+        b.add_node("b", Position::Metres(Xy::new(1_000.0, 0.0)));
+        let row = LinkRow {
+            modes: ModeSet::of(&[Mode::Car]),
+            lanes: Some(1),
+            car_speed_km_h: Some(50.0),
+            length_m: Some(1_000.0),
+            capacity_veh_h: Some(1_800.0),
+            signal_at_downstream_end: false,
+        };
+        b.add_link("ab", "a", "b", row);
+        let values = BuildValues { capacity_per_lane: 1_800.0, bike_speed: 15.0, walk_speed: 4.8 };
+        let network = b.build(values).expect("a network");
+        let link = network.link_ids().typed_id_of("ab").expect("a link");
+        let demand = Demand::build(&[], &["default".to_string()], &network, None, Metres(1_500.0))
+            .expect("a demand");
+        (network, link, demand)
+    }
+
+    /// One car trip at second 0 over the hour.
+    fn context<'a>(network: &'a Network, demand: &'a Demand, p: &'a Parameters) -> Context<'a> {
+        Context {
+            network,
+            demand,
+            timetable: None,
+            parameters: p,
+            window: StepGrid::new(Second(0), 60, 3_600).expect("a window"),
+            departure: vec![0.0],
+            class: vec![0],
+            modes: vec![ModeSet::of(&[Mode::Car])],
+        }
+    }
+
+    #[test]
+    #[should_panic(
+        expected = "an alternative is three legs, a walk, a route or a journey, and a walk"
+    )]
+    fn a_car_alternative_with_two_routes_is_refused_by_the_loading() {
+        let (network, link, demand) = street();
+        let parameters = Parameters::defaults(1);
+        let ctx = context(&network, &demand, &parameters);
+        let route = Leg::Route { mode: Mode::Car, links: vec![link] };
+        let legs = vec![Leg::Walk(Duration(0.0)), route.clone(), route, Leg::Walk(Duration(0.0))];
+        let alternative = Alternative { mode: Mode::Car, legs, time: 144.0, ln_path_size: 0.0 };
+        let _ = vehicle(&ctx, 0, &alternative);
+    }
+
+    #[test]
+    #[should_panic(
+        expected = "an alternative is three legs, a walk, a route or a journey, and a walk"
+    )]
+    fn a_car_alternative_ending_on_a_route_is_refused_by_the_outcome_of_its_trip() {
+        let (network, link, demand) = street();
+        let parameters = Parameters::defaults(1);
+        let ctx = context(&network, &demand, &parameters);
+        let car = Vehicle {
+            trip: TripId::from_index(0),
+            mode: Mode::Car,
+            route: vec![link],
+            departure: Duration(0.0),
+        };
+        let loading = point_queue::load(&network, &[car], ctx.window).expect("a loading");
+        let legs = vec![
+            Leg::Walk(Duration(0.0)),
+            Leg::Route { mode: Mode::Car, links: vec![link] },
+            Leg::Walk(Duration(0.0)),
+            Leg::Route { mode: Mode::Walk, links: Vec::new() },
+        ];
+        let alternative = Alternative { mode: Mode::Car, legs, time: 144.0, ln_path_size: 0.0 };
+        let _ = realise(&ctx, &loading, &[vec![alternative]], &[Some(0)]);
+    }
 }
