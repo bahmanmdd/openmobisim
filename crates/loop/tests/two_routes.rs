@@ -214,10 +214,11 @@ fn at_iteration_1_the_found_and_switch_shares_are_the_hand_values() {
     }
 }
 
-/// The iteration-1 case of the test above under the logit at the default parameters. Under the
-/// least cost (above) a traveller whose best route would save more than 20 % of the cost of the
-/// one it holds is offered a new choice at the rate `r` of that saving; under the logit it is
-/// not: everyone is offered at the plain step. The two tests together pin both.
+/// The iteration-1 case of the test above under the logit, at the default parameters but the
+/// step exponent `a`, which each of the two tests below sets. Under the least cost (above) a
+/// traveller whose best route would save more than 20 % of the cost of the one it holds is
+/// offered a new choice at the rate `r` of that saving; under the logit it is not: everyone is
+/// offered at the same step, `σ = 1 / (1 + 1)^a` at iteration 1. The tests together pin both.
 ///
 /// The default model: the nested logit with a nest per mode at μ = 0.5, 0.1 per minute driving
 /// (1/600 per second), the car constant 0, −1 on `car_ln_path_size`. The trips start and end
@@ -231,25 +232,28 @@ fn at_iteration_1_the_found_and_switch_shares_are_the_hand_values() {
 /// (car `n` leaves the bottleneck at `144 + 3 n`). Iteration 1: the search finds the long route
 /// for `n` from 173 to 1 799, the 1 627 trips whose short route reads above 460.8 s (found share
 /// `1 627 / 1 800`, exactly, as above). Each of the 1 800 travellers is offered a new choice
-/// with probability `1 / (1 + 1) = 1/2`, by its own draw: the offered share is a binomial share
-/// of mean 1/2 and standard deviation `√(1/4 / 1 800) = 0.0118`, judged within 4 of them, as
-/// `no_congestion.rs` judges its offered share. An offered traveller with `n` below 173 has
-/// one route and keeps it; one with `n` from 173 takes the long route with the logit probability
-/// at the times it reads, `P(n) = 1 / (1 + exp(−(288 + n − 460.8) / 300))
-/// = 1 / (1 + exp(−(n − 172.8) / 300))` (0.5002 at `n = 173`, 0.9956 at `n = 1 799`). So it
-/// switches with probability `p(n) = P(n) / 2`, and the switch share is
-/// `Σ_{n = 173}^{1 799} p(n) / 1 800 ≈ 150 ln((1 + e^{(1 799.5 − 172.8) / 300}) /
-/// (1 + e^{(172.5 − 172.8) / 300})) / 1 800 = 0.3945` (the sum itself: 0.39451), at
-/// `± √Σ p (1 − p) / 1 800 = 0.0110` (one standard deviation), judged at three, as the test
-/// above judges its own; so are the shares that switch in thirds in order of departure (`n` from
-/// 173 to 714: 0.3501 ± 0.0204; to 1 256: 0.4653 ± 0.0214; the rest: 0.4939 ± 0.0215). With the
-/// rule of the least cost the offered share would be 0.6146, 9.7 standard deviations of the
-/// offered share (0.0118) above 1/2.
+/// with probability `σ`, by its own draw: the offered share is a binomial share of mean `σ` and
+/// standard deviation `√(σ (1 − σ) / 1 800)`, judged within 4 of them, as `no_congestion.rs`
+/// judges its offered share. An offered traveller with `n` below 173 has one route and keeps
+/// it; one with `n` from 173 takes the long route with the logit probability at the times it
+/// reads, `P(n) = 1 / (1 + exp(−(288 + n − 460.8) / 300)) = 1 / (1 + exp(−(n − 172.8) / 300))`
+/// (0.5002 at `n = 173`, 0.9956 at `n = 1 799`). So it switches with probability
+/// `p(n) = σ P(n)`, and the switch share is `Σ_{n = 173}^{1 799} p(n) / 1 800 ≈ 300 σ
+/// ln((1 + e^{(1 799.5 − 172.8) / 300}) / (1 + e^{(172.5 − 172.8) / 300})) / 1 800`, at
+/// `± √Σ p (1 − p) / 1 800` (one standard deviation), judged at three, as the test above judges
+/// its own; so are the shares that switch in thirds in order of departure (`n` from 173 to 714,
+/// to 1 256, and the rest).
+///
+/// - At `a = 1`, the plain step of the method of successive averages: `σ = 1/2`; offered 0.5 ±
+///   0.0118; switched 0.3945 (the sum itself: 0.39451) ± 0.0110; in thirds 0.3501 ± 0.0204,
+///   0.4653 ± 0.0214, 0.4939 ± 0.0215. With the rule of the least cost the offered share would
+///   be 0.6146, 9.7 standard deviations of the offered share above 1/2.
+/// - At the default `a = 0.75`: `σ = 2^−0.75 = 0.5946`; offered 0.5946 ± 0.0116; switched
+///   0.4692 ± 0.0110; in thirds 0.4164, 0.5533, 0.5873.
 ///
 /// For bikes: these travellers are car-only; a bike holder, alone in its mode, is offered at the
-/// plain step under either model.
-#[test]
-fn under_the_logit_at_iteration_1_everyone_is_offered_at_the_plain_step() {
+/// same step under the logit.
+fn under_the_logit_at_iteration_1(a: f64, want_offered: f64, want_switched: f64) {
     let net = network(
         &[("O", 0.0, 0.0), ("P", 2_000.0, 100.0), ("Q", 2_000.0, -100.0), ("D", 4_000.0, 0.0)],
         &[
@@ -261,7 +265,7 @@ fn under_the_logit_at_iteration_1_everyone_is_offered_at_the_plain_step() {
     );
     let rows = stream(&net, "c", "O", "D", 1_800.0, 1.0, Second(0));
     let dem = demand(&net, &rows);
-    let parameters = Parameters { iteration_cap: 2, ..Parameters::defaults(1) };
+    let parameters = Parameters { iteration_cap: 2, step_exponent: a, ..Parameters::defaults(1) };
     assert_eq!(parameters.choice, ChoiceModel::Logit, "the default model");
     assert!(parameters.nest_scale.to_bits() == 0.5_f64.to_bits(), "the default nest scale");
     let b = &parameters.coefficients[0];
@@ -278,18 +282,20 @@ fn under_the_logit_at_iteration_1_everyone_is_offered_at_the_plain_step() {
         let ln_ps: Vec<f64> = set.iter().map(|a| a.ln_path_size).collect();
         assert!(ln_ps.iter().all(|&x| x == 0.0), "trip {i}: path sizes 1: {ln_ps:?}");
     }
-    let offered_sd = (0.25_f64 / 1_800.0).sqrt();
-    println!("offered at iteration 1 {:.6} against 0.5 ± {offered_sd:.4}", one.offered_share);
+    let sigma = 2.0_f64.powf(-a);
+    assert!((sigma - want_offered).abs() < 5e-5, "the hand step {sigma}");
+    let offered_sd = (sigma * (1.0 - sigma) / 1_800.0).sqrt();
+    println!("offered at iteration 1 {:.6} against {sigma} ± {offered_sd:.4}", one.offered_share);
     assert!(
-        (one.offered_share - 0.5).abs() <= 4.0 * offered_sd,
-        "offered {} against 0.5 ± 4 × {offered_sd}",
+        (one.offered_share - sigma).abs() <= 4.0 * offered_sd,
+        "offered {} against {sigma} ± 4 × {offered_sd}",
         one.offered_share
     );
     // The hand probabilities of the text above, summed over the trips `from..to`: the mean
     // and the standard deviation of the share that switches.
     let by_hand = |from: usize, to: usize| {
         let p = |n: usize| {
-            if n < 173 { 0.0 } else { 0.5 / (1.0 + (-(n as f64 - 172.8) / 300.0).exp()) }
+            if n < 173 { 0.0 } else { sigma / (1.0 + (-(n as f64 - 172.8) / 300.0).exp()) }
         };
         let count = (to - from) as f64;
         let mean = (from..to).map(p).sum::<f64>() / count;
@@ -297,7 +303,7 @@ fn under_the_logit_at_iteration_1_everyone_is_offered_at_the_plain_step() {
         (mean, sd)
     };
     let (want, sd) = by_hand(0, 1_800);
-    assert!((want - 0.3945).abs() < 5e-4, "the hand value {want}");
+    assert!((want - want_switched).abs() < 5e-4, "the hand value {want}");
     println!("switched at iteration 1 {:.4} against {want:.4} ± {sd:.4}", one.switch_share);
     assert!((one.switch_share - want).abs() <= 3.0 * sd, "switch {}", one.switch_share);
     let long = link(&net, "oq");
@@ -313,6 +319,20 @@ fn under_the_logit_at_iteration_1_everyone_is_offered_at_the_plain_step() {
             "trips {from} to {to}: {got} against {want}"
         );
     }
+}
+
+/// The case above at `a = 1`, the plain step `1/2` at iteration 1.
+#[test]
+fn under_the_logit_at_iteration_1_everyone_is_offered_at_the_plain_step() {
+    under_the_logit_at_iteration_1(1.0, 0.5, 0.3945);
+}
+
+/// The case above at the default step exponent, 0.75: the step `2^−0.75` at iteration 1.
+#[test]
+fn under_the_logit_at_iteration_1_everyone_is_offered_at_the_default_step() {
+    let a = Parameters::defaults(1).step_exponent;
+    assert!(a.to_bits() == 0.75_f64.to_bits(), "the default step exponent {a}");
+    under_the_logit_at_iteration_1(a, 0.5946, 0.4692);
 }
 
 /// The gap under the least cost, at every iteration, against the gap the test computes from the

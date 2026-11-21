@@ -7,7 +7,8 @@
 //! Travellers leave O at a constant rate `q = 3 c` for three hours, each open to car and bike,
 //! choosing by the default model (the nested logit; one alternative per mode, so the nest scale
 //! plays no part). Under the logit every traveller is offered a new choice at iteration `k` at
-//! the plain step of the method of successive averages, `1 / (k + 1)`, whatever it holds.
+//! the step `1 / (k + 1)^a`, whatever it holds: `a` is the default 0.75 unless a test sets it
+//! (at 1 it is the plain step of the method of successive averages, `1 / (k + 1)`).
 //!
 //! The default utilities here. Every trip starts and ends at a node, so no walk between door
 //! and node (`walk_min` 0); the street is the one car route, so its path size is 1 and
@@ -616,22 +617,21 @@ fn after_iteration_0_the_share_that_would_change_is_the_hand_value_within_sampli
     );
 }
 
-/// Who would change after iteration 1, by hand: travellers move both ways, from more than one
-/// mode, and a tenth more trips have no alternative. The case of the test above at once the
-/// population (one traveller a second for three hours, `N = 10 800`, `u` each traveller's own
-/// uniform number, `p(w)`, `p0` and `w0(t) = 0.76712 t` as there), plus 1 080 trips open to
-/// transit alone, one every 10 s, which without a timetable have no alternative: they are not in
-/// the share, which is over the 10 800 trips with an alternative. Transit's ends are linked by
-/// walking, so the network holds a walk-only link 10 km aside, which no car or bike reaches.
+/// Who would change after iteration 1, by hand, at the step exponent `a`: travellers move both
+/// ways, from more than one mode, and a tenth more trips have no alternative. The case of the test
+/// above at once the population (one traveller a second for three hours, `N = 10 800`, `u` each
+/// traveller's own uniform number, `p(w)`, `p0` and `w0(t) = 0.76712 t` as there), plus 1 080
+/// trips open to transit alone, one every 10 s, which without a timetable have no alternative:
+/// they are not in the share, which is over the 10 800 trips with an alternative. Transit's ends
+/// are linked by walking, so the network holds a walk-only link 10 km aside, which no car or bike
+/// reaches.
 ///
-/// Iteration 1. Each traveller is offered a new choice with probability 1/2, by a draw of its
-/// own. One not offered keeps its choice of iteration 0, the car when `u < p0`; one offered
-/// chooses at the costs iteration 0 measured, the car when `u < p(w0(t))`. So the car share of
-/// the departures at `t` is `s1(t) = (p0 + p(w0(t))) / 2`, and the queue met by a car departing
-/// at `t` follows `dw1/dt = (q / c) s1(t) − 1 = 3 s1(t) − 1` while it is above 0 (else it stays
-/// at 0), `w1(0) = 0`. The test integrates this by steps of 0.01 s: the queue rises to 690 s
-/// near `t = 2 217 s`, where `s1 = 1/3`, then falls at up to 0.116 s per second and is empty
-/// from about `t = 8 960 s`.
+/// Iteration 1. Each traveller is offered a new choice with probability `σ = 1 / 2^a`, by a draw
+/// of its own. One not offered keeps its choice of iteration 0, the car when `u < p0`; one
+/// offered chooses at the costs iteration 0 measured, the car when `u < p(w0(t))`. So the car
+/// share of the departures at `t` is `s1(t) = (1 − σ) p0 + σ p(w0(t))`, and the queue met by a
+/// car departing at `t` follows `dw1/dt = (q / c) s1(t) − 1 = 3 s1(t) − 1` while it is above 0
+/// (else it stays at 0), `w1(0) = 0`. The test integrates this by steps of 0.01 s.
 ///
 /// Who would change at the costs iteration 1 measured, `p1(t) = p(w1(t))`:
 /// - not offered, holding the car when `u < p0`: since `w1 ≥ 0`, `p1 ≤ p0`, and those with `u`
@@ -641,21 +641,27 @@ fn after_iteration_0_the_share_that_would_change_is_the_hand_value_within_sampli
 ///   departures), from the car to the bike where it grew.
 ///
 /// So a traveller departing at `t` would change with probability
-/// `π(t) = (p0 − p1(t)) / 2 + |p(w0(t)) − p1(t)| / 2`, and the share has the mean
-/// `Σ_t π(t) / N` = 0.26231, of which 0.19330 are moves from the bike to the car; its binomial
-/// standard deviation `√(Σ_t π (1 − π)) / N` is 0.004184. Each traveller's `u` and its draw of
-/// iteration 1 are independent of the queues ahead of it (its own car is never ahead of it).
-/// The queues themselves are random; a replay of both iterations' point queues over 1 000 draws
-/// of the travellers' numbers (the Python script of the test above) gave a total spread of 1.09
-/// binomial standard deviations, its mean 0.05 of them from the hand value. Judged within 4
-/// binomial standard deviations, 3.7 of the total spread. A share taken over every trip, the
-/// 1 080 without an alternative included, would be 0.2385, 5.7 binomial standard deviations off;
-/// one that counted only the moves to the car or only those away from it would be off by 0.069 or
-/// 0.193.
+/// `π(t) = (1 − σ) (p0 − p1(t)) + σ |p(w0(t)) − p1(t)|`; the share has the mean `Σ_t π(t) / N`
+/// and the binomial standard deviation `√(Σ_t π (1 − π)) / N`. Each traveller's `u` and its draw
+/// of iteration 1 are independent of the queues ahead of it (its own car is never ahead of it).
+/// The queues themselves are random; a replay of both iterations' point queues car by car over
+/// 1 000 draws of the travellers' numbers (a Python script outside the simulator, as for the test
+/// above) gives the total spread. Judged within 4 binomial standard deviations.
+/// - At `a = 1`, the plain step `σ = 1/2`: the queue of iteration 1 rises to 690 s near
+///   `t = 2 217 s`, where `s1 = 1/3`, then falls at up to 0.116 s per second and is empty from
+///   about `t = 8 960 s`; the share 0.26231, of which 0.19330 are moves from the bike to the car,
+///   ± 0.004184. The replay: a total spread of 1.09 binomial standard deviations, its mean 0.05
+///   of them from the hand value; 4 of them are 3.7 of the total spread. A share taken over every
+///   trip, the 1 080 without an alternative included, would be 0.2385, 5.7 binomial standard
+///   deviations off; one that counted only the moves to the car or only those away from it would
+///   be off by 0.069 or 0.193.
+/// - At the default `a = 0.75`, `σ = 0.5946`: the queue of iteration 1 peaks at 550 s; the share
+///   0.30105, of which 0.27773 are moves from the bike to the car, ± 0.004333. The replay: a total
+///   spread of 1.11 binomial standard deviations, its mean 0.01 of them from the hand value; 4 of
+///   them are 3.6 of the total spread.
 ///
 /// For bikes: the bike holders who would take the car are most of the share.
-#[test]
-fn after_iteration_1_travellers_would_change_both_ways_and_the_share_is_the_hand_value() {
+fn would_change_after_iteration_1(a: f64, (share, binomial_sd, to_car_share): (f64, f64, f64)) {
     let (net, mut rows, _) = street_and_path(1, true);
     let n = rows.len();
     assert_eq!(n, DEMAND_S as usize, "one traveller a second");
@@ -671,6 +677,7 @@ fn after_iteration_1_travellers_would_change_both_ways_and_the_share_is_the_hand
     let dem = Demand::build(&rows, &["default".to_string()], &net, None, Metres(1_500.0))
         .expect("a demand");
     // The hand value: the queue of iteration 1 by steps of 0.01 s, read at each whole second.
+    let sigma = 2.0_f64.powf(-a);
     let p = |w: f64| 1.0 / (1.0 + ((CAR_S + w - BIKE_S) / 600.0).exp());
     let (p0, rate) = (p(0.0), RATIO * p(0.0) - 1.0);
     let mut w1 = vec![0.0; n];
@@ -679,27 +686,27 @@ fn after_iteration_1_travellers_would_change_both_ways_and_the_share_is_the_hand
         *slot = w;
         for step in 0..100 {
             let at = t as f64 + f64::from(step) / 100.0;
-            let s1 = (p0 + p(rate * at)) / 2.0;
+            let s1 = (1.0 - sigma) * p0 + sigma * p(rate * at);
             w = (w + (RATIO * s1 - 1.0) / 100.0).max(0.0);
         }
     }
     let pi: Vec<f64> = (0..n)
         .map(|t| {
             let (pw0, p1) = (p(rate * t as f64), p(w1[t]));
-            (p0 - p1) / 2.0 + (pw0 - p1).abs() / 2.0
+            (1.0 - sigma) * (p0 - p1) + sigma * (pw0 - p1).abs()
         })
         .collect();
-    let to_car = (0..n).map(|t| (p(w1[t]) - p(rate * t as f64)).max(0.0) / 2.0).sum::<f64>();
+    let to_car = (0..n).map(|t| (p(w1[t]) - p(rate * t as f64)).max(0.0) * sigma).sum::<f64>();
     let want = pi.iter().sum::<f64>() / n as f64;
     let sd = pi.iter().map(|x| x * (1.0 - x)).sum::<f64>().sqrt() / n as f64;
     println!(
-        "by hand: the queue of iteration 1 peaks at {:.1} s; would change {want:.5} ± {sd:.6}, of which bike to car {:.5}",
+        "by hand at step exponent {a}: the queue of iteration 1 peaks at {:.1} s; would change {want:.5} ± {sd:.6}, of which bike to car {:.5}",
         w1.iter().copied().fold(0.0, f64::max),
         to_car / n as f64
     );
-    assert!((want - 0.26231).abs() < 5e-5 && (sd - 0.004184).abs() < 5e-6, "{want}, {sd}");
-    assert!((to_car / n as f64 - 0.19330).abs() < 5e-5, "{to_car}");
-    let parameters = Parameters { iteration_cap: 2, ..Parameters::defaults(1) };
+    assert!((want - share).abs() < 5e-5 && (sd - binomial_sd).abs() < 5e-6, "{want}, {sd}");
+    assert!((to_car / n as f64 - to_car_share).abs() < 5e-5, "{to_car}");
+    let parameters = Parameters { iteration_cap: 2, step_exponent: a, ..Parameters::defaults(1) };
     let started = std::time::Instant::now();
     let result = run(&net, &dem, None, (Second(0), Second(6 * 3_600)), &parameters).expect("a run");
     let one = &result.iterations[1];
@@ -715,4 +722,18 @@ fn after_iteration_1_travellers_would_change_both_ways_and_the_share_is_the_hand
         "would change {} against {want} ± 4 × {sd}",
         one.would_change_share
     );
+}
+
+/// The case above at `a = 1`, the plain step 1/2 at iteration 1.
+#[test]
+fn after_iteration_1_travellers_would_change_both_ways_and_the_share_is_the_hand_value() {
+    would_change_after_iteration_1(1.0, (0.26231, 0.004184, 0.19330));
+}
+
+/// The case above at the default step exponent, 0.75: the step `2^−0.75` at iteration 1.
+#[test]
+fn after_iteration_1_at_the_default_step_the_share_that_would_change_is_the_hand_value() {
+    let a = Parameters::defaults(1).step_exponent;
+    assert!(a.to_bits() == 0.75_f64.to_bits(), "the default step exponent {a}");
+    would_change_after_iteration_1(a, (0.30105, 0.004333, 0.27773));
 }

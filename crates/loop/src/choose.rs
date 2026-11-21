@@ -1,7 +1,8 @@
 //! Stage 2, choose: the choice model over each traveller's set; who is offered a new choice is
-//! decided by the step of the method of successive averages; under the least-cost choice that
-//! step is raised to the share of its cost a traveller would save on its best alternative of the
-//! same mode when that share is above a band, under the logit it is not.
+//! decided by a step: under the logit `1 / (k + 1)^a`, `a` the run's step exponent; under the
+//! least-cost choice the step of the method of successive averages, raised to the share of its
+//! cost a traveller would save on its best alternative of the same mode when that share is above
+//! a band.
 
 use openmobisim_choice::cost::{ChoiceError, Coefficients, Row, Traveller};
 use openmobisim_choice::model::{Choice, Deterministic, Logit};
@@ -84,8 +85,12 @@ const BAND: f64 = 0.2;
 /// The chance that trip `i`, holding the alternative at `held` of `set`, is offered a new choice
 /// at `iteration`.
 ///
-/// Under the logit: `1 / (iteration + 1)`, the step of the plain method of successive averages,
-/// for every traveller. The logit's shares, computed from the costs of the alternatives, put
+/// Under the logit: `1 / (iteration + 1)^a` for every traveller, `a` the run's `step_exponent`.
+/// At `a = 1` it is the step of the plain method of successive averages, computed as that
+/// quotient. The averaging settles when the steps sum to infinity and their squares do not
+/// (Robbins and Monro 1951), which holds for `a` in (0.5, 1]; a smaller `a` asks more travellers
+/// at every iteration after the first, so a run gets nearer its settled state in fewer
+/// iterations. The logit's shares, computed from the costs of the alternatives, put
 /// some travellers on an alternative that is not the lowest-cost one of its mode. When the costs
 /// change, travellers have to move in both directions: toward the lower-cost alternative and
 /// toward the higher-cost one. A chance that rose with the cost a traveller would save by moving
@@ -109,7 +114,13 @@ const BAND: f64 = 0.2;
 fn chance(ctx: &Context<'_>, i: usize, set: &[Alternative], held: u32, iteration: u32) -> f64 {
     let plain = 1.0 / f64::from(iteration + 1);
     if ctx.parameters.choice == ChoiceModel::Logit {
-        return plain;
+        let a = ctx.parameters.step_exponent;
+        #[allow(
+            clippy::float_cmp,
+            reason = "exactly 1 is the plain step, computed as its quotient"
+        )]
+        let plain_step = a == 1.0;
+        return if plain_step { plain } else { f64::from(iteration + 1).powf(-a) };
     }
     let cost = |a: &Alternative| ctx.parameters.cost(ctx.class[i], &a.attributes());
     let taken = &set[held as usize];

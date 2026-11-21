@@ -15,7 +15,7 @@ use openmobisim_demand::demand::Demand;
 use openmobisim_demand::input::TripRow;
 use openmobisim_graph::network::{LinkRow, Network};
 use openmobisim_loop::assess::{Iteration, stops};
-use openmobisim_loop::parameters::Parameters;
+use openmobisim_loop::parameters::{ChoiceModel, Parameters};
 use openmobisim_loop::run::{RunError, run};
 use openmobisim_transit::timetable::{Call, Timetable, TimetableBuilder};
 use openmobisim_types::ids::{EntityId, TripId};
@@ -261,6 +261,23 @@ fn refusals_name_what_they_refuse() {
         run(&net, &dem, None, (Second(0), Second(0)), &p).err(),
         Some(RunError::Window(StepGridError::ZeroWindow))
     );
+    // The logit's step exponent: refused when it is not a positive finite number, `1 / (k + 1)^a`
+    // then being no step of the averaging; every other value runs; not read under the least cost.
+    let logit = Parameters { choice: ChoiceModel::Logit, ..p.clone() };
+    for a in [0.0, -0.5, f64::NAN, f64::INFINITY] {
+        let bad = Parameters { step_exponent: a, ..logit.clone() };
+        let refused = run(&net, &dem, None, WINDOW, &bad).err();
+        assert!(
+            matches!(refused, Some(RunError::StepExponent(x)) if x.to_bits() == a.to_bits()),
+            "step exponent {a}: {refused:?}"
+        );
+    }
+    for a in [0.25, 2.0] {
+        let runs = Parameters { step_exponent: a, ..logit.clone() };
+        assert!(run(&net, &dem, None, WINDOW, &runs).is_ok(), "step exponent {a} runs");
+    }
+    let least_cost = Parameters { choice: ChoiceModel::Deterministic, step_exponent: 0.0, ..p };
+    assert!(run(&net, &dem, None, WINDOW, &least_cost).is_ok(), "not read under the least cost");
 }
 
 /// The window's repairs, each by hand. A window of 100 s in 60 s bins ends at 120 s, the next

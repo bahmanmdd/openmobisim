@@ -37,9 +37,9 @@ use crate::choose::{Model, choose};
 use crate::context::Context;
 use crate::load::{load, measure, realise};
 use crate::parameters::{
-    COLUMNS, Parameters, TRANSIT_ACCESS_MIN, TRANSIT_EGRESS_MIN, TRANSIT_FIRST_WAIT_MIN,
-    TRANSIT_IN_VEHICLE_MIN, TRANSIT_TRANSFER_WAIT_MIN, TRANSIT_TRANSFER_WALK_MIN,
-    TRANSIT_TRANSFERS,
+    COLUMNS, ChoiceModel, Parameters, TRANSIT_ACCESS_MIN, TRANSIT_EGRESS_MIN,
+    TRANSIT_FIRST_WAIT_MIN, TRANSIT_IN_VEHICLE_MIN, TRANSIT_TRANSFER_WAIT_MIN,
+    TRANSIT_TRANSFER_WALK_MIN, TRANSIT_TRANSFERS,
 };
 use crate::search::search;
 
@@ -54,6 +54,10 @@ pub enum RunError {
     MaxRidesZero,
     /// `nearby_stops` is zero.
     NearbyStopsZero,
+    /// Under the logit, `step_exponent` is not a positive finite number: `1 / (k + 1)^a` is then
+    /// no step of the averaging (it never falls, or it is not a number, or it is 0 from the first
+    /// iteration on).
+    StepExponent(f64),
     /// The coefficients are not one row per user class.
     CoefficientRows {
         /// The demand's classes.
@@ -84,6 +88,9 @@ impl fmt::Display for RunError {
             Self::IterationCapZero => write!(f, "iteration_cap is zero"),
             Self::MaxRidesZero => write!(f, "max_rides is zero"),
             Self::NearbyStopsZero => write!(f, "nearby_stops is zero"),
+            Self::StepExponent(a) => {
+                write!(f, "step_exponent {a} is not a positive finite number")
+            }
             Self::CoefficientRows { classes, rows } => {
                 write!(f, "{rows} coefficient rows for {classes} user classes")
             }
@@ -195,6 +202,10 @@ fn context<'a>(
     }
     if parameters.nearby_stops == 0 {
         return Err(RunError::NearbyStopsZero);
+    }
+    let a = parameters.step_exponent;
+    if parameters.choice == ChoiceModel::Logit && !(a.is_finite() && a > 0.0) {
+        return Err(RunError::StepExponent(a));
     }
     if parameters.coefficients.len() != demand.class_count() as usize {
         let (classes, rows) = (demand.class_count(), parameters.coefficients.len());

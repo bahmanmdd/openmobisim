@@ -80,7 +80,7 @@ const HEAD: &str = "# The record of one openmobisim run: the parameters and inpu
 /// The rows of `PARAMETERS.md` written under `[parameters]`, in order, each with its unit as
 /// that table's Unit column writes it (`coefficients` is written as tables after them;
 /// `osm_class_defaults` is not written).
-const UNITS: [(&str, &str); 14] = [
+const UNITS: [(&str, &str); 15] = [
     ("capacity_per_lane", "veh/h per lane"),
     ("bike_speed", "km/h"),
     ("walk_speed", "km/h"),
@@ -91,6 +91,7 @@ const UNITS: [(&str, &str); 14] = [
     ("nearby_stops", "searches per trip end"),
     ("choice", "name"),
     ("nest_scale", "none"),
+    ("step_exponent", "none"),
     ("iteration_cap", "iterations"),
     ("iteration_floor", "iterations"),
     ("link_bin", "s"),
@@ -131,6 +132,7 @@ pub const KEYS: [(&str, &[&str]); 8] = [
             "nearby_stops",
             "choice",
             "nest_scale",
+            "step_exponent",
             "iteration_cap",
             "iteration_floor",
             "link_bin",
@@ -297,6 +299,7 @@ fn parameter<'a>(name: &str, given: &Given<'a>) -> Option<Value<'a>> {
             ChoiceModel::Deterministic => "deterministic",
         }),
         "nest_scale" => Value::Float(p.nest_scale),
+        "step_exponent" => Value::Float(p.step_exponent),
         "iteration_cap" => Value::Int(u64::from(p.iteration_cap)),
         "iteration_floor" => Value::Int(u64::from(p.iteration_floor)),
         "link_bin" => Value::Int(u64::from(p.link_bin)),

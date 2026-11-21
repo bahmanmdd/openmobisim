@@ -284,7 +284,8 @@ fn print_parts(label: &str, o: &Outcome) {
 /// queue is longer, moves the mean by `−Var(w) / T` = −0.06 s at 16 times: negligible. This is
 /// the sampling error once the iterations have settled, and a lower bound before they have: at
 /// 50 iterations the seeds' spread of this mean, measured over 20 seeds at 16 times the
-/// population, is 4.99 s against the 2.48 s by hand.
+/// population, is 2.29 s at the default step exponent 0.75, near the 2.48 s by hand, and 4.99 s
+/// at the step exponent 1.
 fn third_hour_time_sd(scale: usize) -> f64 {
     let (t, l) = (TIME_CONSTANT_S, 3_600.0_f64);
     let stationary = (2.0 / scale as f64) * t / 2.0;
@@ -312,9 +313,10 @@ const SCALE: usize = 16;
 const Z_999: f64 = 3.29;
 /// The trip's tolerance in standard deviations of the queue's sampling error, as
 /// `bottleneck_mode_choice.rs` has it: wider than the 3.29 of sampling theory to leave room for
-/// the scatter of the iteration itself, which the hand value does not cover. The hand value,
-/// 2.48 s at 16 times the population, is a lower bound at 50 iterations (the seeds' spread
-/// measured there is 4.99 s), so 4 of them, 9.92 s, is about 2 measured spreads.
+/// the scatter of the iteration itself, which the hand value does not cover. The hand value is
+/// 2.48 s at 16 times the population; 4 of them, 9.92 s, are about 4.3 of the seeds' spread
+/// measured at 50 iterations at the default step exponent (2.29 s) and about 2 of it at the step
+/// exponent 1 (4.99 s).
 const TIME_SDS: f64 = 4.0;
 
 /// One run, judged at its sampling error by hand: part 1 on the three links; the third hour's
@@ -345,15 +347,18 @@ fn one_run_reaches_the_steady_state_of_the_route_logit_within_sampling_error() {
 /// bias of the loop shows as a mean many standard errors from zero. Judged at 3.29 standard
 /// errors: the third hour's share on `short` less 1/3 and its trip by `short` less 273.25 s.
 ///
-/// This test FAILS today, on the share. A run stopped at 50 iterations is not at the
-/// equilibrium: the queue delay on `short` still varies along departure time by about ± 7 s
-/// around the hand value. The step `1 / (k + 1)` of the method of successive averages alone
-/// produces this ripple: it halves when the iterations double and is within the measurement
-/// error at 400 iterations. The third hour's share is the slope of that ripple across the hour:
-/// by conservation, the share less 1/3, times 10 800 s, is the change of the queue delay across
-/// the hour. The test is kept as written and run by hand, as the record of that limit.
+/// It passes at the default step exponent, 0.75 (measured 2026-11-21: the share less 1/3
+/// −0.00004 ± 0.00012, −0.4 standard errors; the trip less 273.25 s −0.81 ± 0.51 s, −1.6). At the
+/// step exponent 1, the plain step `1 / (k + 1)` of the method of successive averages, it fails
+/// on the share (−0.00133 ± 0.00022): a run stopped at 50 iterations is then not at the
+/// equilibrium, the queue delay on `short` still varying along departure time by about ± 7 s
+/// around the hand value. That step alone produces this ripple: it halves when the iterations
+/// double and is within the measurement error at 400 iterations. The third hour's share is the
+/// slope of that ripple across the hour: by conservation, the share less 1/3, times 10 800 s, is
+/// the change of the queue delay across the hour. The larger steps of the default damp the
+/// ripple sooner.
 #[test]
-#[ignore = "FAILS today on the share: at 50 iterations the queue delay still ripples by about ± 7 s along departure time, and the third hour's share is that ripple's slope; 20 runs, about 90 s in release; run by hand"]
+#[ignore = "release only: 20 runs, about 110 s in release; run by hand"]
 fn over_twenty_seeds_neither_quantity_is_biased() {
     let runs: Vec<Outcome> = (0..20).map(|s| bottleneck(SCALE, &fifty(s))).collect();
     let replay = runs.iter().map(|o| o.queue.largest_s).fold(0.0, larger);

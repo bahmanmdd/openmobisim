@@ -39,6 +39,7 @@ PARAMETERS = {
     "choice": "deterministic",
     # Default.
     "nest_scale": 0.5,
+    "step_exponent": 0.75,
     # Given.
     "iteration_cap": 3,
     # Default.

@@ -11,7 +11,7 @@ stopping rule; and the three tables a run returns. Depends on `openmobisim-types
   defaulted; a whole number of link bins long (else its end is moved up to one, below).
 - `Parameters` (defaults and their sources in `PARAMETERS.md`): `link_bin` (s), `iteration_cap`,
   `iteration_floor`, `seed`, `boarding_slack` (s), `max_rides`, `nearby_stops`, `choice`
-  (deterministic or logit), `nest_scale`, and per user class the sixteen coefficients of the
+  (deterministic or logit), `nest_scale`, `step_exponent`, and per user class the sixteen coefficients of the
   choice row (below).
 
 ## Outputs
@@ -98,8 +98,9 @@ formed by the choice crate's `cost_of`, so the cost a run reports is the one the
   corrects the logit for routes that overlap, and the least cost has no such error to correct.
   The path sizes are computed and reported all the same, and the run's record keeps the
   coefficient as given. The nest is the mode; at iteration 0 everyone chooses. At `k ≥ 1` a
-  traveller is offered a new choice with probability `1 / (k + 1)`, the step of the method of
-  successive averages (Sheffi 1985), under the logit; under the least-cost choice with
+  traveller is offered a new choice with probability `1 / (k + 1)^a` under the logit, `a` the
+  run's `step_exponent` (0.75 by default; `a = 1` is the step `1 / (k + 1)` of the method of
+  successive averages, Sheffi 1985); under the least-cost choice with
   probability `max(1 / (k + 1), s)`, `s = r = (c − b) / c` when `r` is above 0.2 (else `s = 0`;
   never above 1), with `c` the cost of the alternative it holds and `b` the least cost among
   the alternatives of the same mode in its own set, as the choice reads them (systematic costs
@@ -145,8 +146,8 @@ formed by the choice crate's `cost_of`, so the cost a run reports is the one the
 - **Stop** after an iteration when its found share is at most 0.5 % and the range of the last
   five mean trip times, greatest less least, is at most 0.3 % of the latest (never while one of
   the five has no finished trip); not before `iteration_floor` iterations have run; always at
-  the cap. The rule reads the slope of the mean, which the method of successive averages makes
-  about the residual over the iteration count, so a run it stops early can still be short of
+  the cap. The rule reads the slope of the mean, which the averaging makes about the residual
+  times the step (`1 / (k + 1)`, under the logit `1 / (k + 1)^a`), so a run it stops early can still be short of
   equilibrium; the floor lets a test run to a fixed count. The offered, switch and found shares,
   and the share that would change or the gap of the run's model, are `NaN` when no trip has an
   alternative.
@@ -165,11 +166,18 @@ formed by the choice crate's `cost_of`, so the cost a run reports is the one the
   finished and unfinished counts beside every mean; the gap is over every trip with an
   alternative, at measured costs. A window long enough for every trip to finish (the
   unfinished count 0) makes the means comparable.
-- **Who chooses again.** Everyone is offered a new choice at least at the plain method's rate
-  `1 / (k + 1)`; an offered traveller takes the model's choice (under the deterministic model a
-  traveller holding the lowest-cost alternative of its set keeps it; under the logit the
-  choice follows the logit's probabilities at the alternatives' costs). Under the logit that is
-  the rate for every traveller. The logit's shares put some travellers on an alternative that is
+- **Who chooses again.** An offered traveller takes the model's choice (under the deterministic
+  model a traveller holding the lowest-cost alternative of its set keeps it; under the logit the
+  choice follows the logit's probabilities at the alternatives' costs). Under the logit every
+  traveller is offered at the same rate, `1 / (k + 1)^a`. The averaging settles when the steps
+  sum to infinity and their squares do not (Robbins and Monro 1951), which holds for `a` in
+  (0.5, 1]; a smaller `a` asks more travellers at every iteration after the first, so a run
+  comes nearer its settled state in fewer iterations, and on a fixed set of alternatives per
+  traveller it settles at the same state. The sets grow along the way, by the search at the
+  costs each iteration meets, so another `a` gives other sets and can settle at another state:
+  on Sioux Falls by 9 s of mean trip in every seed, more than the spread between seeds
+  (measured in `PARAMETERS.md`). Under the least-cost choice everyone is
+  offered at least at the plain method's rate `1 / (k + 1)`. The logit's shares put some travellers on an alternative that is
   not the lowest-cost one of its mode, and when the costs change, travellers have to move both
   toward the lower-cost and toward the higher-cost alternative. A rate that rose with the cost a
   traveller would save would rise only for the holders of a higher-cost alternative: moves
@@ -200,10 +208,13 @@ formed by the choice crate's `cost_of`, so the cost a run reports is the one the
   rule is the plain method); it favours short trips (5 min lost beside a 10 min best is
   `r = 0.33`, beside a 60 min best 0.077); above the band the rate does not fall with `k`, so
   travellers behind one queue who read the same cost can move together (an early swing on
-  heavily oversaturated small networks); and the chance jumps at the band. Under the logit for
-  every traveller, and under the least-cost choice for a traveller within the band, the plain
+  heavily oversaturated small networks); and the chance jumps at the band. Under the least-cost
+  choice for a traveller within the band, and under the logit at `step_exponent` 1, the plain
   method's limit stays: after `K` iterations about one such traveller in `K` still holds
-  the choice it made at each earlier iteration, on that iteration's costs. The share that would
+  the choice it made at each earlier iteration, on that iteration's costs. At the default 0.75
+  the choices held are younger: after 50 iterations 0.08 % of travellers still hold their choice
+  of iteration 0 (2 % at 1), and 45 % made their last choice in the final ten iterations (20 % at
+  1). The share that would
   change (under the logit) or the gap (under the least-cost choice) reports what is left.
 - Money is 0 for every alternative until a source of money comes through the door; gaps are
   walked at the walking speed by every mode. Transit's walking legs are not on links: the

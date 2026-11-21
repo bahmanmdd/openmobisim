@@ -696,6 +696,7 @@ fn parameters(given: &Given<'_>, demand: &RustDemand) -> PyResult<Parameters> {
         nearby_stops: given.get("nearby_stops", d.nearby_stops)?,
         choice,
         nest_scale: given.get("nest_scale", d.nest_scale)?,
+        step_exponent: given.get("step_exponent", d.step_exponent)?,
         coefficients,
     })
 }

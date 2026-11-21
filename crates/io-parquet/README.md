@@ -167,7 +167,7 @@ marked so in the file's schema.
   values, `stop_walk_max` and `transfer_walk_max` (both absent without transit, where nothing
   reads them), `boarding_slack`,
   `max_rides`, `nearby_stops`, `choice` (`"logit"` or `"deterministic"`), `nest_scale`,
-  `iteration_cap`, `iteration_floor`, `link_bin`, `seed`. Then a comment and one table per class
+  `step_exponent`, `iteration_cap`, `iteration_floor`, `link_bin`, `seed`. Then a comment and one table per class
   in class id order (neither without a class), `[parameters.coefficients."<class id>"]`, a key per column of the choice
   row (`openmobisim_loop::parameters::COLUMNS`). `osm_class_defaults` is never written: its one
   value is the OSM reader's one table (`crates/io-osm/README.md`).

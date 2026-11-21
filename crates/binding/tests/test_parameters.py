@@ -36,7 +36,7 @@ VALUES = {
     "capacity_per_lane": 2_000.0, "bike_speed": 18.0, "walk_speed": 5.0,
     "osm_class_defaults": None, "transfer_walk_max": 300.0, "stop_walk_max": 1_000.0,
     "boarding_slack": 30, "max_rides": 3, "nearby_stops": 2, "choice": "deterministic",
-    "coefficients": {"all": TIME_ONLY}, "nest_scale": 0.7, "iteration_cap": 2,
+    "coefficients": {"all": TIME_ONLY}, "nest_scale": 0.7, "step_exponent": 0.9, "iteration_cap": 2,
     "iteration_floor": 1, "link_bin": 600, "seed": 7,
 }
 NODES = {"node_id": ["a", "b"], "x_m": [0.0, 1_500.0], "y_m": [0.0, 0.0]}

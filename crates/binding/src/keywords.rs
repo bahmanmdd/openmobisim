@@ -39,7 +39,7 @@ impl Entry {
 /// Every row of `PARAMETERS.md` and the entry point that reads it. The defaults are not here:
 /// they are the loop's (`Parameters::defaults`) and, for the five values no crate defaults,
 /// the constants of `lib.rs`.
-const ROWS: [(&str, Entry); 16] = [
+const ROWS: [(&str, Entry); 17] = [
     ("capacity_per_lane", Entry::Network),
     ("bike_speed", Entry::Network),
     ("walk_speed", Entry::Network),
@@ -52,6 +52,7 @@ const ROWS: [(&str, Entry); 16] = [
     ("choice", Entry::Run),
     ("coefficients", Entry::Run),
     ("nest_scale", Entry::Run),
+    ("step_exponent", Entry::Run),
     ("iteration_cap", Entry::Run),
     ("iteration_floor", Entry::Run),
     ("link_bin", Entry::Run),

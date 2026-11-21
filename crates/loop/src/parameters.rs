@@ -144,6 +144,11 @@ pub struct Parameters {
     pub choice: ChoiceModel,
     /// The nest scale of the logit, in (0, 1]; read by [`ChoiceModel::Logit`] only.
     pub nest_scale: f64,
+    /// The exponent `a` of the logit's step: at iteration `k` a traveller holding an alternative
+    /// is offered a new choice with probability `1 / (k + 1)^a` (1 is the plain method of
+    /// successive averages). A positive number; the averaging is known to settle for `a` in
+    /// (0.5, 1]. Read by [`ChoiceModel::Logit`] only.
+    pub step_exponent: f64,
     /// Per user class, in class id order, one coefficient per column of [`COLUMNS`]: cost per
     /// minute of each time, per transfer, per euro; on `ln PS`, minus the exponent of the path
     /// size in a car route's weight inside its nest (read times the nest scale under the logit,
@@ -179,6 +184,7 @@ impl Parameters {
             nearby_stops: 3,
             choice: ChoiceModel::Logit,
             nest_scale: 0.5,
+            step_exponent: 0.75,
             coefficients: vec![Self::DEFAULT_COEFFICIENTS; classes as usize],
         }
     }

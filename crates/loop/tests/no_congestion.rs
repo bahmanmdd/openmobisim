@@ -33,10 +33,12 @@
 //! since tastes are fixed and costs never change, nobody switches and nothing new is found
 //! after iteration 0, so the stopping rule of the specification ends the run at its first
 //! reading of five iterations. Under the logit every traveller is offered a new choice at the
-//! plain step, whatever it holds: at iteration 0 everyone chooses (offered share exactly 1) and
-//! at `k >= 1` each traveller is offered with the plain step `1 / (k + 1)` by its own draw, so
-//! the offered share is a binomial share of mean `p = 1 / (k + 1)` and standard deviation
-//! `sqrt(p (1 - p) / n)` over the `n` trips; it is judged within 4 of those standard deviations.
+//! same step, whatever it holds: at iteration 0 everyone chooses (offered share exactly 1) and
+//! at `k >= 1` each traveller is offered with the step `1 / (k + 1)^a` by its own draw, `a` the
+//! step exponent, so the offered share is a binomial share of mean `p = 1 / (k + 1)^a` and
+//! standard deviation `sqrt(p (1 - p) / n)` over the `n` trips; it is judged within 4 of those
+//! standard deviations, for car, bike and walk at `a = 1` (the plain step `1 / (k + 1)` of the
+//! method of successive averages) and at the default `a = 0.75`.
 //!
 //! Who would change: after its first choice no traveller's costs change and its random numbers
 //! are fixed for the run, so the model, choosing again over its set at the costs just measured,
@@ -195,13 +197,13 @@ fn settled_at_once(result: &Run) {
     assert_eq!(result.iterations.len(), 5, "at the first five iterations");
 }
 
-/// The offered share of a logit run, where every traveller is offered at the plain step,
-/// whatever it holds: exactly 1 at iteration 0, then within 4 binomial standard deviations of
-/// the plain step `1 / (k + 1)` over `n` trips.
-fn offered_at_the_plain_step(result: &Run, n: usize) {
+/// The offered share of a logit run at the step exponent `a`, where every traveller is offered
+/// at the same step, whatever it holds: exactly 1 at iteration 0, then within 4 binomial
+/// standard deviations of the step `1 / (k + 1)^a` over `n` trips.
+fn offered_at_the_step(result: &Run, n: usize, a: f64) {
     assert!(result.iterations[0].offered_share.to_bits() == 1.0_f64.to_bits(), "iteration 0");
     for it in &result.iterations[1..] {
-        let p = 1.0 / f64::from(it.iteration + 1);
+        let p = 1.0 / f64::from(it.iteration + 1).powf(a);
         let sd = (p * (1.0 - p) / n as f64).sqrt();
         let off = (it.offered_share - p).abs();
         assert!(
@@ -213,18 +215,19 @@ fn offered_at_the_plain_step(result: &Run, n: usize) {
     }
 }
 
-/// Car, bike and walk at `seed`: the chi-square statistic of the counts (2 degrees of freedom).
-fn three_modes(seed: u64) -> f64 {
+/// Car, bike and walk at `seed` and the step exponent `a`: the chi-square statistic of the counts
+/// (2 degrees of freedom).
+fn three_modes(seed: u64, a: f64) -> f64 {
     let net = street_and_path();
     let modes = [Mode::Car, Mode::Bike, Mode::Walk];
     let rows = trips(&modes);
     let dem = Demand::build(&rows, &["default".to_string()], &net, None, Metres(1_500.0))
         .expect("a demand");
     defaults_are_the_hand_costs();
-    let parameters = Parameters { seed, ..Parameters::defaults(1) };
+    let parameters = Parameters { seed, step_exponent: a, ..Parameters::defaults(1) };
     let result = run(&net, &dem, None, (Second(0), Second(7_200)), &parameters).expect("a run");
     settled_at_once(&result);
-    offered_at_the_plain_step(&result, rows.len());
+    offered_at_the_step(&result, rows.len(), a);
     let times = [CAR_S, BIKE_S, WALK_S];
     let mut counts = [0.0; 3];
     for i in 0..rows.len() {
@@ -281,8 +284,12 @@ fn four_modes(seed: u64) -> f64 {
 
 #[test]
 fn car_bike_and_walk_take_their_closed_form_shares_and_their_hand_times() {
-    let statistic = three_modes(0);
-    assert!(statistic < CHI_SQUARE_999_DF2, "chi-square {statistic}");
+    let default = Parameters::defaults(1).step_exponent;
+    assert!(default.to_bits() == 0.75_f64.to_bits(), "the default step exponent {default}");
+    for a in [1.0, default] {
+        let statistic = three_modes(0, a);
+        assert!(statistic < CHI_SQUARE_999_DF2, "step exponent {a}: chi-square {statistic}");
+    }
 }
 
 #[test]
@@ -323,7 +330,8 @@ fn with_costs_that_never_change_nobody_would_change_and_the_logit_has_no_gap() {
 #[test]
 #[ignore = "a measurement over 20 seeds; run by hand with --ignored --nocapture"]
 fn the_statistics_over_twenty_seeds() {
-    let three: Vec<f64> = (0..20).map(three_modes).collect();
+    let a = Parameters::defaults(1).step_exponent;
+    let three: Vec<f64> = (0..20).map(|seed| three_modes(seed, a)).collect();
     let four: Vec<f64> = (0..20).map(four_modes).collect();
     println!("three modes, 2 degrees of freedom: {three:.2?}");
     println!("four modes, 3 degrees of freedom: {four:.2?}");

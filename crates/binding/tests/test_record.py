@@ -57,8 +57,8 @@ COLUMNS = [
 DEFAULTS = {
     "capacity_per_lane": 1_800.0, "bike_speed": 15.0, "walk_speed": 4.8, "stop_walk_max": 1_500.0,
     "transfer_walk_max": 400.0, "boarding_slack": 60, "max_rides": 4, "nearby_stops": 3,
-    "choice": "logit", "nest_scale": 0.5, "iteration_cap": 50, "iteration_floor": 0,
-    "link_bin": 300, "seed": 0,
+    "choice": "logit", "nest_scale": 0.5, "step_exponent": 0.75, "iteration_cap": 50,
+    "iteration_floor": 0, "link_bin": 300, "seed": 0,
 }
 DEFAULT_COEFFICIENTS = [0.1, 0.1, 0.165, 0.1, 0.165, 0.165, 0.145, 0.145, 0.165, 0.5, 0.6, -1.0,
                         0.0, 0.0, 0.5, 0.25]
@@ -69,7 +69,8 @@ TRANSIT_KW = {"transfer_walk_max": 350.0}
 DEMAND_KW = {"stop_walk_max": 1_200.0}
 RUN_KW = {
     "boarding_slack": 45, "max_rides": 3, "nearby_stops": 2, "choice": "logit",
-    "nest_scale": 0.6, "iteration_cap": 4, "iteration_floor": 2, "link_bin": 600, "seed": 11,
+    "nest_scale": 0.6, "step_exponent": 0.9, "iteration_cap": 4, "iteration_floor": 2,
+    "link_bin": 600, "seed": 11,
     "coefficients": {
         "peak": [0.12, 0.1, 0.2, 0.1, 0.2, 0.2, 0.15, 0.15, 0.2, 0.4, 0.5, -1.0, 0.0, 0.1 + 0.2,
                  0.5, 0.25],
@@ -188,8 +189,8 @@ def test_a_run_rebuilt_from_its_record_alone_gives_the_same_files(tmp_path):
     p = record["parameters"]
     network_kw = {k: p[k] for k in ("capacity_per_lane", "bike_speed", "walk_speed")}
     run_kw = {k: p[k] for k in ("boarding_slack", "max_rides", "nearby_stops", "choice",
-                                "nest_scale", "iteration_cap", "iteration_floor", "link_bin",
-                                "seed")}
+                                "nest_scale", "step_exponent", "iteration_cap", "iteration_floor",
+                                "link_bin", "seed")}
     run_kw["coefficients"] = {c: [row[k] for k in COLUMNS] for c, row in p["coefficients"].items()}
     again = run_case(tmp_path / "again", gtfs, network_kw,
                      {"transfer_walk_max": p["transfer_walk_max"]},
