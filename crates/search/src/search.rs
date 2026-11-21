@@ -3,26 +3,31 @@
 //! # What it finds
 //!
 //! [`Search::fastest`] answers a [`Query`] (origin node, destination node, mode, departure,
-//! traveller) with the [`Route`] of earliest arrival: the links in order and the arrival, in
-//! seconds since the window's start. A link's exit is read from the last loading,
-//! [`LinkTimes::exit`], for that traveller at the instant the route enters it, which is when
-//! the link before it ends. Nothing else is read: no turn, no penalty, no waiting at a node
-//! (on first-in-first-out times waiting never helps).
+//! traveller) with the [`Route`] of earliest arrival, but for the one limit stated with the tie
+//! rule below: the links in order and the arrival, in seconds since the window's start. A
+//! link's exit is read from the last loading, [`LinkTimes::exit`], for that traveller at the
+//! instant the route enters it, which is when the link before it ends. Nothing else is read: no
+//! turn, no penalty, no waiting at a node (on first-in-first-out times waiting never helps).
 //!
 //! # How: label-setting Dijkstra on arrival, goal-directed
 //!
 //! A node's label is the earliest arrival there found so far; the node of least label is
 //! settled next and its out-links are relaxed by reading each one's time at that label. On
-//! first-in-first-out link times (a later entry never leaves earlier, which the reading
-//! guarantees) the first label a node is settled with is its earliest arrival, so the search
-//! is exact (Kaufman and Smith 1993). Because a fastest path on positive times never visits a
-//! node twice, the search runs over nodes, not links.
+//! link times that are first-in-first-out (a later entry never leaves earlier, which the
+//! reading guarantees) and depend on the instant of entry alone, the first label a node is
+//! settled with is its earliest arrival, so the search is exact (Kaufman and Smith 1993).
+//! Because a fastest path on positive times never visits a node twice, the search runs over
+//! nodes, not links.
 //!
-//! A node's label carries, beside the arrival, the reader for the next link: the recorded car
-//! whose place the traveller took on the link it came by (see [`LinkTimes`]). So a route's
-//! arrival is the reading's own walk of it, [`LinkTimes::route_time`], to the bit. One label is
-//! kept per node, the earliest arrival; that this is the earliest over every path is checked
-//! against every simple path enumerated, over random networks (`tests/brute_force.rs`).
+//! The reading depends on one thing more than the instant: the recorded car whose place the
+//! traveller took on the link it came by (see [`LinkTimes`]). A node's label carries it, beside
+//! the arrival, as the reader for the next link, so a route's arrival is always the reading's
+//! own walk of it, [`LinkTimes::route_time`], to the bit. One label is kept per node. What the
+//! search guarantees is the earliest arrival over every path where no two routes reach a node
+//! at exactly the same instant having taken different places there (one a recorded car's and
+//! the other none, or two different cars'); this is checked against every simple path
+//! enumerated, over random loadings of one network (`tests/brute_force.rs`). At such a tie it
+//! is not exact: see the tie rule below.
 //!
 //! The order is goal-directed (A\*, Hart, Nilsson and Raphael 1968): a node is keyed by its
 //! label plus a lower bound on the rest of the way, the mode's free-flow time from the node to
@@ -46,11 +51,25 @@
 //! node at its earliest arrival is compared before the node is settled: the route is a function
 //! of the network, the link times and the query alone.
 //!
+//! **The limit of one label per node.** The reading of the link after a node depends, beside
+//! the instant, on the recorded car whose place the traveller took on the link it came by.
+//! Where two routes reach a node at exactly the same instant, one having taken a recorded
+//! car's place there and the other not, or the place of another car, the tie rule keeps one
+//! without looking at the place. The route it keeps can leave the next link one headway of
+//! that link later than the route it drops would, and the queues on later links can add to
+//! that difference: one headway is not a bound on the difference in arrival. The route
+//! returned is then not the earliest over every path, though its arrival is still the
+//! reading's own walk of it. By hand (`tests/fastest.rs`): two links of
+//! 72 s into one node, both left at 75 s, one of them in a recorded car's place; the tie rule
+//! keeps the other, the shorter in metres, and its route arrives at 152 s where the route it
+//! dropped arrives at 148 s.
+//!
 //! # The tree form: every node within a bound
 //!
 //! [`Search::reach`] is the same label-setting from one origin without a destination (plain
 //! Dijkstra: no goal, no bound on the rest of the way), stopped when the least label is more
-//! than a bound after the departure; it returns every node settled, with its earliest arrival.
+//! than a bound after the departure; it returns every node settled, with its earliest arrival
+//! (but for the limit of one label per node, above).
 //! [`Search::reach_backward`], for a bike or a walker only, is the bound's own search run to a
 //! limit: it gives the time from each node to one destination on free-flow times, which do not
 //! depend on the instant, so the time to a node is the same read either way (a car's would
@@ -285,10 +304,11 @@ impl<'a> Search<'a> {
         }
     }
 
-    /// The route of earliest arrival for the query's mode: `None` when the destination cannot
-    /// be reached on links the mode may use; the empty route arriving at the departure when the
-    /// origin is the destination. Where several routes arrive at exactly the same instant, the
-    /// tie rule of the module documentation picks one.
+    /// The route of earliest arrival for the query's mode, but for the limit of one label per
+    /// node stated in the module documentation: `None` when the destination cannot be reached
+    /// on links the mode may use; the empty route arriving at the departure when the origin is
+    /// the destination. Where several routes arrive at exactly the same instant, the tie rule of
+    /// the module documentation picks one.
     ///
     /// # Panics
     ///
@@ -310,8 +330,9 @@ impl<'a> Search<'a> {
     }
 
     /// Every node `mode` reaches from `origin` within `bound` seconds of `departure`, with its
-    /// earliest arrival in seconds since the window's start (as [`Route::arrival`]), by node id;
-    /// the origin first among them at the departure. The same label-setting and tie rule as
+    /// earliest arrival in seconds since the window's start (as [`Route::arrival`]; but for the
+    /// limit of one label per node stated in the module documentation), by node id; the origin
+    /// first among them at the departure. The same label-setting and tie rule as
     /// [`Self::fastest`], without the goal (plain Dijkstra), stopped when the least label is
     /// more than `bound` after the departure. The arrival at each node is the one
     /// [`Self::fastest`] finds to it.

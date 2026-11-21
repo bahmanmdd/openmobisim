@@ -18,13 +18,14 @@ at the instant the route enters it; and its tree form, every node within a bound
 - `Search::new(&network, &times)` is the search with its scratch, reusable across queries.
   `Search::fastest(&query)` returns `Option<Route>`: `None` when the destination cannot be
   reached on links the mode may use; the empty route arriving at the departure when the origin
-  is the destination; otherwise the route of earliest arrival.
+  is the destination; otherwise the route of earliest arrival, but for the known limit at a
+  tie (below).
 - `Route { links, arrival }`: the links in the order travelled, and the arrival at the
   destination in seconds since the window's start.
 - `Search::reach(origin, mode, departure, bound)` returns `Vec<(NodeId, Duration)>`: every
   node the mode reaches from the origin within `bound` seconds of the departure, with its
-  earliest arrival in seconds since the window's start (as `Route::arrival`), sorted by node id;
-  the origin is among them, at the departure.
+  earliest arrival in seconds since the window's start (as `Route::arrival`; but for the known
+  limit at a tie, below), sorted by node id; the origin is among them, at the departure.
 - `Search::reach_backward(destination, mode, bound)`, bike and walk only: every node from
   which the mode reaches the destination within `bound` seconds, with that time in seconds,
   sorted by node id; the destination is among them, at 0.
@@ -45,15 +46,20 @@ Seconds and metres. The departure and the arrival are `f64` seconds since the wi
   times waiting never helps). The arrival is `LinkTimes::route_time` of the route added to the
   departure, to the bit. A traveller's own car in the last loading is not in its way.
 - Fastest means earliest arrival. The search is label-setting Dijkstra over nodes on the
-  arrival, exact on first-in-first-out link times (Kaufman and Smith 1993), which the reading
-  is by construction. It is goal-directed (A\*, Hart, Nilsson and Raphael 1968) by a lower bound
-  on the rest of the way: the mode's free-flow time from the node to the destination, shrunk by
-  one part in a million against rounding. It holds because no link time is below free flow
-  (checked in debug builds); it changes how much is explored, never the route. The bound is a
-  search backward from the destination on free-flow times, run on only as far as the queries
-  to that destination ask (a time is final once no time still queued is below it): the nodes
-  their routes come near, not the whole network. A `Search` keeps the bound of the destination
-  and mode it last served.
+  arrival, one label per node, exact on link times that are first-in-first-out and depend on the
+  instant of entry alone (Kaufman and Smith 1993). The reading is first-in-first-out by
+  construction, and depends besides on the recorded car whose place the traveller took on the
+  link before. So the search guarantees the earliest arrival over every path where no two routes
+  reach a node at exactly the same instant having taken different places there (one a recorded
+  car's and the other none, or two different cars'); at such a tie it can miss it (Ties, below).
+  The arrival it returns is always the reading's walk of its route. It is goal-directed (A\*,
+  Hart, Nilsson and Raphael 1968) by a lower bound on the rest of the way: the mode's free-flow
+  time from the node to the destination, shrunk by one part in a million against rounding. It
+  holds because no link time is below free flow (checked in debug builds); it changes how much
+  is explored, never the route. The bound is a search backward from the destination on free-flow
+  times, run on only as far as the queries to that destination ask (a time is final once no time
+  still queued is below it): the nodes their routes come near, not the whole network. A `Search`
+  keeps the bound of the destination and mode it last served.
 - The tree form is the same label-setting over the same scratch and tie rule, without the
   goal (plain Dijkstra), stopped when the least label is more than the bound after the
   departure: a node is in when its arrival less the departure is at most the bound. `reach`'s
@@ -62,7 +68,15 @@ Seconds and metres. The departure and the arrival are `f64` seconds since the wi
   bike and a walker only (their
   times do not depend on the instant); a car's backward search would need its arrival.
 - Ties: two routes reaching a node at exactly the same instant are decided by the shorter in
-  metres, then fewer links, then the lower id of the link arriving at the node.
+  metres, then fewer links, then the lower id of the link arriving at the node. The search's
+  known limit: the tie rule does not look at the recorded car whose place each route took on
+  the link into the node. The route it keeps can leave the next link one headway of that link
+  later than the route it drops would, and the queues on later links can add to that
+  difference (one headway is not a bound on the difference in arrival); the route returned is
+  then not the earliest (`tests/fastest.rs`, by hand: two
+  links of 72 s into one node, both left at 75 s, one in a recorded car's place; the other,
+  the shorter in metres, is kept, and its route arrives at 152 s where the dropped one arrives
+  at 148 s, both as the loading run again with the traveller on each).
 - Links that forbid the mode are never taken.
 
 ## Errors
@@ -100,11 +114,13 @@ node alone); car backward and transit refused; a free-flow car detour by hand on
 (43.2 s against 50.4 s, the route among four of equal time fixed by the tie rule by hand, the
 bike direct in 96 s); two routes of two links arriving at the same instant by car, bike and on
 foot (21.6, 72 and 225 s by hand), the one whose last link has the lower id taken whichever the
-search finds first; the switch between a queued short link and a free long route by Vickrey's
-bottleneck (72 + t/2 against 144 s: short at departures 0 and 100, long at 300, arrivals 72,
-222 and 444 s by hand and equal to the reading's walk to the bit); an empty route at the
-origin, a link forbidding cars, transit refused; a brute force on five fully linked nodes with
-queues (200 queries, the arrival equal to the best of every simple path walked on the reading).
+search finds first; the known limit at a tie (the route kept arriving at 152 s, the one dropped
+at 148 s, by hand and against the loading run again); the switch between a queued short link and
+a free long route by Vickrey's bottleneck (72 + t/2 against 144 s: short at departures 0 and
+100, long at 300, arrivals 72, 222 and 444 s by hand and equal to the reading's walk to the
+bit); an empty route at the origin, a link forbidding cars, transit refused; a brute force on
+five fully linked nodes with queues (200 queries, the arrival equal to the best of every simple
+path walked on the reading).
 `fastest_many` answers six queries of mixed modes and destinations each in its place, by the
 same hand derivations, as a batch and each as a batch of one, and no query with no answer; its
 determinism over 1 and 8 threads and two runs is tested with the whole chain, by car, bike and

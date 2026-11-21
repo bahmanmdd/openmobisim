@@ -1,8 +1,10 @@
 //! The fastest route against hand derivations: a free-flow car detour on a grid (with the tie
 //! rule decided by hand), two routes arriving at the same instant by car, bike and on foot
 //! whichever is found first, the switch between two routes as a queue grows (Vickrey 1969), the
-//! contract's edge cases (origin equal to destination, a mode a link forbids, transit), and a
-//! batch of queries answered each in its place, a batch of one and a batch of none.
+//! limit of one label per node (two routes tied at a node, one having taken a recorded car's
+//! place and the other not, the route kept arriving one headway later), the contract's edge
+//! cases (origin equal to destination, a mode a link forbids, transit), and a batch of queries
+//! answered each in its place, a batch of one and a batch of none.
 //!
 //! Every car link is one lane at 50 km/h unless said otherwise: 100 m take 100 / (50 / 3.6) =
 //! 7.2 s and 1 000 m take 72 s; at 20 km/h 100 m take 18 s; a bike rides 100 m at 15 km/h in
@@ -15,6 +17,7 @@ use common::{
 };
 use openmobisim_graph::network::{LinkRow, Network, NetworkBuilder};
 use openmobisim_loading::link_times::{LinkTimes, Reader};
+use openmobisim_loading::point_queue::load;
 use openmobisim_search::search::{Query, Route, Search, fastest_many};
 use openmobisim_types::ids::{EntityId, LinkId, NodeId, TripId};
 use openmobisim_types::mode::{Mode, ModeSet};
@@ -205,6 +208,77 @@ fn a_car_takes_the_short_link_until_its_queue_costs_more_than_the_long_way() {
         "the bike arrives at {} s, by hand 540 s",
         bike.arrival.get()
     );
+}
+
+#[test]
+fn at_a_tie_of_arrival_the_route_kept_can_have_taken_no_place_and_arrive_a_headway_later() {
+    // The limit of one label per node. `l1` from `o` to `m`, 720 m at 36 km/h, and `l2` from
+    // `o` to `m`, 360 m at 18 km/h: both 72 s at free flow (720 / 10 and 360 / 5, equal to the
+    // bit, checked below), both 1 200 veh/h (a 3 s headway). `l3` from `m` to `d`, 720 m at
+    // 36 km/h, 72 s, 900 veh/h (4 s). Recorded: cars 0 (second 0) and 1 (second 1) on `l1`,
+    // `l3`: car 0 leaves `l1` at 72 s and `l3` at 144 s, car 1 leaves `l1` at max(73, 75) = 75 s
+    // and `l3` at max(147, 148) = 148 s. Car 2 (second 0) on `l2` only leaves it at 72 s.
+    //
+    // Trip 3, with no car in the loading, from `o` to `d` at second 0. By `l1`: behind car 0 it
+    // leaves at 75 s, the instant car 1 did, so it has car 1's place; on `l3` car 1 is behind
+    // it and car 0 ahead: max(147, 144 + 4) = 148 s. By `l2`: behind car 2 it leaves at 75 s,
+    // in nobody's place (no car left `l2` then); on `l3` car 1, a lower trip entering at 75 s,
+    // is ahead: max(147, 148 + 4) = 152 s. Loaded again with trip 3 on each route: 148 s by
+    // `l1` and 152 s by `l2`. Both routes reach `m` at 75 s, to the bit; the tie rule keeps the
+    // shorter in metres, `l2` (360 m against 720 m), so the search returns the route by `l2`,
+    // arriving at 152 s, though the route by `l1` arrives at 148 s. The names are chosen so that
+    // the shorter link has the higher id (ids follow the sorted names, checked below): both
+    // routes have two links, so a tie rule that ignored the metres would keep `l1` by its
+    // lower id, and this test would fail.
+    let mut b = NetworkBuilder::new();
+    for (node, x, y) in [("o", 0.0, 0.0), ("m", 360.0, 0.0), ("d", 1_080.0, 0.0)] {
+        b.add_node(node, at(x, y));
+    }
+    let link = |km_h: f64, metres: f64, veh_h: f64| LinkRow {
+        length_m: Some(metres),
+        capacity_veh_h: Some(veh_h),
+        ..row(1, km_h)
+    };
+    b.add_link("l1", "o", "m", link(36.0, 720.0, 1_200.0));
+    b.add_link("l2", "o", "m", link(18.0, 360.0, 1_200.0));
+    b.add_link("l3", "m", "d", link(36.0, 720.0, 900.0));
+    let net = b.build(VALUES).expect("three links build");
+    let id = |name| net.link_ids().typed_id_of(name).expect("a link");
+    let (l1, l2, l3) = (id("l1"), id("l2"), id("l3"));
+    assert!(l2 > l1, "the shorter link, l2, has the higher id");
+    let node = |name| net.node_ids().typed_id_of::<NodeId>(name).expect("a node");
+    let free = |l| net.free_flow_time(l, Mode::Car).get();
+    assert_eq!(
+        free(l2).to_bits(),
+        free(l1).to_bits(),
+        "{} s by l2, {} s by l1",
+        free(l2),
+        free(l1)
+    );
+    let cars = vec![
+        vehicle(0, Mode::Car, &[l1, l3], 0),
+        vehicle(1, Mode::Car, &[l1, l3], 1),
+        vehicle(2, Mode::Car, &[l2], 0),
+    ];
+    let w = window(300, 3_600);
+    let times = loaded(&net, &cars, w);
+    let route =
+        fastest_for(&net, &times, (node("o"), node("d")), Mode::Car, (0, Some(3))).expect("linked");
+    assert_eq!(route.links, vec![l2, l3], "the route kept at the tie");
+    let got = route.arrival.get();
+    assert!(close(got, 152.0), "the search arrives at {got} s, by hand 152 s");
+    let reader = Reader::of(TripId::new(3));
+    let walked = times.route_time(&route.links, Mode::Car, Duration(0.0), reader).get();
+    assert_eq!(got.to_bits(), walked.to_bits(), "the search {got} s, its route walked {walked} s");
+    let other = times.route_time(&[l1, l3], Mode::Car, Duration(0.0), reader).get();
+    assert!(close(other, 148.0), "the route by l1 reads {other} s, by hand 148 s");
+    for (links, by_hand) in [([l2, l3], 152.0), ([l1, l3], 148.0)] {
+        let added = [&cars[..], &[vehicle(3, Mode::Car, &links, 0)]].concat();
+        let run = load(&net, &added, w).expect("loads again");
+        let i = run.finished.trips().iter().position(|&t| t == TripId::new(3)).expect("arrives");
+        let taken = run.finished.travel_time(i).get();
+        assert!(close(taken, by_hand), "loaded again on {links:?}: {taken} s, by hand {by_hand} s");
+    }
 }
 
 #[test]

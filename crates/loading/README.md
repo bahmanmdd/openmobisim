@@ -60,13 +60,27 @@ entries, exits and arrivals alike. Bins are steps of the window (`StepIndex`).
   in the loading; (3) never the traveller's own recorded car: where it is among the cars
   ahead, the cars after it are replayed without it; (4) not a recorded car whose place the
   traveller took on the link before (it left that link at the very instant that car did):
-  that car is behind it. Free flow before the first car and on a link no car entered. Nothing
-  is interpolated and no bin is read. A traveller walking its own route from its own departure
+  that car is behind it, whether or not the traveller's own recorded car entered at the same
+  instant. Free flow before the first car and on a link no car entered. Nothing is
+  interpolated and no bin is read. A traveller walking its own route from its own departure
   reads the time it took, to the bit.
-- The reading's known limit: on a route the traveller did not take it can be one headway
-  short, where its own car, taken out of a queue, would have been replaced by a car held at a
-  bottleneck further upstream; the record of the link cannot show that, only loading again
-  with the traveller moved does (`tests/reload.rs`, by hand: 452 s read, 456 s taken).
+- The reading's limits, on a route the traveller did not take. The reading holds every other car
+  as the loading recorded it. When the traveller's car is moved to another route, the cars
+  behind its own car on the route it left move up, and the cars behind it on its new route move
+  back; the reading can see neither. Where no other car's entry on a link of the route changes,
+  the reading is exact. Where one does, it is off by one headway of that link for each car it
+  holds on the wrong side of the traveller, early or late, and the queues further on can add to
+  that: along a route the error is not bounded by one headway. Only loading again with the
+  traveller moved settles it. Three ways it happens, the first two shown by hand
+  (`tests/reload.rs`). A car held at a bottleneck further upstream moves up into the place the
+  traveller's own car left and is ahead of the traveller, though the record has it entering
+  after (452 s read, 456 s taken). The traveller took car A's place on the link before, and A
+  had entered this link at the same instant as a car B whose trip lies between A's and the
+  traveller's: B moves up, the traveller leaves when B was recorded to, and the reading takes B
+  for the car behind it, though B is ahead and A behind; where A and B then go on by different
+  links, the next link is read one car out (228 s read, 224 s taken, and 224 s read, 228 s taken
+  when the two swap links). A car the traveller delayed without taking its place meets it again
+  by another way: recorded ahead of it, in truth behind.
 
 ## Errors
 `load` refuses, never repairs, with a `LoadError` naming the trip: a trip given twice; transit;
@@ -95,8 +109,13 @@ cars entering at one instant each reading its own time, the headway behind a car
 properties over random arrivals against the recursion replayed in the test (every car its own
 time, FIFO, above free flow; a route's time equal to the loaded one, to the bit); the reading
 on a route not taken against the loading run again with that one car moved (`tests/reload.rs`:
-equal to the bit on two hand-built cases, and the known limit by hand); test 9 by
-hand (360 s, 750 s, a three-link sum, unchanged by 1 000 queued cars); conservation on a 20 × 20
-grid; determinism over two runs and a shuffled input (nothing runs in parallel). The run time on
+equal to the bit on three hand-built cases, one of them a traveller reaching a link at the
+instant its own car did, ahead of the car whose place it took, 148 s over two links and 222 s
+over three; that case is exact because no other car moves in it, though the first of the
+limits can apply at that very point, where a car queued behind the traveller's own car on the
+approach it left moves up, enters the link at that instant with a lower trip and is ahead of
+it; and the first two ways of the limits by hand); test 9 by hand (360 s, 750 s, a three-link
+sum, unchanged by 1 000 queued cars); conservation on a 20 × 20 grid; determinism over two
+runs and a shuffled input (nothing runs in parallel). The run time on
 the 100 × 100 grid is reported by hand: `cargo test --release -p openmobisim-loading --test
 run_time -- --ignored --nocapture`.

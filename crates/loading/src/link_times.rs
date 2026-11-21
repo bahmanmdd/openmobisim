@@ -26,7 +26,8 @@
 //!    cars ahead, the cars after it are replayed without it, by the same expression, up to
 //!    the first that leaves when it was recorded to;
 //! 4. a recorded car whose place the traveller took on the link before (the traveller left
-//!    that link at the very instant that car did) is behind it here, whatever the trips.
+//!    that link at the very instant that car did) is behind it here, whatever the trips, and
+//!    whether or not the traveller's own recorded car entered here at the same instant.
 //!    [`LinkTimes::exit`] returns the reader for the next link, which carries that car.
 //!
 //! Before the link's first car, and on a link nobody entered by car: free flow, `t + τ`.
@@ -36,9 +37,28 @@
 //! still travelling at the end read too low. Where every car finishes within the window, no
 //! crossing is missing and this does not arise.
 //! Nothing is interpolated and no bin is read. A traveller walking its own route from its own
-//! departure reads the time it took, to the bit. On a route it did not take, the reading can
-//! be one headway off where its own car, removed from a queue, would have been replaced by a
-//! car held further upstream: only loading again with the traveller moved settles that.
+//! departure reads the time it took, to the bit.
+//!
+//! # Its limits, on a route the traveller did not take
+//!
+//! The reading holds every other car as the loading recorded it. When the traveller's car is
+//! moved to another route, the cars behind its own car on the route it left move up, and the
+//! cars behind it on its new route move back; the reading can see neither. Where no other
+//! car's entry on a link of the route changes, the reading is exact. Where one does, the
+//! reading is off by one headway of that link for each car it holds on the wrong side of the
+//! traveller, early or late, and the queues further on can add to that: along a route the
+//! error is not bounded by one headway. Only loading again with the traveller moved settles
+//! it. Three ways it happens, the first two shown by hand in `tests/reload.rs`:
+//!
+//! - a car held at a bottleneck further upstream moves up into the place the traveller's own
+//!   car left, and is ahead of the traveller, though the record has it entering after;
+//! - the traveller took car A's place on the link before, and A had entered this link at the
+//!   same instant as a car B whose trip lies between A's and the traveller's. B moves up, the
+//!   traveller leaves this link at the instant B was recorded to, and the reading takes B for
+//!   the car behind it, though B is ahead of it and A behind. Where A and B then go on by
+//!   different links, the next link is read one car out;
+//! - a car the traveller delayed without taking its place meets it again by another way: the
+//!   record has that car ahead of the traveller, though in truth it is behind.
 //!
 //! **Cost:** 32 bytes per car crossing here (entry, exit, trip, and the same crossing again
 //! by trip) and 20 in the table it is built from, 8 per link per mode and 8 per link for the
@@ -288,17 +308,12 @@ fn places(entry: &[f64], trips: &[TripId], t: f64, reader: Reader) -> (usize, us
     let before = entry.partition_point(|&e| e < t);
     // The cars that entered at `t` itself are few: counted one by one, not searched for.
     let tied = &trips[before..before + entry[before..].iter().take_while(|&&e| e <= t).count()];
-    // Of the cars that entered at `t`: those recorded before the traveller's own crossing when
-    // it is one of them; else those of a lower trip, less the car whose place it took.
-    let mut ahead = before
-        + match tied.iter().position(|&id| id == reader.trip) {
-            Some(own) => own,
-            None => {
-                let lower = tied.partition_point(|&id| id < reader.trip);
-                let took = !reader.took.is_null() && tied[..lower].contains(&reader.took);
-                lower - usize::from(took)
-            }
-        };
+    // Of the cars that entered at `t`, recorded in trip order: those of a lower trip, which are
+    // those recorded before the traveller's own crossing when it is one of them; less the car
+    // whose place it took.
+    let first = &tied[..tied.partition_point(|&id| id < reader.trip)];
+    let took = !reader.took.is_null() && first.contains(&reader.took);
+    let mut ahead = before + first.len() - usize::from(took);
     let mut behind = ahead;
     if trips.get(behind) == Some(&reader.trip) {
         behind += 1;
