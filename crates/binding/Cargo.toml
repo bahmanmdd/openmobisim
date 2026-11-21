@@ -11,8 +11,8 @@ authors.workspace = true
 [lints]
 workspace = true
 
-# The extension module `openmobisim`, built by maturin (`pyproject.toml`). Its tests are in Python
-# (`tests/`, pytest), so there is no Rust test harness to link against the interpreter.
+# The extension module `openmobisim`, built by maturin (the `pyproject.toml` at the top of the tree). Its tests are
+# in Python (`tests/`, pytest), so there is no Rust test harness to link against the interpreter.
 [lib]
 name = "openmobisim"
 crate-type = ["cdylib"]

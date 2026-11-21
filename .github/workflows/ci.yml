@@ -1,5 +1,6 @@
 # The gate: everything here is green before a change lands. One job on one runner, no artifacts; the steps are
-# named so that a failure names its cause. The three-platform matrix and the wheel build return with the public tree.
+# named so that a failure names its cause. The three-platform matrix returns with the public tree; the wheels for
+# Linux, macOS and Windows are built and tested by wheels.yml, on a version tag or by hand.
 
 name: CI
 

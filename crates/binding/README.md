@@ -2,10 +2,12 @@
 
 The Python module `openmobisim`: nine names, nothing else (`Network`, `Transit`, `Demand`,
 `run`, `run_file`, `Run` and its methods `Run.map`, `Run.summary` and `Run.open`, a static
-method). Built by maturin (`pyproject.toml`) as one
+method). Built by maturin (the `pyproject.toml` at the top of the tree) as one
 extension on Python's stable ABI from 3.11 (abi3). Depends on `openmobisim-types`, `-graph`,
 `-transit`, `-demand`, `-loop`, `-io-osm`, `-io-gtfs`, `-io-parquet`, `-map`, `-summary` and `pyo3`; no Python
-runtime dependency, no `numpy`.
+runtime dependency, no `numpy`. A wheel is built by `maturin build --release -m crates/binding/Cargo.toml`; the
+release's wheels (Linux, macOS, Windows) and its source archive are built, tested and published by
+`.github/workflows/wheels.yml`.
 
 ```python
 import openmobisim as oms

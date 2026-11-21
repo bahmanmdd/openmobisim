@@ -1,0 +1,32 @@
+# The Python package `openmobisim`: the extension module of `crates/binding`, built by maturin. No Python runtime
+# dependency. It sits at the top of the tree so that maturin finds README.md (the long description), LICENSE and
+# NOTICE beside it and packs them into the wheel and the source archive.
+[build-system]
+requires = ["maturin>=1.9.4,<2"]
+build-backend = "maturin"
+
+[project]
+name = "openmobisim"
+description = "Multimodal dynamic traffic assignment: cars, bikes, walkers and transit."
+readme = "README.md"
+requires-python = ">=3.11"
+license = "Apache-2.0"
+authors = [{ name = "Bahman Madadi" }]
+classifiers = [
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Rust",
+    "Programming Language :: Python :: 3",
+    "Topic :: Scientific/Engineering",
+]
+dynamic = ["version"]
+
+[project.urls]
+Repository = "https://github.com/bahmanmdd/openmobisim"
+Documentation = "https://openmobisim.github.io"
+Issues = "https://github.com/bahmanmdd/openmobisim/issues"
+
+# The crate maturin builds; the module's name is its `[lib] name`, `openmobisim`.
+[tool.maturin]
+manifest-path = "crates/binding/Cargo.toml"
+# The tests' data files (the Delft extract alone is 18 MB) stay out of the source archive: building needs none.
+exclude = [{ path = "crates/*/tests/fixtures/**/*", format = "sdist" }]

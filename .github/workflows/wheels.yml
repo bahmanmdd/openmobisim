@@ -1,0 +1,185 @@
+# The Python package `openmobisim`: five wheels (Linux, macOS and Windows) and the source archive, built by maturin
+# from `crates/binding`; the Linux x86_64, macOS arm64 and Windows wheels each installed on a clean runner of its
+# system and the binding's tests run against it; everything published to PyPI when the tag v<version> is pushed,
+# <version> being the package's own.
+#
+# One wheel per platform serves Python 3.11 and every later version: the extension is built on Python's stable ABI
+# (pyo3's `abi3-py311`, in the workspace's Cargo.toml). Run by hand (workflow_dispatch) to build and test without
+# publishing. The versions of maturin and of the test dependencies are those of ci.yml.
+
+name: Wheels
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+# A run started by a tag is never cancelled, so a release is never cut off halfway.
+concurrency:
+  group: wheels-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Wheel ${{ matrix.platform }} ${{ matrix.target }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux
+            runner: ubuntu-latest
+            target: x86_64
+          - platform: linux
+            runner: ubuntu-latest
+            target: aarch64
+          - platform: macos
+            runner: macos-latest
+            target: x86_64
+          - platform: macos
+            runner: macos-latest
+            target: aarch64
+          - platform: windows
+            runner: windows-latest
+            target: x64
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          # The oldest Python the stable-ABI wheel serves.
+          python-version: "3.11"
+      - name: Build the wheel
+        uses: PyO3/maturin-action@v1
+        with:
+          maturin-version: v1.16.0
+          target: ${{ matrix.target }}
+          args: --release --out dist -m crates/binding/Cargo.toml
+          # `auto` picks the oldest manylinux the toolchain can build for, so that the wheel installs on older
+          # Linux systems too.
+          manylinux: auto
+      - uses: actions/upload-artifact@v7
+        with:
+          name: wheel-${{ matrix.platform }}-${{ matrix.target }}
+          path: dist
+
+  sdist:
+    name: Source archive
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Build the source archive
+        uses: PyO3/maturin-action@v1
+        with:
+          maturin-version: v1.16.0
+          command: sdist
+          args: --out dist -m crates/binding/Cargo.toml
+      - uses: actions/upload-artifact@v7
+        with:
+          name: sdist
+          path: dist
+
+  test:
+    # A wheel that builds but does not install, or installs and fails the binding's tests, is not a wheel.
+    name: Install the wheel and test it on ${{ matrix.os }}
+    needs: build
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            artifact: wheel-linux-x86_64
+          - os: macos-latest
+            artifact: wheel-macos-aarch64
+          - os: windows-latest
+            artifact: wheel-windows-x64
+    steps:
+      # The checkout holds the tests and their fixtures; the package comes from the wheel alone.
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          # Deliberately not 3.11: the wheel is tagged abi3 from 3.11, so a later interpreter must accept the same
+          # file. (networkx 3.7, a test dependency, needs 3.12 or later in any case.)
+          python-version: "3.14"
+      - uses: actions/download-artifact@v8
+        with:
+          name: ${{ matrix.artifact }}
+          path: dist
+      - name: Install the wheel and the test dependencies, nothing else
+        shell: bash
+        run: |
+          python -m pip install pytest==9.2.0 pyarrow==26.0.1 networkx==3.7
+          # `--no-index`: openmobisim comes from the wheel built above, never from PyPI or a build from source.
+          python -m pip install --no-index --find-links dist openmobisim
+      - name: The import resolves to the installed wheel, not to the checkout
+        shell: bash
+        working-directory: ${{ runner.temp }}
+        run: python -c "import openmobisim, pathlib; p = pathlib.Path(openmobisim.__file__); print(p); assert 'site-packages' in p.parts, p"
+      - name: The binding's tests against the installed wheel, run from outside the checkout (TEST_10 unset, so test 10 is skipped)
+        shell: bash
+        working-directory: ${{ runner.temp }}
+        run: python -m pytest "$GITHUB_WORKSPACE/crates/binding/tests" -p no:cacheprovider -rs
+
+  publish:
+    # Publishes to PyPI when a version tag (v0.2.0, ...) is pushed to the public repository on a commit of main, and
+    # only then: a run by hand builds and tests but never uploads. No token is stored anywhere: PyPI trusts this
+    # workflow and this environment (a trusted publisher), and GitHub hands the job a short-lived identity. The job's
+    # permissions replace the workflow's, so it names `contents: read` again for its checkout.
+    name: Publish to PyPI
+    if: github.repository == 'bahmanmdd/openmobisim' && github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    needs: [build, sdist, test]
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      # The whole history, so that main is there to compare with; checked out before the files are downloaded,
+      # since a checkout empties the folder it fills.
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: The tagged commit is on main
+        shell: bash
+        run: |
+          # Exit 0: on main; 1: not on main; anything else: git could not compare (a commit or main missing).
+          status=0
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main || status=$?
+          if [ "$status" -eq 1 ]; then
+            echo "::error::the tag $GITHUB_REF_NAME names $GITHUB_SHA, which is not on main"
+            exit 1
+          elif [ "$status" -ne 0 ]; then
+            echo "::error::git could not compare $GITHUB_SHA with origin/main (exit $status)"
+            exit 1
+          fi
+          echo "$GITHUB_SHA ($GITHUB_REF_NAME) is on main"
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: "{wheel-*,sdist}"
+          merge-multiple: true
+          path: dist
+      - name: List what will be uploaded
+        run: ls -l dist
+      - name: The pushed tag, less its leading v, is the version of every file built
+        shell: bash
+        run: |
+          # The version is the Cargo workspace's, which maturin writes in PEP 440 form into each file's name:
+          # openmobisim-<version>-<tags>.whl and openmobisim-<version>.tar.gz. A tag v0.2.0 on a tree still at
+          # 0.2.0-dev (0.2.0.dev0) stops here, before anything is uploaded.
+          tag="${GITHUB_REF_NAME#v}"
+          shopt -s nullglob
+          files=(dist/*.whl dist/*.tar.gz)
+          if [ "${#files[@]}" -eq 0 ]; then echo "::error::no wheel or source archive in dist"; exit 1; fi
+          for f in "${files[@]}"; do
+            name=$(basename "$f" .tar.gz)
+            version=$(echo "${name%.whl}" | cut -d- -f2)
+            if [ "$version" != "$tag" ]; then
+              echo "::error::$f is version $version; the tag $GITHUB_REF_NAME asks for $tag"
+              exit 1
+            fi
+          done
+          echo "all ${#files[@]} files are version $tag"
+      - uses: pypa/gh-action-pypi-publish@release/v1
