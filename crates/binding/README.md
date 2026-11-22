@@ -290,7 +290,9 @@ Measured on GitHub's runners (`windows-latest`, `ubuntu-latest`, `macos-latest` 
 silicon), the wheel installed, Python 3.14:
 - **Windows, a standard user**: a new local account in the group Users alone (`whoami /groups`:
   no Administrators, medium integrity), started by `Start-Process -Credential`, working in
-  folders it owns. The binding's tests give what they give the administrator. A run from three
+  folders it owns. The binding's tests pass as they do for the administrator, but for the two
+  symbolic-link cases of `test_run_file.py`, skipped with the reason when the user may not
+  create a link (152 passed and 17 skipped, against 153 and 16). A run from three
   table files, run again by `run_file` (its `trips.parquet` and `links.parquet` the first run's
   bytes) and opened by `Run.open` (its map and summary the fresh run's bytes), works in one
   folder; with the inputs on one drive and the run on the other (C: and D:, both ways); with the
