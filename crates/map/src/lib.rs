@@ -128,7 +128,7 @@ pub fn clock(seconds: u32) -> String {
 }
 
 /// The run a map is drawn of: what the pages keep of it, the network and the timetable it ran on,
-/// the names beside the timetable (the GTFS reader's [`Lines`]), and its record, `run.toml`.
+/// the names beside the timetable (the GTFS reader's [`Lines`]), and its record, `run_record.toml`.
 #[derive(Clone, Copy, Debug)]
 pub struct Mapped<'a> {
     /// What the pages keep of the run.

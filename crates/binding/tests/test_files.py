@@ -7,7 +7,7 @@ written by pyarrow 26.0.1 (another tool) from hand values, in place of a table i
    360 s; a walker walks 1 000 m at 4.8 km/h in 750 s; three cars through a link of two lanes
    at 1 800 veh/h per lane (one car a second), 1 000 m at 36 km/h (100 s), take 100, 101, 102 s.
 2. A file and the same table in memory give the same network and demand: equal fingerprints in
-   run.toml (a fingerprint hashes what the network or demand was built from).
+   run_record.toml (a fingerprint hashes what the network or demand was built from).
 3. The column types read (strings Utf8 or LargeUtf8; integers Int32, Int64, UInt32, UInt64;
    floats Float64 or those integers), each in a file, give the fingerprints of the plain table;
    so do a text column of numbers for a float, a Float32 and a float column of whole numbers
@@ -64,7 +64,7 @@ def write(folder, name, columns, **options):
 def fingerprints(record):
     with open(record, "rb") as f:
         r = tomllib.load(f)
-    return r["network"]["fingerprint"], r["demand"]["fingerprint"]
+    return r["result"]["network"]["fingerprint"], r["result"]["demand"]["fingerprint"]
 
 
 def test_the_hand_run_from_files_passes_read_back(tmp_path):
@@ -247,9 +247,10 @@ def test_a_cell_that_cannot_be_read_leaves_its_row_out_counted_and_warned(tmp_pa
                      out=tmp_path / "run", iteration_cap=1)
     with open(result.record, "rb") as f:
         record = tomllib.load(f)
-    assert {"links": record["network"]["links"], "trips": record["demand"]["trips"]} == left
+    found = record["result"]
+    assert {"links": found["network"]["links"], "trips": found["demand"]["trips"]} == left
     # trips_given is written only when the demand dropped some: else it is the trips.
-    assert record["demand"].get("trips_given", record["demand"]["trips"]) == 7
+    assert found["demand"].get("trips_given", found["demand"]["trips"]) == 7
 
 
 def test_a_node_row_that_cannot_be_read_leaves_the_node_and_its_links_out():
@@ -329,6 +330,7 @@ def test_files_of_several_row_groups_and_batches_read_every_row(tmp_path):
         with open(result.record, "rb") as f:
             records.append(tomllib.load(f))
     memory, files = records
+    files, memory = files["result"], memory["result"]
     assert (files["network"]["nodes"], files["network"]["links"], files["demand"]["trips"]) == \
         (1_089, 4_224, 1_100)
     assert fingerprints_of(files) == fingerprints_of(memory)

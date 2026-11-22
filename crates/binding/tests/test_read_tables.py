@@ -12,8 +12,8 @@ in the bins from 25 200 s and 28 200 s, st1 from 25 200 s, st2 from 25 320 s (bi
    (NaN, so the map's strip is not drawn) and its journey's door-to-door time stays 360 s.
 3. links.parquet's rows given twice: the first used, the pages the fresh run's, byte for byte.
 4. The record's `link_bin` 60 changed to 120, with a bike that enters ab at 25 260 s (bin 1 of
-   60 s, off a grid of 120 s): that row set aside; the window moved 30 s on (25 230 s to
-   28 830 s): all 5 rows set aside.
+   60 s, off a grid of 120 s): that row set aside; the window moved 30 s on (`window_start_s`
+   25 230 s, `[result] window_end_used_s` 28 830 s): all 5 rows set aside.
 5. routes.parquet rewritten by pyarrow with its defaults (snappy, the list's inner field
    `element`) and its columns in reverse order: read as written, no warning, the same pages.
 6. An empty route (a trip whose two doors are one node): an empty list of links, not null, and
@@ -116,7 +116,7 @@ def test_rows_off_the_records_grid_or_window_are_set_aside(tmp_path):
     assert said == [f"{links_file}: 1 {grid}: ab at 25260"], said
     edit_record(fresh.record, "link_bin = 120", "link_bin = 60")
     edit_record(fresh.record, "window_start_s = 25200", "window_start_s = 25230")
-    edit_record(fresh.record, "window_end_s = 28800", "window_end_s = 28830")
+    edit_record(fresh.record, "window_end_used_s = 28800", "window_end_used_s = 28830")
     _, said = opened(fresh.record)
     assert said == [f"{links_file}: 5 {grid}: ab at 25200, ab at 25260, ab at 28200, st1 at 25200, st2 at 25320"], said
 

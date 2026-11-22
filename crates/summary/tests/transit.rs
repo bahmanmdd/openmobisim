@@ -119,12 +119,14 @@ fn the_transit_map_colours_hops_by_kind_and_the_footer_credits_openstreetmap() {
     let mut lines = Lines::default();
     lines.trip_lines.insert("r0".to_owned(), Line { name: "1".to_owned(), kind: Kind::Tram });
     lines.trip_lines.insert("r1".to_owned(), Line { name: "19".to_owned(), kind: Kind::Bus });
-    let html = summary_with(Some(&lines), "[network]\nsource = \"osm\"\n", "summary-kinds.html");
+    let html =
+        summary_with(Some(&lines), "[result.network]\nsource = \"osm\"\n", "summary-kinds.html");
     let map = &html[html.find("data-k=\"map.transit\"").expect("the transit map")..];
     assert!(map.contains("class=\"k-k2\"") && map.contains("class=\"k-k3\""));
     assert!(map.contains("k-k2\"></span>tram") && map.contains("k-k3\"></span>bus"));
     assert!(html.contains("<br>© OpenStreetMap contributors (ODbL)</footer>"));
-    let plain = summary_with(None, "[network]\nsource = \"tables\"\n", "summary-tables.html");
+    let plain =
+        summary_with(None, "[result.network]\nsource = \"tables\"\n", "summary-tables.html");
     assert!(!plain.contains("OpenStreetMap") && plain.contains("class=\"k-k5\""));
 }
 

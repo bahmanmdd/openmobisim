@@ -240,10 +240,11 @@ fn places_ids_and_the_records_lines_are_the_hand_values() {
     };
     let r =
         run(&net, &dem, None, (Second(START), Second(START + 3_600)), &parameters).expect("a run");
-    let record = "# a hand record\nformat = 1\nopenmobisim_version = \"0.2.0-dev\"\nwindow_start_s = 25200\n\
-                  window_end_s = 28800\n\n[parameters]\nchoice = \"deterministic\"  # name\nlink_bin = 60  # s\n\
-                  seed = 0  # none\n\n[network]\nsource = \"osm\"\nfingerprint = \"0123456789abcdef\"\n\n\
-                  [result]\niterations = 3\nstopped_by_rule = false\n";
+    let record = "# a hand record\nformat = 1\nwindow_start_s = 25200\nwindow_end_s = 28800\n\n\
+                  [parameters]\nchoice = \"deterministic\"  # name\nlink_bin = 60  # s\n\
+                  seed = 0  # none\n\n[network]\n\n[result]\nopenmobisim_version = \"0.2.0-dev\"\n\
+                  window_end_used_s = 28800\niterations = 3\nstopped_by_rule = false\n\n\
+                  [result.network]\nsource = \"osm\"\nfingerprint = \"0123456789abcdef\"\n";
     let path = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("map-hand-run-names.html");
     let kept = common::kept(&r, &net, &dem, None, &parameters, "map-hand-run-names.run");
     let mapped = Mapped { kept: &kept, network: &net, timetable: None, lines: None, record };

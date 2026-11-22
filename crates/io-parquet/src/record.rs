@@ -1,15 +1,18 @@
-//! `run.toml`: the record of a run, what was run, so that the folder alone tells which
-//! parameters and inputs produced its three tables, and, when every input was read from a file,
-//! so that the record alone runs again (the binding's `run_file`). TOML (version 1.0) written by
-//! hand: keys in a fixed order, no time stamp, machine or thread count, and an input file's path
-//! relative to the record's folder, so a second write of the same run is the same bytes.
+//! `run_record.toml`: the record of a run, written by the run beside its four tables, so that the
+//! folder alone tells which settings and inputs produced them and what the run found and did.
+//! TOML (version 1.0) written by hand: keys in a fixed order, no time stamp, machine or thread
+//! count, and an input file's path relative to the record's folder, so a second write of the same
+//! run is the same bytes. The record has two parts. Part one, every line before `[result]`, is
+//! the settings the run ran with, every default filled in: it is a settings file, `run.toml`,
+//! as the binding's `run_file` reads one. Part two, `[result]` and the tables under it, is what
+//! the run found and did: the version, the end of the window it used, how it ended, the inputs'
+//! counts, fingerprints and readers' reports, and every repair.
 //!
 //! ```toml
-//! # The record of one openmobisim run: ...
+//! # The record of one openmobisim run, written by the run: ...
 //! format = 1
-//! openmobisim_version = "0.2.0-dev"
 //! window_start_s = 25200
-//! window_end_s = 28800
+//! window_end_s = 28800         the end given
 //!
 //! [parameters]
 //! capacity_per_lane = 1800.0  # veh/h per lane
@@ -19,29 +22,33 @@
 //! car_drive_min = 1.0
 //! ...                          (one table per class, a key per column of the choice row)
 //!
-//! [network]                    source, nodes, links, fingerprint; osm_file and region (the
-//!                              region the extract was cut to, absent for the whole extract), or
-//!                              nodes_file and links_file, each absent for a table given in memory
-//! [network.osm_report]         the OSM reader's counts; absent for a network from tables
-//! [network.repairs]            what the network's readers set right, by kind
-//! [demand]                     trips, trips_given (only when it differs from trips), classes,
-//!                              fingerprint; trips_file, absent likewise
-//! [demand.repairs]             what the demand's readers set right or dropped, by kind
-//! [transit]                    stops, runs, fingerprint, gtfs_file; absent without transit
-//! [transit.gtfs_report]        the GTFS reader's counts
-//! [transit.repairs]            what the GTFS reader set right, by kind
-//! [result]                     iterations, stopped_by_rule
+//! [network]                    osm_file and region (the region the extract was cut to, absent
+//!                              for the whole extract), or nodes_file and links_file; each
+//!                              absent for a table given in memory, so the table may be empty
+//! [demand]                     trips_file (absent likewise), classes
+//! [transit]                    gtfs_file; absent without transit
+//!
+//! # Part two: what the run found and did.
+//! [result]                     openmobisim_version, window_end_used_s, iterations, stopped_by_rule
 //! [result.repairs]             what the run set right or dropped (the window), by kind
+//! [result.network]             source, nodes, links, fingerprint
+//! [result.network.osm_report]  the OSM reader's counts; absent for a network from tables
+//! [result.network.repairs]     what the network's readers set right, by kind
+//! [result.demand]              trips, trips_given (only when it differs from trips), fingerprint
+//! [result.demand.repairs]      what the demand's readers set right or dropped, by kind
+//! [result.transit]             stops, runs, fingerprint; absent without transit
+//! [result.transit.gtfs_report] the GTFS reader's counts
+//! [result.transit.repairs]     what the GTFS reader set right, by kind
 //! ```
 //!
-//! A `repairs` table holds one key per kind of repair made, its count (each crate's README names
-//! its kinds), and is absent when none was made. `trips_given` counts the rows of the trips
-//! table and is written only when the demand dropped some, so that it differs from `trips`, the
-//! trips the demand holds (the difference is in `[demand.repairs]`); of those, the trips the run
-//! did not run are counted in `[result.repairs]`. `window_end_s` is the end the run used; when
-//! the run moved the end given up to a whole bin, `window_end_given_s` (after it) is the end
-//! given, which a run again starts from, so it repeats the repair. So a run that needed no
-//! repair has the record it had before repairs were counted.
+//! `window_end_s` is the end given; `window_end_used_s`, always written, is the end the run used:
+//! the end given, or, when the window was not a whole number of `link_bin`, the end moved up to
+//! the next whole bin (counted as `window_end_moved` in `[result.repairs]`). A `repairs` table
+//! holds one key per kind of repair made, its count (each crate's README names its kinds), and is
+//! absent when none was made. `trips_given` counts the rows of the trips table and is written
+//! only when the demand dropped some, so that it differs from `trips`, the trips the demand holds
+//! (the difference is in `[result.demand.repairs]`); of those, the trips the run did not run are
+//! counted in `[result.repairs]`.
 //!
 //! TOML has no null: a value that does not exist is an absent key or table. `stop_walk_max` and
 //! `transfer_walk_max` are absent without transit (nothing reads them there); the coefficients'
@@ -73,9 +80,17 @@ use openmobisim_types::repairs::Repairs;
 use crate::{Given, Source, WriteError};
 
 /// The file's first line.
-const HEAD: &str = "# The record of one openmobisim run: the parameters and inputs that produced \
-                    trips.parquet, links.parquet, iterations.parquet and routes.parquet in this \
-                    folder.";
+const HEAD: &str = "# The record of one openmobisim run, written by the run: part one, every line \
+                    before [result], is the settings it ran with, every default filled in (a \
+                    settings file, run.toml, as it stands); part two, [result], is what it found \
+                    and did. It describes trips.parquet, links.parquet, iterations.parquet and \
+                    routes.parquet in this folder.";
+
+/// The comment above part two.
+const PART_TWO: &str = "# Part two: what the run found and did.";
+
+/// The comment of `window_end_used_s`.
+const END_USED: &str = "s: window_end_s, moved up to a whole link_bin when it was not one";
 
 /// The rows of `PARAMETERS.md` written under `[parameters]`, in order, each with its unit as
 /// that table's Unit column writes it (`coefficients` is written as tables after them;
@@ -99,19 +114,18 @@ const UNITS: [(&str, &str); 15] = [
 ];
 
 /// Every table of the record, by its dotted name (`""` for the top), and the keys the writer may
-/// write in it, so that a reader can name any other. The tables of the coefficients, one per
-/// class under `parameters.coefficients`, hold the columns of the choice row
+/// write in it, so that a reader can name any other: part one's tables, then part two's,
+/// `result` and those under it. The tables of the coefficients, one per class under
+/// `parameters.coefficients`, hold the columns of the choice row
 /// (`openmobisim_loop::parameters::COLUMNS`); a `repairs` table, the kinds of repair its
 /// readers name.
-pub const KEYS: [(&str, &[&str]); 8] = [
+pub const KEYS: [(&str, &[&str]); 11] = [
     (
         "",
         &[
             "format",
-            "openmobisim_version",
             "window_start_s",
             "window_end_s",
-            "window_end_given_s",
             "parameters",
             "network",
             "demand",
@@ -140,26 +154,31 @@ pub const KEYS: [(&str, &[&str]); 8] = [
             "coefficients",
         ],
     ),
+    ("network", &["osm_file", "region", "nodes_file", "links_file"]),
+    ("demand", &["trips_file", "classes"]),
+    ("transit", &["gtfs_file"]),
     (
-        "network",
+        "result",
         &[
-            "source",
-            "nodes",
-            "links",
-            "fingerprint",
-            "osm_file",
-            "region",
-            "nodes_file",
-            "links_file",
-            "osm_report",
+            "openmobisim_version",
+            "window_end_used_s",
+            "iterations",
+            "stopped_by_rule",
             "repairs",
+            "network",
+            "demand",
+            "transit",
         ],
     ),
-    ("network.osm_report", &["nodes", "links", "links_unreachable", "loops_dropped", "ways_cut"]),
-    ("demand", &["trips", "trips_given", "classes", "fingerprint", "trips_file", "repairs"]),
-    ("transit", &["stops", "runs", "fingerprint", "gtfs_file", "gtfs_report", "repairs"]),
+    ("result.network", &["source", "nodes", "links", "fingerprint", "osm_report", "repairs"]),
     (
-        "transit.gtfs_report",
+        "result.network.osm_report",
+        &["nodes", "links", "links_unreachable", "loops_dropped", "ways_cut"],
+    ),
+    ("result.demand", &["trips", "trips_given", "fingerprint", "repairs"]),
+    ("result.transit", &["stops", "runs", "fingerprint", "gtfs_report", "repairs"]),
+    (
+        "result.transit.gtfs_report",
         &[
             "date",
             "trips",
@@ -178,7 +197,6 @@ pub const KEYS: [(&str, &[&str]); 8] = [
             "transfers_skipped",
         ],
     ),
-    ("result", &["iterations", "stopped_by_rule", "repairs"]),
 ];
 
 /// The comment above the coefficient tables.
@@ -310,7 +328,8 @@ fn parameter<'a>(name: &str, given: &Given<'a>) -> Option<Value<'a>> {
 
 /// The record of `run` as TOML text, each input file's path relative to `folder`, the canonical
 /// path of the folder it is written in. Without a folder (the build that checks every value
-/// before the folder exists, its text discarded) each path is written whole.
+/// before the folder exists, its text discarded) each path is written whole. Part one, the
+/// settings as used, then part two, `[result]`.
 pub(crate) fn text(
     run: &Run,
     network: &Network,
@@ -319,16 +338,12 @@ pub(crate) fn text(
     folder: Option<&Path>,
 ) -> Result<String, WriteError> {
     let mut t = Toml { text: format!("{HEAD}\n"), table: String::new() };
-    let window = run.links.window();
+    let (start, end) = run.window_given;
     t.keys(&[
         ("format", Value::Int(1)),
-        ("openmobisim_version", Value::Str(env!("CARGO_PKG_VERSION"))),
-        ("window_start_s", Value::Int(u64::from(window.origin().get()))),
-        ("window_end_s", Value::Int(u64::from(window.end().get()))),
+        ("window_start_s", Value::Int(u64::from(start.get()))),
+        ("window_end_s", Value::Int(u64::from(end.get()))),
     ])?;
-    if run.window_given.1 != window.end() {
-        t.key("window_end_given_s", &Value::Int(u64::from(run.window_given.1.get())), None)?;
-    }
     t.table("parameters");
     for (name, unit) in UNITS {
         if let Some(value) = parameter(name, given) {
@@ -344,13 +359,18 @@ pub(crate) fn text(
             t.key(column, &Value::Float(b), None)?;
         }
     }
-    inputs(&mut t, network, demand, given, folder)?;
+    settings_inputs(&mut t, demand, given, folder)?;
+    t.text.push_str(&format!("\n{PART_TWO}"));
     t.table("result");
+    t.key("openmobisim_version", &Value::Str(env!("CARGO_PKG_VERSION")), None)?;
+    let used = Value::Int(u64::from(run.links.window().end().get()));
+    t.key("window_end_used_s", &used, Some(END_USED))?;
     t.keys(&[
         ("iterations", Value::Int(run.iterations.len() as u64)),
         ("stopped_by_rule", Value::Flag(run.stopped_by_rule)),
     ])?;
     repairs(&mut t, "result", &run.repairs)?;
+    found(&mut t, network, demand, given)?;
     Ok(t.text)
 }
 
@@ -407,17 +427,40 @@ fn files(
     Ok(())
 }
 
-/// The tables `[network]`, `[demand]` and `[transit]`, with the input files' paths and the
-/// readers' counts.
-fn inputs(
+/// Part one's tables `[network]`, `[demand]` and `[transit]` (this one only with transit): the
+/// input files' paths, the region the extract was cut to, and the classes.
+fn settings_inputs(
     t: &mut Toml,
-    network: &Network,
     demand: &Demand,
     given: &Given<'_>,
     folder: Option<&Path>,
 ) -> Result<(), WriteError> {
     let f = &given.files;
     t.table("network");
+    files(t, &[("osm_file", f.osm)], folder)?;
+    if let Source::Osm(Report { region: Some(region), .. }) = given.source {
+        t.key("region", &Value::Region(region), None)?;
+    }
+    files(t, &[("nodes_file", f.nodes), ("links_file", f.links)], folder)?;
+    t.table("demand");
+    files(t, &[("trips_file", f.trips)], folder)?;
+    t.key("classes", &Value::Strs(demand.class_ids().iter().collect()), None)?;
+    if given.transit.is_some() {
+        t.table("transit");
+        files(t, &[("gtfs_file", f.gtfs)], folder)?;
+    }
+    Ok(())
+}
+
+/// Part two's tables of the inputs, `[result.network]`, `[result.demand]` and
+/// `[result.transit]`: their counts, fingerprints, readers' reports and repairs.
+fn found(
+    t: &mut Toml,
+    network: &Network,
+    demand: &Demand,
+    given: &Given<'_>,
+) -> Result<(), WriteError> {
+    t.table("result.network");
     let source = match given.source {
         Source::Osm(_) => "osm",
         Source::Tables => "tables",
@@ -429,13 +472,8 @@ fn inputs(
         ("links", Value::Int(u64::from(network.link_count()))),
         ("fingerprint", Value::Str(&fingerprint)),
     ])?;
-    files(t, &[("osm_file", f.osm)], folder)?;
-    if let Source::Osm(Report { region: Some(region), .. }) = given.source {
-        t.key("region", &Value::Region(region), None)?;
-    }
-    files(t, &[("nodes_file", f.nodes), ("links_file", f.links)], folder)?;
     if let Source::Osm(r) = given.source {
-        t.table("network.osm_report");
+        t.table("result.network.osm_report");
         let n = |x: u32| Value::Int(u64::from(x));
         t.keys(&[
             ("nodes", n(r.nodes)),
@@ -445,29 +483,24 @@ fn inputs(
             ("ways_cut", n(r.ways_cut)),
         ])?;
     }
-    repairs(t, "network", given.network_repairs)?;
-    t.table("demand");
+    repairs(t, "result.network", given.network_repairs)?;
+    t.table("result.demand");
     let fingerprint = hex(demand.fingerprint());
     t.key("trips", &Value::Int(u64::from(demand.trip_count())), None)?;
     if given.trips_given != u64::from(demand.trip_count()) {
         t.key("trips_given", &Value::Int(given.trips_given), None)?;
     }
-    t.keys(&[
-        ("classes", Value::Strs(demand.class_ids().iter().collect())),
-        ("fingerprint", Value::Str(&fingerprint)),
-    ])?;
-    files(t, &[("trips_file", f.trips)], folder)?;
-    repairs(t, "demand", given.demand_repairs)?;
+    t.key("fingerprint", &Value::Str(&fingerprint), None)?;
+    repairs(t, "result.demand", given.demand_repairs)?;
     let Some(transit) = &given.transit else { return Ok(()) };
-    t.table("transit");
+    t.table("result.transit");
     let fingerprint = hex(transit.timetable.fingerprint());
     t.keys(&[
         ("stops", Value::Int(u64::from(transit.timetable.stop_count()))),
         ("runs", Value::Int(u64::from(transit.timetable.run_count()))),
         ("fingerprint", Value::Str(&fingerprint)),
     ])?;
-    files(t, &[("gtfs_file", f.gtfs)], folder)?;
-    t.table("transit.gtfs_report");
+    t.table("result.transit.gtfs_report");
     let (r, n) = (transit.report, |x: u32| Value::Int(u64::from(x)));
     t.keys(&[
         ("date", n(r.date)),
@@ -486,5 +519,5 @@ fn inputs(
         ("transfers_applied", n(r.transfers_applied)),
         ("transfers_skipped", n(r.transfers_skipped)),
     ])?;
-    repairs(t, "transit", &r.repairs)
+    repairs(t, "result.transit", &r.repairs)
 }

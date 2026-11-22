@@ -22,7 +22,7 @@ the pure-Rust `zlib-rs` backend: no C). Base64 and the page's JSON are written b
   sibling renamed.
 - `write(&Mapped, title, path)`: `Mapped` is the run: what the pages keep of it (`kept`), the
   `Network` and the `Timetable` (or none) it ran on, the GTFS reader's `Lines` beside the
-  timetable (the stops' names, the runs' lines and kinds; or none) and its record, `run.toml`, as
+  timetable (the stops' names, the runs' lines and kinds; or none) and its record, `run_record.toml`, as
   text; then the page's title, and the file to write (replaced if there). No options. The page is
   written to a sibling, `.<name>.partial`, then renamed to `path`: a write that fails leaves no
   part of a page at `path` and removes the sibling. Through the binding, `Run.map(path)` titles the

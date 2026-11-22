@@ -1,4 +1,4 @@
-"""The run's record, run.toml, read with Python's standard tomllib (TOML 1.0), against answers from
+"""The run's record, run_record.toml, read with Python's standard tomllib (TOML 1.0), against answers from
 outside the simulator: the rows of PARAMETERS.md (their names, units and defaults, written here
 from that table), the inputs of the run itself (rebuilt from the record alone), and TOML's
 string rules.
@@ -9,19 +9,20 @@ string rules.
    comment is that row's Unit cell; with no keyword anywhere every value is the default of
    PARAMETERS.md written below.
 2. Reconstruction: a run with transit and non-default keywords at every entry point, then the
-   same input tables and feed rebuilt and rerun with ONLY values read from its run.toml:
-   trips.parquet, links.parquet and run.toml byte-identical, iterations.parquet equal but for
+   same input tables and feed rebuilt and rerun with ONLY values read from its record:
+   trips.parquet, links.parquet and run_record.toml byte-identical, iterations.parquet equal but for
    its five wall-clock columns, the fingerprints equal; [transit.gtfs_report] is the reader's
-   counts as Run.gtfs_report returns them, key by key.
+   counts as Run.gtfs_report returns them, key by key (both in part two, [result]).
 3. Each fingerprint answers to its own input: one link's car speed changed changes the
    network's alone, one trip's departure the demand's alone, one call's time the transit's.
 4. Determinism, the one self-comparison: grid.py's logit run and the case of 2, each twice in
    this process and at RAYON_NUM_THREADS=1 and 8 in a fresh interpreter (as
-   test_determinism.py runs it): run.toml byte-identical across the four.
+   test_determinism.py runs it): run_record.toml byte-identical across the four.
 5. Class ids with a quote, a backslash, control characters and a letter outside ASCII read back
    unchanged as TOML strings and quoted keys.
 6. Delft's OSM extract and GTFS feed (the fixtures test_delft.py reads): source "osm", and
-   [network.osm_report] and [transit.gtfs_report] equal Run.osm_report and Run.gtfs_report.
+   [result.network.osm_report] and [result.transit.gtfs_report] equal Run.osm_report and
+   Run.gtfs_report.
 
 The case of 1 and 2: a 6 x 6 grid of grid.py (streets for car, bike and walk, one way for bikes
 on a drawn share) placed in longitude/latitude, two bus lines on it, 120 trips open to every mode
@@ -175,7 +176,8 @@ def test_the_parameter_names_units_and_defaults_are_those_of_parameters_md(tmp_p
     demand = oms.Demand.from_table(trips, ["all"], network)
     alone = read(oms.run(network, demand, window=(0, 3_600), out=tmp_path / "alone").record)
     assert set(alone["parameters"]) == names - {"transfer_walk_max", "stop_walk_max"}
-    assert "transit" not in alone and "osm_report" not in alone["network"]
+    assert "transit" not in alone and "transit" not in alone["result"]
+    assert "osm_report" not in alone["result"]["network"]
     print(f"the default run with transit: {seconds:.2f} s, "
           f"{record['result']['iterations']} iterations")
 
@@ -197,7 +199,7 @@ def test_a_run_rebuilt_from_its_record_alone_gives_the_same_files(tmp_path):
                      {"stop_walk_max": p["stop_walk_max"]}, run_kw,
                      classes=record["demand"]["classes"],
                      window=(record["window_start_s"], record["window_end_s"]))
-    for name in ("trips.parquet", "links.parquet", "run.toml"):
+    for name in ("trips.parquet", "links.parquet", "run_record.toml"):
         a, b = (tmp_path / "first" / name).read_bytes(), (tmp_path / "again" / name).read_bytes()
         assert a == b, name
     clocked = {"search_s", "choose_s", "load_s", "measure_s", "assess_s"}
@@ -207,8 +209,8 @@ def test_a_run_rebuilt_from_its_record_alone_gives_the_same_files(tmp_path):
     assert len(a) == record["result"]["iterations"]
     rebuilt = read(again.record)
     for table in ("network", "demand", "transit"):
-        assert rebuilt[table]["fingerprint"] == record[table]["fingerprint"], table
-    assert record["transit"]["gtfs_report"] == first.gtfs_report
+        assert rebuilt["result"][table]["fingerprint"] == record["result"][table]["fingerprint"], table
+    assert record["result"]["transit"]["gtfs_report"] == first.gtfs_report
     # The keywords given are the ones recorded, so nothing above was read from a default.
     given = {**NETWORK_KW, **TRANSIT_KW, **DEMAND_KW, **RUN_KW}
     del given["coefficients"]
@@ -234,7 +236,7 @@ def test_one_input_changed_changes_its_own_fingerprint_alone(tmp_path):
         result = run_case(folder / "run", gtfs, {}, {}, {}, {"iteration_cap": 1},
                           inputs=case["network"])
         record = read(result.record)
-        prints[name] = {t: record[t]["fingerprint"] for t in ("network", "demand", "transit")}
+        prints[name] = {t: record["result"][t]["fingerprint"] for t in ("network", "demand", "transit")}
     for changed in ("network", "demand", "transit"):
         for table in ("network", "demand", "transit"):
             same = prints[changed][table] == prints["base"][table]
@@ -258,7 +260,7 @@ def test_the_record_is_the_same_bytes_twice_and_at_1_and_8_threads(tmp_path):
             env = {**os.environ, "RAYON_NUM_THREADS": threads}
             subprocess.run([sys.executable, str(script), str(folder)], env=env, check=True)
             folders.append(folder)
-        records = [next(folder.rglob("run.toml")).read_bytes() for folder in folders]
+        records = [next(folder.rglob("run_record.toml")).read_bytes() for folder in folders]
         assert all(r == records[0] for r in records), name
 
 
@@ -276,11 +278,12 @@ def test_delft_from_osm_records_the_readers_counts_as_the_run_returns_them(tmp_p
                      iteration_cap=1)
     seconds = time.perf_counter() - started
     record = read(result.record)
-    assert record["network"]["source"] == "osm"
+    found = record["result"]
+    assert found["network"]["source"] == "osm"
     assert "region" not in record["network"], "the whole extract: no region"
-    assert record["network"]["osm_report"] == result.osm_report
-    assert record["transit"]["gtfs_report"] == result.gtfs_report
-    assert (record["network"]["nodes"], record["network"]["links"]) == \
+    assert found["network"]["osm_report"] == result.osm_report
+    assert found["transit"]["gtfs_report"] == result.gtfs_report
+    assert (found["network"]["nodes"], found["network"]["links"]) == \
         (result.osm_report["nodes"], result.osm_report["links"])
     print(f"Delft read, run and written: {seconds:.2f} s")
 

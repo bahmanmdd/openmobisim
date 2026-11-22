@@ -8,15 +8,16 @@
 //! transit = oms.Transit.from_gtfs(path, network, **transit_parameters)
 //! demand  = oms.Demand.from_table(trips, classes, network, transit=None, **demand_parameters)
 //! result  = oms.run(network, demand, transit=None, window=(start_s, end_s), out=folder, **parameters)
-//! result  = oms.run_file(record, out=folder)
-//! result  = oms.Run.open(record, network=None, demand=None, transit=None)
+//! result  = oms.run_file(folder=None, out=folder)
+//! result  = oms.Run.open(folder, network=None, demand=None, transit=None)
 //! page    = result.map(path)
 //! page    = result.summary(path)
 //! ```
 //!
 //! Every keyword is a row of `PARAMETERS.md`, read at the one entry point whose crate reads it
 //! (`keywords.rs`); the tables, in memory or Parquet files, are read into the crates' rows
-//! (`tables.rs`); a run's record runs again through the same entry points (`record.rs`). Each
+//! (`tables.rs`); a settings file, `run.toml`, runs through the same entry points, and a run's
+//! record, `run_record.toml`, is opened (`record.rs`). Each
 //! input read from a file keeps the file's canonical path, which the record writes. The interpreter's
 //! lock is released while a file is read, a network, timetable or demand is built, and a run
 //! runs and is written. A crate's error is a `ValueError` carrying its message unchanged (an
@@ -407,7 +408,7 @@ impl Page {
     }
 }
 
-/// What a run returns: the paths of its four Parquet files and of its record, `run.toml`,
+/// What a run returns: the paths of its four Parquet files and of its record, `run_record.toml`,
 /// whether the stopping rule (else the iteration cap) ended it (`None` when an opened record
 /// does not say), the readers' counts (`None` for a network from tables or a run without
 /// transit) and every repair; and, hidden, the files of the run, its window and its inputs, by
@@ -427,7 +428,7 @@ pub(crate) struct Run {
     /// `routes.parquet`: one row per trip and leg of what each trip took.
     #[pyo3(get)]
     routes: PathBuf,
-    /// `run.toml`: the record of what was run.
+    /// `run_record.toml`: the record of what was run.
     #[pyo3(get)]
     record: PathBuf,
     /// How it ended, and what it set right or dropped.
@@ -497,19 +498,19 @@ impl Run {
         self.page(py, Page::Summary, path, title)
     }
 
-    /// Open the finished run whose record is `record` (a `run.toml`), its four tables beside it,
-    /// without running it (`record::open`).
+    /// Open the finished run in `folder` (or the path of its `run_record.toml`), its four tables
+    /// beside its record, without running it (`record::open`).
     #[staticmethod]
-    #[pyo3(signature = (record, network=None, demand=None, transit=None))]
+    #[pyo3(signature = (folder, network=None, demand=None, transit=None))]
     #[allow(clippy::needless_pass_by_value, reason = "pyo3 hands the arguments over by value")]
     fn open(
         py: Python<'_>,
-        record: PathBuf,
+        folder: PathBuf,
         network: Option<&Bound<'_, Network>>,
         demand: Option<&Bound<'_, Demand>>,
         transit: Option<&Bound<'_, Transit>>,
     ) -> PyResult<Self> {
-        record::open(py, &record, (network, demand, transit))
+        record::open(py, &folder, (network, demand, transit))
     }
 }
 
@@ -709,7 +710,10 @@ fn window_pair(v: &Bound<'_, PyAny>) -> PyResult<(u32, u32)> {
 
 /// Run the loop on `network`, `demand` (built on that network and that transit) and `transit`
 /// over `window`, two seconds of the clock, and write `trips.parquet`, `links.parquet`,
-/// `iterations.parquet`, `routes.parquet` and `run.toml` into `out`. Keywords: the loop's rows of `PARAMETERS.md`.
+/// `iterations.parquet`, `routes.parquet` and `run_record.toml` into `out`; a `run.toml` there, the
+/// settings a user writes, is left as it is. An `out` that already holds a finished run (its
+/// `run_record.toml`) is told in one `UserWarning`, and the run replaces its files. Keywords: the
+/// loop's rows of `PARAMETERS.md`.
 #[pyfunction]
 #[pyo3(signature = (network, demand, transit=None, *, window, out, **parameters))]
 #[allow(clippy::needless_pass_by_value, reason = "pyo3 hands the arguments over by value")]
@@ -754,6 +758,13 @@ fn run(
     // An `out` that would replace an input file is refused before the loop runs: the paths
     // alone tell it, and `write` would refuse it after the run.
     openmobisim_io_parquet::replaces_no_input(&given.files, &out).map_err(|e| value_error(&e))?;
+    if out.join(record::RECORD).is_file() {
+        let message = format!(
+            "{}: the folder holds a finished run (its run_record.toml); this run replaces its files",
+            out.display()
+        );
+        warn(py, &[message])?;
+    }
     let written = py.detach(|| {
         let r = openmobisim_loop::run::run(net, dem, timetable, window, &p)
             .map_err(|e| value_error(&e))?;

@@ -9,9 +9,9 @@ derived there; the counts here by hand:
    `[result.repairs] trips_outside_window = 1`; the summary's tile 6, "of 7 given, 1 dropped";
    `Run.open` reads the run without a warning.
 2. A window of 1 801 s in bins of 60 s: its end moved up to the next bin, START + 1 860 =
-   27 060 s (`window_end_moved`, id "27060"); the record keeps `window_end_s = 27060` and
-   `window_end_given_s = 27001`, and `run_file` on it (the tables as files) runs from 27 001 s:
-   the same repair and count again.
+   27 060 s (`window_end_moved`, id "27060"); the record keeps the end given, `window_end_s =
+   27001`, and the end used, `[result] window_end_used_s = 27060`, and `run_file` on its part one
+   (the tables as files) runs from 27 001 s: the same repair and count again, the same record.
 3. A door 5 000 m from the nearest walk node: 5 000 / (4 800 / 3 600) = 3 750 s on foot, after a
    3 600 s window: walking taken out (`modes_after_window`), the trip dropped
    (`trips_after_window`).
@@ -37,6 +37,7 @@ import openmobisim as oms
 from test_defaults import feed, lon_lat
 from test_files import write
 from test_hand_run import START, hand_tables
+from test_run_file import settings
 from test_summary import value
 
 CLASSES = ["commute", "leisure"]
@@ -68,7 +69,7 @@ def test_a_trip_outside_the_window_is_dropped_counted_warned_and_left_out(tmp_pa
     assert sorted(rows) == ["bike", "car1", "car2", "car3", "lost", "walk"]
     assert rows["bike"]["travel_time_s"] == 360.0
     r = record(result)
-    assert (r["demand"]["trips"], "trips_given" in r["demand"]) == (7, False)
+    assert (r["result"]["demand"]["trips"], "trips_given" in r["result"]["demand"]) == (7, False)
     assert r["result"]["repairs"] == {"trips_outside_window": 1}
     assert result.repairs == {"network": {}, "demand": {}, "run": {"trips_outside_window": 1}}
     text = Path(result.summary(tmp_path / "summary.html")).read_text(encoding="utf-8")
@@ -89,10 +90,10 @@ def test_a_window_not_of_whole_bins_ends_at_the_next_bin_and_a_rerun_repeats_it(
         result = oms.run(network, demand, window=(START, START + 1_801), out=tmp_path / "run",
                          link_bin=60, iteration_cap=1)
     r = record(result)
-    assert (r["window_end_s"], r["window_end_given_s"]) == (27_060, 27_001)
+    assert (r["window_end_s"], r["result"]["window_end_used_s"]) == (27_001, 27_060)
     assert result.repairs["run"] == {"window_end_moved": 1, "trips_outside_window": 1}
     with pytest.warns(UserWarning, match="window_end_moved; first: 27060"):
-        again = oms.run_file(result.record, out=tmp_path / "again")
+        again = oms.run_file(settings(result.record), out=tmp_path / "again")
     assert again.repairs["run"] == result.repairs["run"]
     assert Path(again.record).read_bytes() == Path(result.record).read_bytes()
 
