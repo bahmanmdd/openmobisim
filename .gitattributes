@@ -1,0 +1,2 @@
+# Every file is checked out byte for byte on every system: tests compare bytes and read files as written.
+* -text

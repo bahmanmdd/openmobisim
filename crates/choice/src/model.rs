@@ -192,7 +192,7 @@ fn log_sum_exp(values: impl Iterator<Item = f64> + Clone) -> f64 {
     if top == f64::NEG_INFINITY {
         return top;
     }
-    top + values.map(|x| (x - top).exp()).sum::<f64>().ln()
+    top + libm::log(values.map(|x| libm::exp(x - top)).sum::<f64>())
 }
 
 impl Logit {
@@ -275,7 +275,7 @@ impl Choice for Logit {
         let all = log_sum_exp(inclusive.iter().map(|i| self.mu * i));
         Ok(v.iter()
             .zip(&nests.of)
-            .map(|(x, &n)| (self.mu * inclusive[n] - all).exp() * (x - inclusive[n]).exp())
+            .map(|(x, &n)| libm::exp(self.mu * inclusive[n] - all) * libm::exp(x - inclusive[n]))
             .collect())
     }
 }

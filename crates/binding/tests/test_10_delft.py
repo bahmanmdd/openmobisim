@@ -1,6 +1,7 @@
-"""Test 10: Delft, signals ignored. Release only, run by hand (not in CI): it runs about
-a minute. Run with `TEST_10=1 pytest crates/binding/tests/test_10_delft.py -s` after
-`maturin develop --release`; without `TEST_10=1` it is skipped.
+"""Test 10: Delft, signals ignored. Release only: it runs about 80 s on the developer's
+machine. CI runs it as a step of its own; the 15 s budget of part 3 is judged on the
+developer's machine only. Run with `TEST_10=1 pytest crates/binding/tests/test_10_delft.py -s`
+after `maturin develop --release`; without `TEST_10=1` it is skipped.
 
 The fixture (`fixtures/delft-tables/`, its README says where it comes from): Delft's network as
 tables, `nodes.csv.gz` and `links.csv.gz` (21 566 nodes; 12 460 car, 20 652 bike and 55 400
@@ -14,7 +15,8 @@ The five parts, each a test below:
   1. free-flow routes equal networkx's shortest times on the same tables: 1 000 pairs of nodes per
      mode (car, bike, walk), both ends on a node, car capacities unlimited, all leaving at 07:30;
   2. every trip has an alternative and finishes by 09:30 (each unfinished trip is printed);
-  3. the run under 15 s (the run alone; the reads are printed);
+  3. the run under 15 s (the run alone; the reads are printed), a budget judged on the developer's
+     machine only: where the environment variable CI is set, the time is printed and not judged;
   4. the trips and links files identical over two runs and at 1 and 8 threads (the one
      self-comparison);
   5. the stopped state within 1 % of a 60-iteration run: the mean trip time of each mode and
@@ -25,6 +27,7 @@ their trips counted in parts 2 and 4, their mean time and share judged in part 5
 
 import csv
 import gzip
+import hashlib
 import math
 import os
 import random
@@ -111,6 +114,8 @@ def default_run(tmp_path_factory):
     iterations = pq.read_table(result.iterations).to_pylist()
     print(f"\nDelft: reads {read_s:.2f} s, run {run_s:.2f} s, {len(iterations)} iterations, "
           f"stopped by the rule: {result.stopped_by_rule}")
+    print(f"trips.parquet's fingerprint (its bytes' SHA-256, first 16 hexadecimal digits; printed, not judged): "
+          f"{hashlib.sha256(Path(result.trips).read_bytes()).hexdigest()[:16]}")
     return folder, result, run_s
 
 
@@ -174,7 +179,7 @@ def test_2_and_3_every_trip_finishes_and_the_run_takes_under_15_s(default_run):
     _, result, run_s = default_run
     trips, modes = by_mode(result)
     for mode, (share, mean) in modes.items():
-        print(f"{mode}: share {share:.3f}, mean trip {mean or 0:.0f} s")
+        print(f"{mode}: share {share:.3f}, mean trip {mean or 0:.1f} s")
     without = [t["trip_id"] for t in trips if t["mode"] is None]
     unfinished = [t for t in trips if t["mode"] is not None and not t["finished"]]
     for t in unfinished:
@@ -182,7 +187,7 @@ def test_2_and_3_every_trip_finishes_and_the_run_takes_under_15_s(default_run):
               f"{t['cost']:.2f}, {t['alternatives']} alternatives")
     assert not without, f"{len(without)} trips without an alternative, e.g. {without[:5]}"
     assert not unfinished, f"{len(unfinished)} trips unfinished at 09:30"
-    assert run_s < 15.0, f"the run took {run_s:.2f} s (budget 15 s)"
+    assert run_s < 15.0 or "CI" in os.environ, f"the run took {run_s:.2f} s (budget 15 s)"
 
 
 def test_4_identical_files_twice_and_at_1_and_8_threads(default_run, tmp_path):

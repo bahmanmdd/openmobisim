@@ -49,6 +49,9 @@ csv-core = "0.1"
 parquet = { version = "59", default-features = false, features = ["arrow", "snap"] }
 arrow-array = { version = "59", default-features = false }
 arrow-schema = { version = "59", default-features = false }
+# The run's logarithm, exponential, power, distance and projection, in pure Rust (a port of musl's maths library),
+# so their last bits do not depend on the platform's maths library.
+libm = "0.2"
 # The Python binding, on Python's stable ABI from 3.11 (abi3): one extension for every later Python.
 pyo3 = { version = "0.30", features = ["abi3-py311"] }
 

@@ -19,4 +19,5 @@ openmobisim-search = { workspace = true }
 openmobisim-choice = { workspace = true }
 openmobisim-transit = { workspace = true }
 openmobisim-demand = { workspace = true }
+libm = { workspace = true }
 rayon = { workspace = true }

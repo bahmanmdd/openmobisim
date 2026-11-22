@@ -2,7 +2,8 @@
 
 The loop: five stages per iteration, search, choose, load, measure, assess, iterated to the
 stopping rule; and the three tables a run returns. Depends on `openmobisim-types`, `-graph`,
-`-loading`, `-search`, `-choice`, `-transit`, `-demand` and `rayon`, nothing else.
+`-loading`, `-search`, `-choice`, `-transit`, `-demand`, `rayon` and `libm` (the step's power in
+pure Rust, not the platform's), nothing else.
 
 ## Inputs
 - The `Network` (`openmobisim-graph`), the `Demand` (`openmobisim-demand`, built on that
@@ -221,7 +222,9 @@ formed by the choice crate's `cost_of`, so the cost a run reports is the one the
   links table counts the walkers of walk alternatives only.
 - Determinism: every parallel stage files its result by trip, every sum is in fixed order and
   every draw is keyed by identity, so the three tables are the same at any thread count and
-  over two runs.
+  over two runs. Across platforms, as measured: the run's logarithm, exponential, power,
+  distances and projection are `libm`'s (pure Rust), and Delft's default run (test 10) gives
+  byte-identical trips on macOS (Apple silicon) and on Linux (x86_64); Windows is not measured.
 
 ## Errors
 `run` refuses with a `RunError` only what no run can be made of: `link_bin`, `iteration_cap`,

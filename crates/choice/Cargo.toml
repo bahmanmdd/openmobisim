@@ -13,3 +13,4 @@ workspace = true
 
 [dependencies]
 openmobisim-types = { workspace = true }
+libm = { workspace = true }

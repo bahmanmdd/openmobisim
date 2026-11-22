@@ -100,7 +100,7 @@ impl Xy {
     pub fn distance_to(self, other: Xy) -> f64 {
         let dx = self.x - other.x;
         let dy = self.y - other.y;
-        dx.hypot(dy)
+        libm::hypot(dx, dy)
     }
 }
 
@@ -323,21 +323,21 @@ impl Projection {
 
         // Gauss–Schreiber intermediate:
         //     t = sinh( atanh(sin φ) − c · atanh(c · sin φ) ),   c = 2√n/(1+n)
-        let sin_phi = phi.sin();
+        let sin_phi = libm::sin(phi);
         let c = self.two_sqrt_n_over_1pn;
-        let t = (sin_phi.atanh() - c * (c * sin_phi).atanh()).sinh();
+        let t = libm::sinh(libm::atanh(sin_phi) - c * libm::atanh(c * sin_phi));
 
-        let (sin_lambda, cos_lambda) = lambda.sin_cos();
-        let xi_p = t.atan2(cos_lambda);
-        let eta_p = (sin_lambda / (1.0 + t * t).sqrt()).atanh();
+        let (sin_lambda, cos_lambda) = libm::sincos(lambda);
+        let xi_p = libm::atan2(t, cos_lambda);
+        let eta_p = libm::atanh(sin_lambda / (1.0 + t * t).sqrt());
 
         let mut xi = xi_p;
         let mut eta = eta_p;
         for (j, &a) in self.alpha.iter().enumerate() {
             #[allow(clippy::cast_precision_loss, reason = "j is 0..4")]
             let m = 2.0 * (j + 1) as f64;
-            xi += a * (m * xi_p).sin() * (m * eta_p).cosh();
-            eta += a * (m * xi_p).cos() * (m * eta_p).sinh();
+            xi += a * libm::sin(m * xi_p) * libm::cosh(m * eta_p);
+            eta += a * libm::cos(m * xi_p) * libm::sinh(m * eta_p);
         }
 
         Xy { x: UTM_FALSE_EASTING + self.k0_a * eta, y: self.false_northing + self.k0_a * xi }

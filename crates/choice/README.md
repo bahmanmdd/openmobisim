@@ -2,8 +2,8 @@
 
 Which alternative a traveller takes among those offered, and with what probability each: the
 deterministic least cost, and the logit family (logit, nested logit, path-size logit), behind
-one interface. Depends on `openmobisim-types` only. It knows nothing of links, routes,
-timetables or the network.
+one interface. Depends on `openmobisim-types` and `libm` (`exp` and `ln` in pure Rust, not the
+platform's) only. It knows nothing of links, routes, timetables or the network.
 
 ## Inputs
 - `Coefficients::new(columns, classes, by_class)`: the names of the columns (for example

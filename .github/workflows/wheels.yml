@@ -118,10 +118,12 @@ jobs:
         shell: bash
         working-directory: ${{ runner.temp }}
         run: python -c "import openmobisim, pathlib; p = pathlib.Path(openmobisim.__file__); print(p); assert 'site-packages' in p.parts, p"
+      # On Windows pytest's temporary folder is put under the runner's temporary folder, on the checkout's drive (D:):
+      # its default is on C:, from which a recorded path to a fixture of the checkout cannot be relative.
       - name: The binding's tests against the installed wheel, run from outside the checkout (TEST_10 unset, so test 10 is skipped)
         shell: bash
         working-directory: ${{ runner.temp }}
-        run: python -m pytest "$GITHUB_WORKSPACE/crates/binding/tests" -p no:cacheprovider -rs
+        run: python -m pytest "$GITHUB_WORKSPACE/crates/binding/tests" -p no:cacheprovider -rs ${{ runner.os == 'Windows' && '--basetemp "$RUNNER_TEMP/pytest"' || '' }}
 
   publish:
     # Publishes to PyPI when a version tag (v0.2.0, ...) is pushed to the public repository on a commit of main, and

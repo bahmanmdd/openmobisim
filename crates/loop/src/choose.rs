@@ -120,7 +120,7 @@ fn chance(ctx: &Context<'_>, i: usize, set: &[Alternative], held: u32, iteration
             reason = "exactly 1 is the plain step, computed as its quotient"
         )]
         let plain_step = a == 1.0;
-        return if plain_step { plain } else { f64::from(iteration + 1).powf(-a) };
+        return if plain_step { plain } else { libm::pow(f64::from(iteration + 1), -a) };
     }
     let cost = |a: &Alternative| ctx.parameters.cost(ctx.class[i], &a.attributes());
     let taken = &set[held as usize];

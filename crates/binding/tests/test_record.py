@@ -132,7 +132,7 @@ def read(path):
 def units():
     """Each row of PARAMETERS.md and its Unit cell."""
     cells = {}
-    for line in PARAMETERS.read_text().splitlines():
+    for line in PARAMETERS.read_text(encoding="utf-8").splitlines():
         parts = [p.strip() for p in line.split("|")]
         if len(parts) > 3 and parts[1] in rows():
             cells[parts[1]] = parts[2]

@@ -215,7 +215,7 @@ def parsed_defaults():
         return float(text) if "." in text else int(text)
 
     cells = {}
-    for line in PARAMETERS.read_text().splitlines():
+    for line in PARAMETERS.read_text(encoding="utf-8").splitlines():
         parts = [p.strip() for p in line.split("|")]
         if len(parts) > 4 and parts[1] in rows() and parts[1] != "osm_class_defaults":
             cells[parts[1]] = parts[3].split(" (")[0]

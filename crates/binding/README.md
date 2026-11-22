@@ -173,8 +173,8 @@ given as a path), the record names it (`osm_file`, `gtfs_file`, `nodes_file`, `l
 `trips_file`; an extract cut to a region, `region` beside `osm_file`, as the box's four numbers
 or the polygon's points), relative to the record's folder from the canonical paths of both, with `/`
 between components (on Windows, a file on another drive than the record is recorded by its
-canonical absolute path: a known limit, untested); a table given in memory has no key, and a
-record without the files of its network and its demand cannot run again. `run_file` writes the record of the run it ran, the
+absolute path, `D:/…`, its canonical path without the verbatim prefix `\\?\`: a known limit,
+untested); a table given in memory has no key, and a record without the files of its network and its demand cannot run again. `run_file` writes the record of the run it ran, the
 fingerprints of the inputs as they are now; when one differs from the record's (an input file
 changed), a `UserWarning` names the input (network, demand or transit) and both fingerprints,
 and the run goes on; a record without an input's fingerprint warns that it cannot be compared.
