@@ -173,8 +173,9 @@ given as a path), the record names it (`osm_file`, `gtfs_file`, `nodes_file`, `l
 `trips_file`; an extract cut to a region, `region` beside `osm_file`, as the box's four numbers
 or the polygon's points), relative to the record's folder from the canonical paths of both, with `/`
 between components (on Windows, a file on another drive than the record is recorded by its
-absolute path, `D:/…`, its canonical path without the verbatim prefix `\\?\`: a known limit,
-untested); a table given in memory has no key, and a record without the files of its network and its demand cannot run again. `run_file` writes the record of the run it ran, the
+absolute path, `D:/…`, its canonical path without the verbatim prefix `\\?\`, and a file on a
+network share by its canonical path as it is, `//?/UNC/server/share/…`, Windows' long form of
+`\\server\share\…`; both measured to run again and open, "Systems and user rights" below); a table given in memory has no key, and a record without the files of its network and its demand cannot run again. `run_file` writes the record of the run it ran, the
 fingerprints of the inputs as they are now; when one differs from the record's (an input file
 changed), a `UserWarning` names the input (network, demand or transit) and both fingerprints,
 and the run goes on; a record without an input's fingerprint warns that it cannot be compared.
@@ -284,6 +285,29 @@ trip's `bike` is text in its `modes` cell like any other mode: a bike's ride of 
 three files takes its hand 360 s, and a rerun from the record repeats a run with bikes byte for
 byte (on Delft, with a bike trip).
 
+## Systems and user rights
+Measured on GitHub's runners (`windows-latest`, `ubuntu-latest`, `macos-latest` on Apple
+silicon), the wheel installed, Python 3.14:
+- **Windows, a standard user**: a new local account in the group Users alone (`whoami /groups`:
+  no Administrators, medium integrity), started by `Start-Process -Credential`, working in
+  folders it owns. The binding's tests give what they give the administrator. A run from three
+  table files, run again by `run_file` (its `trips.parquet` and `links.parquet` the first run's
+  bytes) and opened by `Run.open` (its map and summary the fresh run's bytes), works in one
+  folder; with the inputs on one drive and the run on the other (C: and D:, both ways); with the
+  inputs, the run or both on a network share named `\\localhost\<share>\…`; with the run's
+  folder or the inputs reached through a directory junction (`mklink /J`, which needs no right);
+  and through a symbolic link where the user may create one. Without developer mode (the
+  default) a standard user may not create a symbolic link (`WinError 1314`); the package never
+  creates one. `wheels.yml` runs the binding's tests as such a user, developer mode off, on
+  every release.
+- **Linux and macOS**: the tests of `ci.yml` and `wheels.yml` run as the runner's account
+  (`runner`, not root, no `sudo`), which may use `sudo` (and on macOS is in the group admin).
+  Once by hand as a new account without either: every test passes but those that drive Chrome,
+  which did not start under that account on Linux (they passed on macOS).
+- **Not measured**: a domain account, a share on another machine, Windows on ARM, a path over
+  260 characters; the tests that drive Chrome on Windows, which skip there (Chrome is not on the
+  `PATH`, and `tests/cdp.py` hands Chrome its pipe by `pass_fds`, which Windows lacks).
+
 ## Tests
 `pytest crates/binding/tests` on the extension built in release (`maturin develop --release -m
 crates/binding/Cargo.toml` in a virtual environment with pytest, pyarrow 26.0.1, networkx 3.7).
@@ -360,7 +384,11 @@ Each expected value comes from outside the simulator:
 - `test_run_file.py`: each recorded path, joined to the record's folder by `os.path.join`, is
   the file given (`os.path.samefile`), relative with `/`: inputs by absolute path, by relative
   path, through a symbolic link, `out` four levels down, `out` through a symbolic link to a
-  folder at another depth; no key for a table in memory. The case
+  folder at another depth; no key for a table in memory. On Windows, which removes a `..` before
+  it follows a link, the two symbolic-link cases check instead that each path is relative with
+  `/` and that the record runs again by `run_file` (the tables the first run's bytes) and opens
+  by `Run.open`; for a user who may not create a symbolic link they are skipped, the reason
+  given. The case
   of `test_record.py` from files with transit and a non-default value for every row a record
   holds, run again by `run_file` into a sibling folder: `trips.parquet`, `links.parquet` and
   `run.toml` byte-identical, `iterations.parquet` equal but for its five wall-clock columns; the

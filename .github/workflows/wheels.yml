@@ -1,7 +1,7 @@
 # The Python package `openmobisim`: five wheels (Linux, macOS and Windows) and the source archive, built by maturin
 # from `crates/binding`; the Linux x86_64, macOS arm64 and Windows wheels each installed on a clean runner of its
-# system and the binding's tests run against it; everything published to PyPI when the tag v<version> is pushed,
-# <version> being the package's own.
+# system and the binding's tests run against it (on Windows a second time, as a standard user without administrator
+# rights); everything published to PyPI when the tag v<version> is pushed, <version> being the package's own.
 #
 # One wheel per platform serves Python 3.11 and every later version: the extension is built on Python's stable ABI
 # (pyo3's `abi3-py311`, in the workspace's Cargo.toml). Run by hand (workflow_dispatch) to build and test without
@@ -124,6 +124,34 @@ jobs:
         shell: bash
         working-directory: ${{ runner.temp }}
         run: python -m pytest "$GITHUB_WORKSPACE/crates/binding/tests" -p no:cacheprovider -rs ${{ runner.os == 'Windows' && '--basetemp "$RUNNER_TEMP/pytest"' || '' }}
+      # The step above runs as the runner's account: on Linux and macOS the user `runner`, not root, and no step here
+      # uses sudo; on Windows an administrator. So on Windows the tests run again as a standard user: a new local
+      # account in the group Users alone, with developer mode off as on a new Windows installation (so it may not
+      # create a symbolic link), started by Start-Process -Credential, its folder on the checkout's drive, its groups
+      # printed (whoami /groups) and refused if they hold Administrators. A password over 14 characters would make
+      # `net user` ask for a confirmation.
+      - name: Windows only - the binding's tests again as a standard user, without administrator rights
+        if: runner.os == 'Windows'
+        shell: pwsh
+        working-directory: ${{ runner.temp }}
+        run: |
+          $pw = 'Aa1!' + (New-Guid).ToString('N').Substring(0, 10)
+          net user tester $pw /add
+          $work = (New-Item -ItemType Directory "$env:RUNNER_TEMP\tester").FullName
+          New-Item -ItemType Directory "$work\temp" | Out-Null
+          icacls $work /grant 'tester:(OI)(CI)F' /Q
+          Set-ItemProperty HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\AppModelUnlock AllowDevelopmentWithoutDevLicense 0
+          $env:TEMP = $env:TMP = "$work\temp"
+          $run = @{ Credential = [pscredential]::new('tester', (ConvertTo-SecureString $pw -AsPlainText -Force));
+                    LoadUserProfile = $true; Wait = $true; PassThru = $true; WorkingDirectory = $work;
+                    RedirectStandardOutput = "$work\out.txt"; RedirectStandardError = "$work\err.txt" }
+          Start-Process whoami.exe -ArgumentList '/groups' @run | Out-Null
+          Get-Content "$work\out.txt"
+          if (Select-String -Quiet -SimpleMatch 'BUILTIN\Administrators' "$work\out.txt") { throw 'tester is an administrator' }
+          $tests = "-m pytest `"$env:GITHUB_WORKSPACE\crates\binding\tests`" -p no:cacheprovider -rs --basetemp `"$work\pytest`""
+          $p = Start-Process (Get-Command python).Source -ArgumentList $tests @run
+          Get-Content "$work\out.txt", "$work\err.txt"
+          exit $p.ExitCode
 
   publish:
     # Publishes to PyPI when a version tag (v0.2.0, ...) is pushed to the public repository on a commit of main, and
