@@ -52,7 +52,7 @@ TRIPS = {
 
 def rows():
     """The parameter names of PARAMETERS.md's table, after its header and rule lines."""
-    names = re.findall(r"^\| *([A-Za-z_][A-Za-z0-9_]*) *\|", PARAMETERS.read_text(), re.M)
+    names = re.findall(r"^\| *([A-Za-z_][A-Za-z0-9_]*) *\|", PARAMETERS.read_text(encoding="utf-8"), re.M)
     return [n for n in names if n != "Parameter"]
 
 

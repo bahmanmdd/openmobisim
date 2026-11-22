@@ -61,7 +61,7 @@
 //! unit; a link's bike permission and a trip's bike are in the network's and the demand's
 //! fingerprints, so a change to either changes the record.
 
-use std::path::{Component, Path};
+use std::path::{Component, Path, Prefix};
 
 use openmobisim_demand::demand::Demand;
 use openmobisim_graph::network::Network;
@@ -366,14 +366,22 @@ fn repairs(t: &mut Toml, name: &str, repairs: &Repairs) -> Result<(), WriteError
 
 /// `file` relative to `folder`, both canonical paths, with `/` between components: a `..` for
 /// each component of the folder past their common start, then the rest of the file's. The file's
-/// whole path when they have no common start (another drive) or there is no folder. `None` when
-/// a component is not UTF-8.
+/// whole path when they have no common start (another drive) or there is no folder; on Windows a
+/// canonical path on a drive with a letter, `\\?\D:\…`, is written without its verbatim prefix
+/// `\\?\` (`D:/…`, the same file). `None` when a component is not UTF-8.
 fn relative(file: &Path, folder: Option<&Path>) -> Option<String> {
     let f: Vec<Component<'_>> = file.components().collect();
     let d: Vec<Component<'_>> = folder.map_or_else(Vec::new, |d| d.components().collect());
     let common = f.iter().zip(&d).take_while(|(a, b)| a == b).count();
     if common == 0 {
-        return file.to_str().map(|s| s.replace(std::path::MAIN_SEPARATOR, "/"));
+        let whole = file.to_str()?;
+        let whole = match f.first() {
+            Some(Component::Prefix(p)) if matches!(p.kind(), Prefix::VerbatimDisk(_)) => {
+                whole.strip_prefix(r"\\?\").unwrap_or(whole)
+            }
+            _ => whole,
+        };
+        return Some(whole.replace(std::path::MAIN_SEPARATOR, "/"));
     }
     let mut parts = vec![".."; d.len() - common];
     for c in &f[common..] {

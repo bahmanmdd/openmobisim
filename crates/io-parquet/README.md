@@ -195,7 +195,8 @@ built from (each crate's README says exactly what it feeds), as 16 lower-case he
 digits. An input file's path is written relative to the folder the record is written in,
 computed from the canonical paths of both, with `/` between components
 (`../inputs/trips.parquet`); absolute only when no relative path exists (the file on another
-drive; on Windows, a known limit, untested); a path that is not UTF-8 is refused
+drive; on Windows, a known limit, untested; written `D:/…`, without the verbatim prefix `\\?\` of
+Windows' canonical path); a path that is not UTF-8 is refused
 (`NotWritable`, naming its key), before anything is written. So the record's folder and its inputs move together, and a run written into a folder
 at the same depth records the same paths. Not written: a time stamp, the machine, the thread
 count; so a second write of the same run, and a run at any number of threads, give the same

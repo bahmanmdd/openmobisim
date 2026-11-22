@@ -1,8 +1,9 @@
 //! Sioux Falls's run written and timed: the loop's regular test case (test 6's regular tier:
 //! TNTP's network with the capacities at a tenth, three hours of every OD pair at 0.045 of the
 //! TNTP demand per hour, the loop's fixtures read in place), its three tables written; the row
-//! counts must be the run's, the write under 1 s in a release build. The sizes and the time are
-//! printed:
+//! counts must be the run's, the write under 1 s in a release build, a budget judged on the
+//! developer's machine only (where the environment variable CI is set, it is not judged). The
+//! sizes and the time are printed:
 //!
 //! ```text
 //! cargo test --release -p openmobisim-io-parquet --test sioux_falls -- --ignored --nocapture
@@ -151,7 +152,7 @@ fn sioux_falls_s_run_is_written_in_under_1_s() {
     assert_eq!(w.trips.rows, dem.trip_count() as usize);
     assert_eq!(w.links.rows, r.links.len());
     assert_eq!(w.iterations.rows, r.iterations.len());
-    if !cfg!(debug_assertions) {
+    if !cfg!(debug_assertions) && std::env::var_os("CI").is_none() {
         assert!(seconds < 1.0, "written in {seconds:.3} s, the budget is 1 s");
     }
 }
