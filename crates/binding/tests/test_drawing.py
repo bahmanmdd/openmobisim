@@ -64,7 +64,7 @@ def decoded(page):
 def fingerprints(record):
     with open(record, "rb") as f:
         r = tomllib.load(f)
-    return r["network"]["fingerprint"], r["demand"]["fingerprint"]
+    return r["result"]["network"]["fingerprint"], r["result"]["demand"]["fingerprint"]
 
 
 def test_a_shape_and_classes_change_nothing_a_run_reads(tmp_path):

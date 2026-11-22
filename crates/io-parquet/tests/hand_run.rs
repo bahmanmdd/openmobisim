@@ -238,7 +238,7 @@ fn the_record_is_written_beside_the_tables_and_byte_identical_twice() {
         write(&r, &net, &dem, &given(&p, &dem), &folder("io-parquet-record")).expect("written");
     let again = write(&r, &net, &dem, &given(&p, &dem), &folder("io-parquet-record-again"))
         .expect("written");
-    assert_eq!(first.record, folder("io-parquet-record").join("run.toml"));
+    assert_eq!(first.record, folder("io-parquet-record").join("run_record.toml"));
     let (x, y) =
         (std::fs::read(&first.record).expect("read"), std::fs::read(&again.record).expect("read"));
     assert!(x == y, "{} and {} differ", first.record.display(), again.record.display());
@@ -326,9 +326,10 @@ fn build_values_whose_speeds_are_not_the_networks_are_refused_and_nothing_writte
 
 #[test]
 fn a_failed_write_into_a_used_folder_leaves_no_record_beside_the_tables() {
-    // A folder holding a record from an earlier run, where `links.parquet` cannot be written
-    // (a folder of that name): the write fails, and the old record is gone, so no record
-    // describes tables it did not write.
+    // A folder holding a record from an earlier run and a settings file, `run.toml`, where
+    // `links.parquet` cannot be written (a folder of that name): the write fails, and the old
+    // record is gone, so no record describes tables it did not write; the settings file, which
+    // no run writes, is the same bytes.
     let net = network();
     let dem = demand(&net);
     let r = hand_run(&net, &dem);
@@ -336,9 +337,13 @@ fn a_failed_write_into_a_used_folder_leaves_no_record_beside_the_tables() {
     let out = folder("io-parquet-used-folder");
     let _ = std::fs::remove_dir_all(&out);
     std::fs::create_dir_all(out.join("links.parquet")).expect("a folder");
-    std::fs::write(out.join("run.toml"), "# an earlier run's record\n").expect("a file");
+    std::fs::write(out.join("run_record.toml"), "# an earlier run's record\n").expect("a file");
+    let settings = "window_start_s = 25200\nwindow_end_s = 28800\n";
+    std::fs::write(out.join("run.toml"), settings).expect("a file");
     assert!(matches!(write(&r, &net, &dem, &given(&p, &dem), &out), Err(WriteError::Io(_))));
-    assert!(!out.join("run.toml").exists(), "the earlier record is left beside new tables");
+    assert!(!out.join("run_record.toml").exists(), "the earlier record is left beside new tables");
+    let kept = std::fs::read_to_string(out.join("run.toml")).expect("the settings file");
+    assert_eq!(kept, settings, "a run changed the settings file");
 }
 
 #[test]

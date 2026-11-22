@@ -14,7 +14,7 @@ from its files: `kept` (the map's `Kept`: per trip its doors, departure, user cl
 and the legs it took, its realised time and whether it finished; the links table's rows; the
 window), the `network` and the `timetable` (or none) it ran on, the GTFS reader's `lines` beside
 the timetable (or none), its `iterations` table (`iterations.parquet` read back), whether the stopping rule ended it (`stopped_by_rule`), and its
-record, `run.toml`, as text. The page is written to a sibling `.<name>.partial`, then renamed to
+record, `run_record.toml`, as text. The page is written to a sibling `.<name>.partial`, then renamed to
 `path` (`openmobisim_map::save`): a write that fails leaves no part of a page at `path`. Through the
 binding, `Run.summary(path)` titles it with the file's stem.
 
@@ -57,7 +57,7 @@ same title gives the same bytes. Every number a test reads carries a `data-k` na
 - **Computation time**: the five stages (search, choose, load, measure, assess), seconds summed over
   the iterations; the network's links, nodes and kilometres by mode, and its timetable's stops and
   runs.
-- **Settings**: the record, `run.toml`, whole, as text.
+- **Settings**: the record, `run_record.toml`, whole, as text.
 - **Maps**, one per mode with travellers: car traffic by delay band, as wide as the road's capacity;
   cyclists, dashed; walkers, dotted, each 1.5 + 8 √(min(n, 3 000) / 3 000) units wide for n
   over the window (the map's rule, `FLOW_FULL`: full at 3 000 and more, the same for both);

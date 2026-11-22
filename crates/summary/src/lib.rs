@@ -2,7 +2,7 @@
 //!
 //! [`write`] takes the run as [`Summarised`] (what the map keeps of it, the network and the
 //! timetable it ran on, its iterations table, whether the stopping rule ended it, its record
-//! `run.toml`) and writes the page: headline tiles, the modes, when people left, the roads,
+//! `run_record.toml`) and writes the page: headline tiles, the modes, when people left, the roads,
 //! transit, bikes and walking, the convergence, the computation time with the network's size, the
 //! record whole, and a map per mode. Its colours are the map's (`openmobisim_map::theme`), light
 //! and dark following the reader's system, with the map's Paper / Night button. It names no
@@ -40,7 +40,7 @@ pub struct Summarised<'a> {
     /// Whether the stopping rule ended it (else the iteration cap); `None` when its record
     /// does not say.
     pub stopped_by_rule: Option<bool>,
-    /// Its record, `run.toml`, as written.
+    /// Its record, `run_record.toml`, as written.
     pub record: &'a str,
 }
 
@@ -167,7 +167,7 @@ fn page(run: &Summarised<'_>, title: &str) -> Result<String, SummaryError> {
          <main><header><div><svg class=\"mark\" viewBox=\"0 0 64 64\" aria-hidden=\"true\"><path \
          d=\"{LOGO}\"/></svg><h1>{t}</h1></div><button id=\"theme\" type=\"button\">Night</button>\
          </header><div class=\"meta\">{meta}</div>{tiles}{body}<footer>Every number here comes from \
-         the run's files (trips.parquet, links.parquet, iterations.parquet, routes.parquet and run.toml) with the \
+         the run's files (trips.parquet, links.parquet, iterations.parquet, routes.parquet and run_record.toml) with the \
          network's links, except transit's boardings and rides, which come from the journeys taken \
          (as on the map).{left_out}{source}</footer></main><script>{SCRIPT}</script></body></html>",
         t = esc(title),

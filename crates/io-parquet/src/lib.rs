@@ -1,14 +1,16 @@
 //! Writing the four tables of a run (trips, links by time bin, iterations, routes) as four
-//! Parquet files in a folder, and the run's record, `run.toml`, beside them; and reading them back.
+//! Parquet files in a folder, and the run's record, `run_record.toml`, beside them; and reading
+//! them back.
 //!
 //! [`write`] takes the `Run` the loop returned, the `Network` and the `Demand` it ran on (for the
 //! external ids), what else the run was given ([`Given`]: the values its network, transit and
 //! demand were built with, the loop's parameters, the readers' counts), and a folder; it writes
-//! `trips.parquet`, `links.parquet`, `iterations.parquet`, `routes.parquet` and `run.toml` there
+//! `trips.parquet`, `links.parquet`, `iterations.parquet`, `routes.parquet` and `run_record.toml` there
 //! and returns their paths and the tables' row counts ([`Written`]). [`read`] and
 //! [`read_iterations`] read back what the run's pages need of such a folder, refusing only a file
 //! that cannot be read and warning on the rest (`src/read.rs`). The record's layout is in
-//! `src/record.rs`.
+//! `src/record.rs`. A run never writes `run.toml`, the settings a user writes for the binding's
+//! `run_file`: that file and the record are two files with fixed names.
 //! One row per
 //! entity, external ids as strings, every column named with its unit; null, never `NaN`, where
 //! the loop's `NaN` means "no value". Every time of day is a second of the clock (seconds after
@@ -261,12 +263,12 @@ pub struct Written {
     pub iterations: Table,
     /// `routes.parquet`: one row per trip and leg of what each trip took.
     pub routes: Table,
-    /// `run.toml`: the record of the run, its path.
+    /// `run_record.toml`: the record of the run, its path.
     pub record: PathBuf,
 }
 
 /// Write the four tables of `run` as `trips.parquet`, `links.parquet`, `iterations.parquet` and
-/// `routes.parquet`, and its record as `run.toml`, in `folder`, created if missing; a file
+/// `routes.parquet`, and its record as `run_record.toml`, in `folder`, created if missing; a file
 /// already there is replaced. Every refusal comes before anything is written: the inputs
 /// checked against the run, every journey against the timetable given, the record and the three
 /// small tables built. Then the earlier record is removed, the three tables written, the routes
@@ -303,7 +305,7 @@ pub fn write(
     let record = record::text(run, network, demand, given, Some(&canonical))?;
     // A record left from an earlier run goes first and the new one is written last, so a folder
     // that holds a record holds the complete run it describes.
-    let record_path = folder.join("run.toml");
+    let record_path = folder.join("run_record.toml");
     match std::fs::remove_file(&record_path) {
         Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(e.into()),
         _ => {}
@@ -372,7 +374,7 @@ fn check(
 }
 
 /// Refuse a write into `folder` whose `trips.parquet`, `links.parquet`, `iterations.parquet`,
-/// `routes.parquet` or `run.toml` is one of the run's input files `files`, canonical paths compared: a file of those
+/// `routes.parquet` or `run_record.toml` is one of the run's input files `files`, canonical paths compared: a file of those
 /// names that does not exist yet (or a folder that does not exist yet) is no input. Paths are
 /// compared, not files: a hard link of an input under one of those names is not recognised.
 ///
@@ -385,9 +387,13 @@ fn check(
 /// [`WriteError::WouldReplaceInput`], naming the file.
 pub fn replaces_no_input(files: &Files<'_>, folder: &Path) -> Result<(), WriteError> {
     let inputs = [files.osm, files.nodes, files.links, files.trips, files.gtfs];
-    for name in
-        ["trips.parquet", "links.parquet", "iterations.parquet", "routes.parquet", "run.toml"]
-    {
+    for name in [
+        "trips.parquet",
+        "links.parquet",
+        "iterations.parquet",
+        "routes.parquet",
+        "run_record.toml",
+    ] {
         let Ok(output) = std::fs::canonicalize(folder.join(name)) else { continue };
         if inputs.iter().flatten().any(|input| *input == output) {
             return Err(WriteError::WouldReplaceInput(output));

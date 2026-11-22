@@ -1,11 +1,12 @@
 # openmobisim-io-parquet
 
 Writes the four tables of a run, trips, links by time bin, iterations and routes, as four
-Parquet files in a folder, and the run's record, `run.toml`, beside them; reads the four back,
+Parquet files in a folder, and the run's record, `run_record.toml`, beside them; reads the four back,
 each by the inverse of its writer; and reads an input table (nodes, links or trips) from a
 Parquet file; nothing else: the folder alone tells what was run, the folder and the run's
 inputs give its pages (the binding's `Run.map`, `Run.summary`, `Run.open`), and, when every
-input was read from a file, the record alone runs again (the binding's `run_file`). Depends on `openmobisim-types`, `-graph`, `-loading` (the links table's type),
+input was read from a file, the record's part one, as a settings file `run.toml`, runs it again
+(the binding's `run_file`). Depends on `openmobisim-types`, `-graph`, `-loading` (the links table's type),
 `-transit`, `-demand`, `-loop`, `-io-osm` and `-io-gtfs` (their `Report`s, for the record), and
 `parquet` with `arrow-array` and `arrow-schema` (version 59, no default features, the `arrow`
 feature and the `snap` feature, the pure-Rust snappy codec, to read pyarrow's default
@@ -33,7 +34,7 @@ serialisation library.
 - `folder`: where the files go, created if missing; a file of the same name is replaced. Every
   refusal comes before anything is written: the inputs checked against the run, every journey
   taken checked against the timetable given (`NotTheRunsJourney`), the record and the trips,
-  links and iterations tables built. Then a `run.toml` already there is removed, the three
+  links and iterations tables built. Then a `run_record.toml` already there is removed, the three
   tables written, the routes table streamed from the run in batches of 8 192 trips (it refuses
   nothing; only an input or output failure can stop it), and the new record written last, so a
   folder holding a record holds the complete run it describes: a write that fails part way
@@ -102,7 +103,7 @@ does not allow them are read as written: nothing in the pages depends on their s
 
 ## Outputs
 `Written`: one `Table` (its `path` and its `rows`) per Parquet file, and `record`, the path of
-`run.toml`. Four tables, one row per entity,
+`run_record.toml`. Four tables, one row per entity,
 external ids as strings, every column named with its unit, every time of day in seconds of the
 clock, null where there is no value:
 - `trips.parquet`, one row per trip run (a trip the run dropped, outside its window, has none), in trip id order (the external ids sorted bytewise):
@@ -154,12 +155,13 @@ in `src/trips.rs`, `src/links.rs`, `src/iterations.rs` and `src/routes.rs`; the 
 reader of a file share its one schema. A column that cannot be null is
 marked so in the file's schema.
 
-`run.toml` (TOML 1.0; its layout also in `src/record.rs`), keys in this fixed order:
-- A first line `# ...` saying what the file is; `format = 1`; `openmobisim_version` (the
-  package's version; a development version, ending `-dev`, does not identify the commit it was
-  built from); `window_start_s`, `window_end_s` (seconds of the clock: the window the run
-  used), and `window_end_given_s` only when the run moved the end given up to a whole bin (the
-  end given, which `run_file` runs from, so it repeats the repair).
+`run_record.toml` (TOML 1.0; its layout also in `src/record.rs`), keys in this fixed order, in two
+parts. Part one, every line before `[result]`, is the settings the run ran with, every default
+filled in: a settings file, `run.toml`, as the binding's `run_file` reads one (a run never writes
+`run.toml`; the two files never share a name). Part two, `[result]` and the tables under it, is
+what the run found and did.
+- A first line `# ...` saying what the file is and how its two parts divide; `format = 1`;
+  `window_start_s`, `window_end_s` (seconds of the clock: the window given).
 - `[parameters]`: each row of `PARAMETERS.md` the run read, by its name, at the value it used
   (one exception: the coefficient of `car_ln_path_size` is recorded as given; the logit reads it
   times `nest_scale`, the least-cost choice as 0, `crates/loop/README.md`), defaults included, in the table's order, each followed by its unit as a comment, the Unit
@@ -171,24 +173,30 @@ marked so in the file's schema.
   in class id order (neither without a class), `[parameters.coefficients."<class id>"]`, a key per column of the choice
   row (`openmobisim_loop::parameters::COLUMNS`). `osm_class_defaults` is never written: its one
   value is the OSM reader's one table (`crates/io-osm/README.md`).
-- `[network]`: `source` (`"osm"` or `"tables"`), `nodes`, `links`, `fingerprint`, then
-  `osm_file` and `region` (the region the extract was cut to: `[west, south, east, north]` for a
-  box, `[[lon, lat], …]` for a polygon, in degrees; absent for the whole extract), or
-  `nodes_file` and `links_file`, each absent for a table given in memory;
-  `[network.osm_report]`, the OSM reader's five counts, absent for a network from tables;
-  `[network.repairs]`, each kind of the network's readers' repairs with its count.
-- `[demand]`: `trips`, `trips_given` (the rows of the trips table, only when the demand dropped
-  some), `classes` (the class ids in id order), `fingerprint`, `trips_file` (absent for a table
-  given in memory); `[demand.repairs]`.
-- `[transit]`, absent without transit: `stops`, `runs`, `fingerprint`, `gtfs_file`;
-  `[transit.gtfs_report]`, the GTFS reader's fifteen counts (`date` as GTFS writes it,
-  `YYYYMMDD`); `[transit.repairs]`.
-- `[result]`: `iterations` (the rows of the iterations table), `stopped_by_rule`;
-  `[result.repairs]`, the run's (the window's).
+- `[network]`: `osm_file` and `region` (the region the extract was cut to: `[west, south, east,
+  north]` for a box, `[[lon, lat], …]` for a polygon, in degrees; absent for the whole extract),
+  or `nodes_file` and `links_file`, each absent for a table given in memory (the table is then
+  empty).
+- `[demand]`: `trips_file` (absent for a table given in memory), `classes` (the class ids in id
+  order).
+- `[transit]`, absent without transit: `gtfs_file`.
+- A comment, `# Part two: ...`; `[result]`: `openmobisim_version` (the package's version; a
+  development version, ending `-dev`, does not identify the commit it was built from),
+  `window_end_used_s` (the end the run used: `window_end_s`, moved up to a whole `link_bin` when
+  it was not one, the repair `window_end_moved`; always written), `iterations` (the rows of the
+  iterations table), `stopped_by_rule`; `[result.repairs]`, the run's (the window's).
+- `[result.network]`: `source` (`"osm"` or `"tables"`), `nodes`, `links`, `fingerprint`;
+  `[result.network.osm_report]`, the OSM reader's five counts, absent for a network from
+  tables; `[result.network.repairs]`, each kind of the network's readers' repairs with its
+  count.
+- `[result.demand]`: `trips`, `trips_given` (the rows of the trips table, only when the demand
+  dropped some), `fingerprint`; `[result.demand.repairs]`.
+- `[result.transit]`, absent without transit: `stops`, `runs`, `fingerprint`;
+  `[result.transit.gtfs_report]`, the GTFS reader's fifteen counts (`date` as GTFS writes it,
+  `YYYYMMDD`); `[result.transit.repairs]`.
 
-A `repairs` table is written only when a repair of its kind was made, `trips_given` and
-`window_end_given_s` only when they differ from `trips` and `window_end_s`: a run that needed
-no repair has the record it had before repairs were counted.
+A `repairs` table is written only when a repair of its kind was made, `trips_given` only when
+it differs from `trips`.
 
 A fingerprint is the 64-bit FNV-1a hash of what the network, the demand or the timetable was
 built from (each crate's README says exactly what it feeds), as 16 lower-case hexadecimal
@@ -201,10 +209,9 @@ through the binding, `crates/binding/README.md`); a path that is not UTF-8 is re
 (`NotWritable`, naming its key), before anything is written. So the record's folder and its inputs move together, and a run written into a folder
 at the same depth records the same paths. Not written: a time stamp, the machine, the thread
 count; so a second write of the same run, and a run at any number of threads, give the same
-bytes. `KEYS` lists every table of the record and the keys the writer may write in it, for a
-reader to refuse any other. `format` stays 1 (nothing has been released):
-the file keys joined tables that already existed, and the first line names the fourth table;
-no key changed.
+bytes. `KEYS` lists every table of the record and the keys the writer may write in it, part
+one's then part two's, for a reader to name any other. `format` stays 1 (nothing has been
+released): the record took its name `run_record.toml` and its two parts before any release.
 
 ## Units
 Seconds and counts; metric only. Every time of day, `departure_s`, `arrival_s`, `bin_start_s`,
@@ -226,7 +233,7 @@ fractions.
 - `mode` is null exactly for a trip without an alternative.
 - A crossing is filed under the bin its vehicle entered the link in, with its exact exit, even
   past the window's end (the loading crate's `LinkBins`).
-- In `run.toml` a float is written in Rust's shortest round-trip form with a point or an
+- In `run_record.toml` a float is written in Rust's shortest round-trip form with a point or an
   exponent (`1800.0`, `0.1`, `1e-7`), so TOML reads it back as a float of the same bits; an
   integer as an integer; a string or a quoted key as a basic string, the quote, the backslash
   and every control character escaped (`\uXXXX`). TOML has no null: a value that does not
@@ -257,7 +264,7 @@ run's (`NotTheRunsParameters`), build values whose bike or walk speed is not the
 (`NotTheNetworksSpeeds`), a journey taken that rides a run or calls at a stop the transit given
 does not have (`NotTheRunsJourney`, naming the trip), a value of the record that is a float not finite or an integer
 above 2⁶³ − 1 (`NotWritable`, naming its key); a `trips.parquet`, `links.parquet`,
-`iterations.parquet`, `routes.parquet` or `run.toml` in the folder that is one of `given.files` (canonical paths compared; a file or
+`iterations.parquet`, `routes.parquet` or `run_record.toml` in the folder that is one of `given.files` (canonical paths compared; a file or
 folder not there yet is none), which the write would destroy (`WouldReplaceInput`, naming it;
 the same check is public, `replaces_no_input(files, folder)`, for a caller to make before the
 run, as the Python binding does; a known limit: paths are compared, not files, so an input
@@ -269,7 +276,7 @@ refusal (`Parquet`).
 A bike's count is its own column, `bikes`, beside `cars` and `walkers` in each (link, bin) row:
 the bikes that entered the link in the bin, each counted once. Bikes have no time column,
 since a bike crosses a link at its free-flow time by definition (the loading crate). A trip by
-bike has `mode` `bike` and its door-to-door time like any other mode. In `run.toml` the bike's
+bike has `mode` `bike` and its door-to-door time like any other mode. In `run_record.toml` the bike's
 one speed is `bike_speed` under `[parameters]`, and a link's bike permission and a trip's bike
 are in the network's and the demand's fingerprints. Read from a file, a link's or a trip's bike
 is text in its `modes` cell, read like any other text: the reader knows no mode.
@@ -291,14 +298,16 @@ is text in its `modes` cell, read like any other text: the reader knows no mode.
   that no float is `NaN`, and that every finished trip's `arrival_s` is `departure_s +
   travel_time_s` exactly; it exits 1 on any difference (CI runs it):
   `python3 crates/io-parquet/tests/read_back.py target/tmp/io-parquet-hand-run`.
-  The same folder's `run.toml` is read by `tests/read_record.py` with Python's standard
+  The same folder's `run_record.toml` is read by `tests/read_record.py` with Python's standard
   `tomllib` (Python 3.11 or later): every key in its order and every value with its type
   against the numbers written in the script, the keywords the hand run gives, the defaults of
-  `PARAMETERS.md` for the rest, the hand counts (3 nodes, 3 links, 7 trips), the version of the
-  workspace's `Cargo.toml`, each fingerprint 16 lower-case hexadecimal digits; it exits 1 on any
+  `PARAMETERS.md` for the rest, `[network]` empty and `[demand]` the classes alone (the tables
+  were given in memory), the end used the end given (a whole number of bins), the hand counts
+  (3 nodes, 3 links, 7 trips), the version of the workspace's `Cargo.toml`, each fingerprint 16
+  lower-case hexadecimal digits; it exits 1 on any
   difference (CI runs it):
   `python3 crates/io-parquet/tests/read_record.py target/tmp/io-parquet-hand-run`.
-  A second write of `run.toml` is byte-identical (`hand_run.rs`).
+  A second write of `run_record.toml` is byte-identical (`hand_run.rs`).
 - **Who would change** (`tests/hand_run.rs`): the hand run under the logit, where each set holds
   one alternative and nobody would change: `would_change_share` 0 at each of the three
   iterations, right after `found_share`, and `gap` null; under the least cost,
@@ -322,7 +331,8 @@ is text in its `modes` cell, read like any other text: the reader knows no mode.
   by its key; parameters, a transit, a bike speed and a walk speed not the run's; nothing
   written on any of them, and a refused write into a folder holding a complete earlier run
   leaves its five files byte-identical. A used folder whose `links.parquet` cannot be written (a folder of that name):
-  the write fails and the earlier `run.toml` is gone. A run without a class: no coefficients
+  the write fails and the earlier `run_record.toml` is gone, and a `run.toml` beside it, the
+  settings no run writes, is the same bytes. A run without a class: no coefficients
   comment or table.
 - The refusals: a demand and a network not the run's, a folder that cannot be made.
 - **The reader** is tested through the binding, on files written by pyarrow 26.0.1 from hand

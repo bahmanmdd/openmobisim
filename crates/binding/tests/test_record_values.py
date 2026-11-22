@@ -2,7 +2,7 @@
 keyword binds, run at two values, with the answer from outside the simulator (a hand number,
 derived in each test) or, where a hand number is long to derive, the property that the tables
 differ from the run at the default (the test says why they must). Each test also reads the
-value back from run.toml, so a value recorded but not used, or used but not recorded, fails.
+value back from the record, run_record.toml, so a value recorded but not used, or used but not recorded, fails.
 
 The seed's range: a seed above 2^63 - 1, the largest integer of TOML, is refused where the
 keyword is read, before the run; 2^63 - 1 runs and reads back.
@@ -138,7 +138,8 @@ def test_the_iteration_floor_and_the_cap_set_the_rows_and_the_record_says_which_
                                              ("cap", {"iteration_cap": 3}, 3, False)]:
         result, rows, record = bike_runs(tmp_path, name, **run_kw)
         assert (rows, result.stopped_by_rule) == (rows_want, by_rule), name
-        assert record["result"] == {"iterations": rows, "stopped_by_rule": by_rule}, name
+        ended = {k: record["result"][k] for k in ("iterations", "stopped_by_rule")}
+        assert ended == {"iterations": rows, "stopped_by_rule": by_rule}, name
         assert record["parameters"]["iteration_floor"] == run_kw.get("iteration_floor", 0)
 
 
@@ -152,7 +153,7 @@ def test_transfer_walk_max_300_against_400_drops_the_two_footpaths_of_375_m(tmp_
                               ("s1", "s2", START), transit_kw={"transfer_walk_max": limit})
         record = read(result.record)
         assert result.gtfs_report["footpaths"] == footpaths, limit
-        assert record["transit"]["gtfs_report"]["footpaths"] == footpaths, limit
+        assert record["result"]["transit"]["gtfs_report"]["footpaths"] == footpaths, limit
         assert record["parameters"]["transfer_walk_max"] == limit
 
 

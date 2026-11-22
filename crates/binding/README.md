@@ -16,8 +16,8 @@ network = oms.Network.from_tables(nodes, links, **network_parameters)
 transit = oms.Transit.from_gtfs(path, network, **transit_parameters)
 demand  = oms.Demand.from_table(trips, classes, network, transit=None, **demand_parameters)
 result  = oms.run(network, demand, transit=None, window=(start_s, end_s), out=folder, **parameters)
-result  = oms.run_file(record, out=folder)
-result  = oms.Run.open(record, network=None, demand=None, transit=None)
+result  = oms.run_file(folder=None, out=folder)
+result  = oms.Run.open(folder, network=None, demand=None, transit=None)
 page    = result.map(path, title=None)
 page    = result.summary(path, title=None)
 ```
@@ -101,43 +101,58 @@ page    = result.summary(path, title=None)
 - **`run`**: `window=(start_s, end_s)`, two seconds of the clock, required, never defaulted;
   `out`, the folder the files go to (created if missing). The demand must have been built on
   the network and the transit given to `run`.
-- **`run_file(record, *, out)`**: a run's record, `run.toml` (a path), run again into the
-  folder `out`, returning a `Run`. The record is read with Python's standard `tomllib`; a key
-  or table under `[parameters]` the writer never writes is refused by name; one elsewhere is
-  ignored, all of them named in one `UserWarning` (`openmobisim_io_parquet::KEYS`; a `repairs`
-  table's keys are not checked); `stop_walk_max` or `transfer_walk_max` without `[transit]` is
-  ignored, warned. Read:
-  `format` (only 1; may be absent), `window_start_s` and `window_end_s` (required; the run
-  starts from `window_end_given_s` where the record has it, the end given before a run moved it
-  to a whole bin, so the run repeats that repair),
-  `[parameters]` (a row absent is the default of `PARAMETERS.md`; `coefficients` one table per
-  class, by column name, all sixteen required), the input files, `[network] osm_file` (with
-  `[network] region`, the region it was cut to, when the network had one), or
-  `nodes_file` and `links_file`, `[demand] trips_file` (required), `[transit] gtfs_file`
-  (required when `[transit]` is there), `[demand] classes` (required), and the three
-  `fingerprint`s. Known and not read: `openmobisim_version`, the counts, the readers' reports
-  and repairs, `[result]`. Each file's path is joined to the folder of the record's canonical path. The
-  network, the transit (when `[transit]` is there) and the demand are built by the functions of
-  `from_osm` or `from_tables`, `from_gtfs` and `from_table`, each given the rows of
-  `[parameters]` its entry point reads, and run by `run` with the rest. A minimal record holds
-  the window, the files and the classes alone.
-- **`Run.open(record, network=None, demand=None, transit=None)`**: the finished run whose
-  record is `record` (a `run.toml`; its four tables beside it) opened without running anything,
+- **Two files with fixed names.** `run.toml`, the settings, is written by the user and read by
+  `run_file`; `run_record.toml`, the record, is written by a run beside its four tables and read
+  by `Run.open`. A run never writes `run.toml`, so settings and results may share a folder. Each
+  is found in the folder given; the path of a file of that name is taken as its folder. Refused,
+  saying what to give instead, nothing written: a file of any other name (`ValueError`; a path
+  where nothing is, `FileNotFoundError`), and, given to `run_file`, a folder that holds a run's
+  record and no `run.toml` (or the record's own path). A run into a folder that already holds a
+  finished run (its `run_record.toml`) is told in one `UserWarning` naming the folder, and its
+  files are replaced.
+- **`run_file(folder=None, *, out)`**: the settings file `run.toml` in `folder` (none: the
+  current folder) run into the folder `out`, returning a `Run`. It is read with Python's
+  standard `tomllib`; it holds the keys of the record's part one: `format` (only 1; may be
+  absent), `window_start_s` and `window_end_s` (required; the end given, which the run moves up
+  to a whole `link_bin` when it is not one, a repair the record counts), `[parameters]` (a row
+  absent is the default of `PARAMETERS.md`; `coefficients` one table per class, by column name,
+  all sixteen required), the input files, `[network] osm_file` (with `[network] region`, the
+  region to cut it to, if any), or `nodes_file` and `links_file`, `[demand] trips_file`
+  (required), `[transit] gtfs_file` (required when `[transit]` is there), and `[demand]
+  classes` (required). A key or table under `[parameters]` that is not one of these is refused
+  by name; one elsewhere is ignored, all of them named in one `UserWarning`
+  (`openmobisim_io_parquet::KEYS`); `stop_walk_max` or `transfer_walk_max` without `[transit]`
+  is ignored, warned. Each file's path is joined to the folder of the settings file's canonical
+  path. The network, the transit (when `[transit]` is there) and the demand are built by the
+  functions of `from_osm` or `from_tables`, `from_gtfs` and `from_table`, each given the rows of
+  `[parameters]` its entry point reads, and run by `run` with the rest. Minimal settings hold
+  the window, the files and the classes alone. A record's part one, every line before
+  `[result]`, is a settings file: copied into a `run.toml`, it runs the same run again. A whole
+  record renamed `run.toml` (known by its `[result]`) is told in one `UserWarning` (write a
+  settings file instead), and the run reads its part one alone, but for the inputs'
+  fingerprints in `[result.network]`, `[result.demand]` and `[result.transit]`: an input whose
+  fingerprint differs (an input file changed) is named in one more `UserWarning` with both
+  fingerprints, and the run goes on. A settings file holds no fingerprint; nothing is compared.
+- **`Run.open(folder, network=None, demand=None, transit=None)`**: the finished run in `folder`
+  (its record, `run_record.toml`, its four tables beside it) opened without running anything,
   returning a `Run` like the one `run` returns. Each input not passed is rebuilt from the file
   the record names, by the one function `run_file` uses (`src/record.rs`, `inputs`); read from
-  the record besides: the window, `link_bin` (absent: its default), `[result]
-  stopped_by_rule` (absent: `Run.stopped_by_rule` is `None` and the pages say the run's end is
-  not recorded) and `[result.repairs]`. The tables the pages read are read once, here. An opened run lacks nothing a
-  fresh one has: `osm_report` and `gtfs_report` are its network's and transit's (rebuilt from
-  the same files, or passed).
+  the record besides: the window, `window_start_s` to `[result] window_end_used_s` (required;
+  the end the run used), `link_bin` (absent: its default), `[result] stopped_by_rule` (absent:
+  `Run.stopped_by_rule` is `None` and the pages say the run's end is not recorded),
+  `[result.repairs]` and the inputs' fingerprints. A key or table either part never holds is
+  ignored, all of them named in one `UserWarning`. The tables the pages read are read once,
+  here. An opened run lacks nothing a fresh one has: `osm_report` and `gtfs_report` are its
+  network's and transit's (rebuilt from the same files, or passed).
 
 **The rule for a finished run (the owner's): refuse only what cannot be done; warn on the
 rest.** `Run.open`, `Run.map` and `Run.summary` meet each condition so:
 
 | Condition | Met by |
 |---|---|
-| the record missing or not TOML; a key under `[parameters]` it should not hold; its window, `[network]`, `[demand]` or `[demand] classes` missing | refused (`OSError` or `ValueError` naming it) |
-| a key or table elsewhere the writer never writes | `UserWarning` naming them all; ignored |
+| a path that is neither a folder nor a file named `run_record.toml` (`run.toml` included) | refused (`ValueError`, or `FileNotFoundError` when nothing is there), saying what to give |
+| the record missing or not TOML; a key under `[parameters]` it should not hold; its window, `[result] window_end_used_s`, `[network]`, `[demand]` or `[demand] classes` missing | refused (`OSError` or `ValueError` naming it) |
+| a key or table elsewhere a record never holds | `UserWarning` naming them all; ignored |
 | an input given in memory when the run was made (no file in the record) and not passed (`Run.open`) | refused: `pass it: network=` (or `demand=`) |
 | `[result] stopped_by_rule` not a boolean (`Run.open`) | refused, naming what it is |
 | `[result] stopped_by_rule` missing | opened; `stopped_by_rule` is `None`, the summary says the record does not say what ended the run, the map's provenance "its end not recorded" |
@@ -145,7 +160,7 @@ rest.** `Run.open`, `Run.map` and `Run.summary` meet each condition so:
 | a table missing or unreadable, a column the pages need missing or of a type that cannot be read | refused naming the file (`OSError` when it cannot be opened, else `ValueError`); no page written |
 | a row of `trips.parquet`, `links.parquet` or `routes.parquet` whose own trip or link names nothing the inputs hold | refused naming the file and the row |
 | an input, passed or rebuilt, whose fingerprint differs from the record's | `UserWarning` naming it and both fingerprints; goes on with it |
-| the record without an input's fingerprint | `UserWarning` that it cannot be compared; goes on (also `run_file`) |
+| the record without an input's fingerprint | `UserWarning` that it cannot be compared; goes on (also `run_file` on a record renamed `run.toml`) |
 | a transit passed to a run that had none | `UserWarning`; the transit set aside |
 | a table's columns in another order, other columns beside them, a list's inner field named `element` | read as written, no warning |
 | a trip without a row in `trips.parquet` | read as not run (the run drops the trips its window cannot hold and writes no row for them); `UserWarning` only when their number is not the record's count of trips the run dropped |
@@ -164,9 +179,11 @@ built with, the three build values, `transfer_walk_max`, `stop_walk_max`, for th
 record) and, from `run`, `run_file` and `Run.open`, a `Run`: `trips`, `links`, `iterations`,
 `routes` (the paths of `trips.parquet`, `links.parquet`, `iterations.parquet` and
 `routes.parquet`, written by `crates/io-parquet`, whose README gives every column; `routes`
-one row per trip and leg of what each took at the last iteration), `record` (the path of `run.toml`, the record of what was run:
-every parameter at the value used, defaults included, the window, the counts and fingerprints
-of the network, the demand and the transit, the readers' counts; its keys in
+one row per trip and leg of what each took at the last iteration), `record` (the path of
+`run_record.toml`, the record of what was run: part one the settings, every parameter at the
+value used, defaults included, the window given, the input files and the classes; part two,
+`[result]`, the end of the window used, how the run ended, the counts and fingerprints of the
+network, the demand and the transit, the readers' counts and every repair; its keys in
 `crates/io-parquet/README.md`),
 When an input was read from a file (an OSM extract, a GTFS feed, a nodes, links or trips table
 given as a path), the record names it (`osm_file`, `gtfs_file`, `nodes_file`, `links_file`,
@@ -175,10 +192,8 @@ or the polygon's points), relative to the record's folder from the canonical pat
 between components (on Windows, a file on another drive than the record is recorded by its
 absolute path, `D:/…`, its canonical path without the verbatim prefix `\\?\`, and a file on a
 network share by its canonical path as it is, `//?/UNC/server/share/…`, Windows' long form of
-`\\server\share\…`; both measured to run again and open, "Systems and user rights" below); a table given in memory has no key, and a record without the files of its network and its demand cannot run again. `run_file` writes the record of the run it ran, the
-fingerprints of the inputs as they are now; when one differs from the record's (an input file
-changed), a `UserWarning` names the input (network, demand or transit) and both fingerprints,
-and the run goes on; a record without an input's fingerprint warns that it cannot be compared.
+`\\server\share\…`; both measured to run again and open, "Systems and user rights" below); a table given in memory has no key, and a record without the files of its network and its demand cannot run again. `run_file` writes the record of the run it ran, with the
+fingerprints of the inputs as they are now.
 `stopped_by_rule` (bool: the stopping rule, else the cap, ended the run; `None` for an opened
 run whose record does not say), `osm_report` (the OSM reader's `Report` of its network, as a
 dict, `None` for a network from tables), `gtfs_report` (the GTFS reader's of its transit, `None`
@@ -195,9 +210,9 @@ is left: N given, all dropped (by reason: …)" from `Demand.from_table` and fro
 summary's first tile says the same); "no link is left" from `Network.from_*`; "the network has
 no car link: N trips that ask for a car cannot drive" from `Demand.from_table`; "no run is
 left" from `Transit.from_gtfs`. The work goes on: a run of no trip writes its files and pages.
-The record writes each as `[network.repairs]`, `[demand.repairs]`,
-`[transit.repairs]`, `[result.repairs]`, and `[demand] trips_given` (when the demand dropped
-some); the summary's first tile
+The record writes each as `[result.network.repairs]`, `[result.demand.repairs]`,
+`[result.transit.repairs]`, `[result.repairs]`, and `[result.demand] trips_given` (when the
+demand dropped some); the summary's first tile
 says how many trips were given and how many dropped, by reason. The keys: this crate's table
 reader's (`columns_ignored`, `nodes_unread`, `links_unread`, `trips_unread`,
 `mode_names_unknown`, `road_classes_unread`, and `shapes_unread` for a shape it cannot read,
@@ -222,7 +237,7 @@ rebuilt), none of them Python attributes. Each page reads what it needs from the
 and inputs when it is written: the doors, classes and departures from the demand; the mode, time
 and finished from `trips.parquet`; the legs from `routes.parquet`; the links table from
 `links.parquet`; the iterations from `iterations.parquet` (the summary); the record's text from
-`run.toml` (both footers); and a `Transit`'s GTFS names beside its timetable (`lines`: the
+`run_record.toml` (both footers); and a `Transit`'s GTFS names beside its timetable (`lines`: the
 stops' names, the runs' lines and kinds). The map does not read `iterations.parquet`. A table
 that cannot be read is refused naming it, nothing written; what the readers set aside is shown
 as warnings (the table above). The pages of an opened run and of the fresh run are the same
@@ -256,17 +271,20 @@ degrees or metres; times of day in seconds of the clock.
   name held twice, a codec other than snappy, a file that is not Parquet: `ValueError` naming
   the table, the file and the column or the codec; a file that cannot be opened or read, or a
   directory: `OSError`.
-- `run_file`: a key or table under `[parameters]` the record never writes, a missing required key, a value of the wrong type, a boolean
+- `run_file`: a key or table under `[parameters]` a settings file never holds, a missing required key, a value of the wrong type, a boolean
   for any key read (TOML's `true` is never a number here), a `format` other than 1, both
   `osm_file` and table files: `ValueError` naming it. These are checked before any input is
   built; a parameter's value (a negative seed, say) is checked by the entry point that reads
   it, the same as for a keyword, so it is refused once the inputs read before that entry point
-  are built. A record that is not TOML: `tomllib.TOMLDecodeError` (a `ValueError`).
+  are built. A settings file that is not TOML: `tomllib.TOMLDecodeError` (a `ValueError`).
+- `run_file` and `Run.open`: a path of a file of another name than theirs, a folder holding a
+  run's record and no `run.toml` given to `run_file` (see "Two files with fixed names").
 - `run` and `run_file`: an `out` whose `trips.parquet`, `links.parquet`, `iterations.parquet`,
-  `routes.parquet` or `run.toml` is one of the run's input files (canonical paths compared): `ValueError` naming
+  `routes.parquet` or `run_record.toml` is one of the run's input files (canonical paths compared): `ValueError` naming
   the file, before the loop runs (`openmobisim_io_parquet::replaces_no_input`, the check
   `write` also makes), so an input is never replaced by a result and the mistake costs no run.
-  `run_file` into the record's own folder replaces the record (it is no input). A known limit:
+  `run_file` into the settings' own folder writes the record beside `run.toml`, which no run
+  writes. A known limit:
   paths are compared, not files, so an input that is a hard link of one of the five output
   names in `out` is not recognised and would be replaced.
 - A crate's refusal: `ValueError` carrying the crate's message unchanged; a file that cannot
@@ -279,11 +297,11 @@ ride it (a cycle path is a link `bike;walk` with no car field), `bike` in a trip
 the bike alternative, `bike_speed` sets the one speed of every bike. A bike's trip and its
 counts per link and bin come back in the two files like a car's. Tested: bike trips equal
 networkx's shortest lengths on a grid with streets one-way for bikes alone, and `bike_speed=30`
-halves a ride. `run.toml` records the `bike_speed` the network was built with under
-`[parameters]`, and `run_file` gives it to the network again. From a file, a link's or a
+halves a ride. `run_record.toml` records the `bike_speed` the network was built with under
+`[parameters]`, and `run_file` on its part one gives it to the network again. From a file, a link's or a
 trip's `bike` is text in its `modes` cell like any other mode: a bike's ride of 1 500 m from
-three files takes its hand 360 s, and a rerun from the record repeats a run with bikes byte for
-byte (on Delft, with a bike trip).
+three files takes its hand 360 s, and a rerun from the record's part one repeats a run with
+bikes byte for byte (on Delft, with a bike trip).
 
 ## Systems and user rights
 Measured on GitHub's runners (`windows-latest`, `ubuntu-latest`, `macos-latest` on Apple
@@ -293,8 +311,8 @@ silicon), the wheel installed, Python 3.14:
   folders it owns. The binding's tests pass as they do for the administrator, but for the two
   symbolic-link cases of `test_run_file.py`, skipped with the reason when the user may not
   create a link (152 passed and 5 skipped, against 153 and 4). A run from three
-  table files, run again by `run_file` (its `trips.parquet` and `links.parquet` the first run's
-  bytes) and opened by `Run.open` (its map and summary the fresh run's bytes), works in one
+  table files, run again by `run_file` from its record's part one (its `trips.parquet` and
+  `links.parquet` the first run's bytes) and opened by `Run.open` (its map and summary the fresh run's bytes), works in one
   folder; with the inputs on one drive and the run on the other (C: and D:, both ways); with the
   inputs, the run or both on a network share named `\\localhost\<share>\…`; with the run's
   folder or the inputs reached through a directory junction (`mklink /J`, which needs no right);
@@ -341,11 +359,13 @@ written and checked as files; their behaviour in a browser is not tested automat
   another fingerprint (a bike speed of 16 km/h, both fingerprints named; the page then shows the
   tables' journeys, 7 trips in 2 pairs as the fresh page, on the network passed, its classes), a transit passed to a
   run without one (set aside), a record without the network's fingerprint (then the fresh run's
-  pages). Opened, the pages saying so: a record without `stopped_by_rule`. Refused by name: a
+  pages), a key a record never holds under `[result.network]` (ignored, named; the pages the
+  fresh run's). Opened, the pages saying so: a record without `stopped_by_rule`. Refused by name: a
   network or a demand given in memory and not passed, a `stopped_by_rule` that is not a
   boolean, `links.parquet` with a column renamed, a
   removed `routes.parquet` (`OSError`); a fresh run's map with its `trips.parquet` removed
-  (`OSError`, no page). `routes.parquet` rebuilt by `run_file` is the same bytes; an `out` holding
+  (`OSError`, no page). `routes.parquet` rebuilt by `run_file` from the record's part one is the
+  same bytes; an `out` holding
   an input named `routes.parquet` is refused, the input unchanged.
 - `test_read_tables.py`: the hand run's tables changed by pyarrow, each warned and drawn from
   what agrees, by hand: the bike said to have driven, its routes rows removed, or given twice:
@@ -377,32 +397,43 @@ written and checked as files; their behaviour in a browser is not tested automat
   path, through a symbolic link, `out` four levels down, `out` through a symbolic link to a
   folder at another depth; no key for a table in memory. On Windows, which removes a `..` before
   it follows a link, the two symbolic-link cases check instead that each path is relative with
-  `/` and that the record runs again by `run_file` (the tables the first run's bytes) and opens
-  by `Run.open`; for a user who may not create a symbolic link they are skipped, the reason
+  `/` and that the record's part one runs again by `run_file` (the tables the first run's
+  bytes) and the run opens by `Run.open`; for a user who may not create a symbolic link they are skipped, the reason
   given. The case
   of `test_record.py` from files with transit and a non-default value for every row a record
-  holds, run again by `run_file` into a sibling folder: `trips.parquet`, `links.parquet` and
-  `run.toml` byte-identical, `iterations.parquet` equal but for its five wall-clock columns; the
+  holds, its record's part one run again by `run_file` into a sibling folder: `trips.parquet`,
+  `links.parquet` and `run_record.toml` byte-identical, `iterations.parquet` equal but for its five wall-clock columns; the
   same after the whole tree is moved; at another depth the tables identical and only the four
   file lines of the record different. The same rerun on Delft from its OSM extract cut to
-  version 1's box and its feed, the record holding the region (about a second; not gated). A hand-written record of the window, the files and the classes
-  alone runs `test_defaults.py`'s stop case (2 475 s; no journey at 1 501 m) and records every
-  parameter at the default parsed from `PARAMETERS.md`. One link, one trip or one call changed
-  in its file: one `UserWarning`, for that input alone, with both fingerprints, the run
-  complete, only its fingerprint changed; unchanged inputs: no warning, warnings as errors. An
-  `out` holding an input under each of the four output names refused naming it for `run` and
+  version 1's box and its feed, the record holding the region (about a second; not gated).
+  Hand-written settings of the window, the files and the classes alone run `test_defaults.py`'s stop case (2 475 s; no journey at 1 501 m) and records every
+  parameter at the default parsed from `PARAMETERS.md`. A record renamed `run.toml`: one
+  `UserWarning` saying so; one link, one trip or one call changed in its file: one more, for
+  that input alone, with both fingerprints, the run complete, only its fingerprint changed; the
+  record's part one alone: no warning, warnings as errors. An `out` holding an input under each
+  of the four output names (`run_record.toml` among them) refused naming it for `run` and
   `run_file`, the input byte-identical after, and before the loop (with a window the loop
-  refuses, the overwrite refusal is the one raised); inputs of other names beside the run kept; `run_file` into the record's
-  own folder. Each refusal of a record by name, one case each, a boolean for each kind of
-  number included. A key the writer never writes outside `[parameters]` (eight cases), and
-  `stop_walk_max` or `transfer_walk_max` without `[transit]`: one warning naming it, the new
-  record the same bytes as the minimal record's run.
+  refuses, the overwrite refusal is the one raised); inputs of other names beside the run kept;
+  `run_file` into the settings' own folder, `run.toml` unchanged. Each refusal of a settings
+  file by name, one case each, a boolean for each kind of number included. A key a settings
+  file never holds outside `[parameters]` (eight cases, `[result]` among them: the record
+  renamed), and `stop_walk_max` or `transfer_walk_max` without `[transit]`: one warning naming
+  it, the record the same bytes as the minimal settings' run. The folder, the path of its
+  `run.toml` and no folder (the current one) give the same record; refused, saying what to
+  give, nothing written: a folder holding a run's record and no `run.toml`, the record's path,
+  a file of another name (both functions), `run.toml` given to `Run.open`; a run into a folder
+  holding a finished run: one warning naming it, the record replaced; a folder holding
+  `run.toml` alone: no warning. One window end, by hand: settings ending at 35 950 s in bins
+  of 300 s from 28 800 s record `window_end_s = 35950` and `window_end_used_s = 36000` (24
+  bins), the move counted; edited to 36 300 s (25 whole bins), the next run ends there, nothing
+  moved.
 - `test_repairs.py`: the run's repairs by hand: a trip departing after a 1 800 s window
   dropped (`trips.parquet` the other 6, the record's `trips` 7 (no `trips_given`: the demand
   dropped none) and
   `[result.repairs] trips_outside_window = 1`, the summary's "of 7 given, 1 dropped", `Run.open`
   without a warning); a window of 1 801 s in 60 s bins ending at 27 060 s, the record keeping
-  27 001 s given, and `run_file` repeating the repair (the same record bytes); a door 5 000 m
+  27 001 s given as `window_end_s` and 27 060 s as `[result] window_end_used_s`, and `run_file`
+  on its part one repeating the repair (the same record bytes); a door 5 000 m
   from the network, 3 750 s on foot, after a 3 600 s window: walking taken out and the trip
   dropped; nothing left, each warned plainly and run on: every trip outside the window (the tile
   "no trip is left"), every class unknown, every link without modes, no car link, a feed whose
@@ -431,20 +462,21 @@ written and checked as files; their behaviour in a browser is not tested automat
   skipped unless `TEST_10=1` (about a minute; not in CI); the file's header says what it judges.
 - `test_determinism.py`: a logit run of 400 trips twice and at `RAYON_NUM_THREADS` 1 and 8:
   `trips.parquet` and `links.parquet` byte-identical.
-- `test_record.py`: `run.toml` read with Python's `tomllib`. The names under `[parameters]` are
+- `test_record.py`: `run_record.toml` read with Python's `tomllib`. The names under `[parameters]` are
   the rows of `PARAMETERS.md` (parsed) less `osm_class_defaults`, and less `transfer_walk_max`
   and `stop_walk_max` without transit; each unit comment is the row's Unit cell; with no
   keyword every value is the default written in the test from `PARAMETERS.md`. A run with
   transit and non-default keywords at every entry point, rebuilt and rerun from the input
-  tables and values read from its `run.toml` alone: `trips.parquet`, `links.parquet` and
-  `run.toml` byte-identical, `iterations.parquet` equal but for its five wall-clock columns,
-  the three fingerprints equal, `[transit.gtfs_report]` equal to `Run.gtfs_report`. One link,
-  one trip or one call changed changes its own fingerprint alone. `run.toml` byte-identical
+  tables and values read from its record alone: `trips.parquet`, `links.parquet` and
+  `run_record.toml` byte-identical, `iterations.parquet` equal but for its five wall-clock
+  columns, the three fingerprints equal, `[result.transit.gtfs_report]` equal to
+  `Run.gtfs_report`. One link, one trip or one call changed changes its own fingerprint alone.
+  `run_record.toml` byte-identical
   twice and at `RAYON_NUM_THREADS` 1 and 8, on the run of `test_determinism.py` and on the case
   with transit. Class ids with a quote, a backslash, control characters and a letter outside
   ASCII read back unchanged. Delft from its OSM extract and feed: `source = "osm"`, and both
   readers' counts in the record equal to the `Run`'s.
-- `test_record_values.py`: each keyword's value is the one used, read back from `run.toml`
+- `test_record_values.py`: each keyword's value is the one used, read back from `run_record.toml`
   beside a hand number: `walk_speed` 5 km/h walks 1 000 m in 720 s; `capacity_per_lane` 900
   on two lanes lets cars out at 100, 102, 104 s; a 4 500 s walk unfinished in a one-hour
   window and at its door at 29 700 s in a two-hour one, the window recorded as given;

@@ -1,7 +1,7 @@
 cff-version: 1.2.0
 message: >-
   If you use openmobisim in work you publish, please cite it as below, and name the version you used and the
-  fingerprints of the inputs of every run you report (each run's record, run.toml, holds them).
+  fingerprints of the inputs of every run you report (each run's record, run_record.toml, holds them).
 title: "openmobisim: an open, reproducible multimodal mobility simulator"
 type: software
 authors:

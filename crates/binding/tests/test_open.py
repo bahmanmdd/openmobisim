@@ -1,4 +1,5 @@
-"""Run.open: a finished run opened from its record, without running it, and its fourth table.
+"""Run.open: a finished run opened from its folder, by its record, run_record.toml, without running
+it, and its fourth table.
 
 1. A property: the hand run (test_hand_run.py) opened from its record gives a map and a summary
    equal, byte for byte, to those of the fresh run, from files with nothing passed (each input
@@ -10,11 +11,13 @@
    none (set aside); a record without the network's fingerprint line (the pages then the fresh
    run's). Refused by name: an input given in memory when the run was made and not passed; a
    table file removed (`OSError`); a table's column renamed (`ValueError`); a `stopped_by_rule`
-   that is not a boolean. Opened, the pages saying so: a record without `stopped_by_rule`
+   that is not a boolean. A key a record never holds (under [result.network]): ignored, one
+   warning naming it, the pages the fresh run's. Opened, the pages saying so: a record without `stopped_by_rule`
    (`Run.stopped_by_rule` is None; the summary says the record does not say what ended the run,
    the map's provenance line "its end not recorded"). An `out` holding an input named
    `routes.parquet` is refused for `run`, the input unchanged.
-3. `routes.parquet` of the hand run rebuilt by `run_file` is the same bytes.
+3. `routes.parquet` of the hand run rebuilt by `run_file` from the record's part one is the same
+   bytes.
 
 For bikes: the hand run's bike journey is one of those drawn on both pages compared.
 """
@@ -32,6 +35,7 @@ from test_files import write
 from test_defaults import END, LINK_COLUMNS, START, lon_lat, table
 from test_names import tram_run
 from test_drawing import decoded
+from test_run_file import settings
 
 TABLES = ("trips.parquet", "links.parquet", "iterations.parquet", "routes.parquet")
 
@@ -139,11 +143,15 @@ def test_an_input_not_the_runs_or_without_a_fingerprint_warns_and_the_opening_go
     run, said = opened(fresh.record, transit=_transit(tmp_path / "tram"))
     assert said == ["the transit passed is set aside: the run had none"], said
     text = Path(fresh.record).read_text(encoding="utf-8")
-    network_line = re.search(r'\[network\][^\[]*?(fingerprint = "[0-9a-f]+"\n)', text).group(1)
+    network_line = re.search(r'\[result\.network\][^\[]*?(fingerprint = "[0-9a-f]+"\n)', text).group(1)
     edit_record(fresh.record, network_line, "")
     run, said = opened(fresh.record)
-    assert said == [f"run.toml: the record has no fingerprint of the network: the network given or rebuilt "
+    assert said == [f"run_record.toml: the record has no fingerprint of the network: the network given or rebuilt "
                     f"({network_line.split(chr(34))[1]}) cannot be compared with the run's; the work goes on with it"], said
+    assert pages(run, tmp_path / "opened") == pages(fresh, tmp_path / "fresh")
+    edit_record(fresh.record, "[result.network]\n", "[result.network]\nspeed = 1\n")
+    run, said = opened(fresh.record)
+    assert said[0] == "run_record.toml: 1 keys a record never holds, ignored: speed [result.network]", said
     assert pages(run, tmp_path / "opened") == pages(fresh, tmp_path / "fresh")
 
 
@@ -188,7 +196,7 @@ def test_a_pages_table_changed_after_opening_is_refused_by_name(tmp_path):
 
 def test_routes_are_rebuilt_the_same_bytes_and_an_out_holding_an_input_named_routes_is_refused(tmp_path):
     fresh = hand_files(tmp_path)
-    again = oms.run_file(fresh.record, out=tmp_path / "again")
+    again = oms.run_file(settings(fresh.record), out=tmp_path / "again")
     assert Path(again.routes).read_bytes() == Path(fresh.routes).read_bytes()
     nodes, links, trips = hand_tables()
     out = tmp_path / "out"

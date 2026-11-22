@@ -15,7 +15,7 @@ The region: the extract read with region=(west, south, east, north), version 1's
 the same network (one fingerprint, as no node lies on its edge), and a smaller one than the whole
 extract. The same polygon given as lists ([[lon, lat], ...], as a record's region reads back from
 TOML) is accepted; the record of a run cut to it holds those four corners, and both run_file on
-that record and Run.open of it read the network again: the same link count as the run's (a
+that record's part one and Run.open of it read the network again: the same link count as the run's (a
 property: one extract, one region, one network). A region that is no area, or not numbers, is
 refused by name (ValueError): by hand, three points of which two are the same, three on the
 parallel 52.0°N, and three on one diagonal (4.30, 52.00), (4.35, 52.05), (4.40, 52.10) enclose no
@@ -34,6 +34,7 @@ import pyarrow.parquet as pq
 import pytest
 
 import openmobisim as oms
+from test_run_file import settings
 
 CRATES = Path(__file__).resolve().parents[2]
 OSM = CRATES / "io-osm" / "tests" / "fixtures" / "delft" / "network.osm.pbf"
@@ -89,7 +90,7 @@ def test_delft_cut_to_a_box_or_the_same_polygon_is_one_network(tmp_path):
         result = oms.run(network, demand, window=(28_800, 32_400), out=tmp_path / name,
                          iteration_cap=1)
         with open(result.record, "rb") as f:
-            read.append((result.osm_report, tomllib.load(f)["network"]["fingerprint"]))
+            read.append((result.osm_report, tomllib.load(f)["result"]["network"]["fingerprint"]))
     assert read[0] == read[1], "the box and the same polygon: one network"
     assert read[0][0]["links"] < read[2][0]["links"]
 
@@ -109,7 +110,7 @@ def test_a_polygon_region_given_as_lists_runs_again_from_its_record(tmp_path):
                     iteration_cap=1)
     with open(first.record, "rb") as f:
         assert tomllib.load(f)["network"]["region"] == corners
-    again = oms.run_file(first.record, out=tmp_path / "again")
+    again = oms.run_file(settings(first.record), out=tmp_path / "again")
     opened = oms.Run.open(first.record)
     seconds = time.perf_counter() - started
     links = [r.osm_report["links"] for r in (first, again, opened)]

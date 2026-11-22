@@ -49,7 +49,7 @@ def test_summary_writes_one_file_the_same_bytes_twice_with_the_hand_numbers(tmp_
             "stopped-by": "The iteration cap"}
     assert {k: value(text, k) for k in hand} == hand
     assert len(re.findall(r'data-k="it\.\d+\.mean"', text)) == 3
-    # The record, run.toml, shown whole.
+    # The record, run_record.toml, shown whole.
     record = Path(result.record).read_text()
     assert record.splitlines()[0].replace("&", "&amp;") in text
 
@@ -85,5 +85,5 @@ def test_a_title_given_names_both_pages_else_the_files_stem(tmp_path):
     page = Path(result.map(tmp_path / "m.html", title="Hand run")).read_text(encoding="utf-8")
     assert "<title>Hand run</title>" in page and '"title":"Hand run"' in page
     assert "<title>m</title>" in Path(result.map(tmp_path / "m.html")).read_text(encoding="utf-8")
-    with pytest.raises(ValueError, match="run.toml"):
+    with pytest.raises(ValueError, match="run_record.toml"):
         result.map(result.record, title="anything")
