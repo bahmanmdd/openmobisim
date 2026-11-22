@@ -9,7 +9,10 @@ self-comparison allowed).
    (os.path.samefile), each path relative with "/" between components: inputs given by absolute
    path, by relative path, through a symbolic link, out at another depth, and out reached
    through a symbolic link to a folder at another depth; no file key for a table given in
-   memory.
+   memory. On Windows, which removes a ".." before it follows a link, the two symbolic-link
+   parts check what the tool does instead of the text join: each path relative with "/", the
+   record run again by run_file (the tables the first run's bytes) and opened by Run.open; for
+   a user who may not create a symbolic link (OSError) they are skipped, with the reason.
 2. A run from files with transit (test_record.py's case of a 6 x 6 grid in longitude/latitude,
    two bus lines, 120 trips) and a non-default value for every row of PARAMETERS.md a record
    holds, fed to run_file into a sibling folder: trips.parquet, links.parquet and run.toml
@@ -103,6 +106,40 @@ def all_lead_to(record, files):
     return all(leads_to(record, t, k, files[f]) for t, k, f in pairs)
 
 
+def symlink(target, link, skipped):
+    """os.symlink(target, link), True. On Windows a user without the right to create a symbolic
+    link (a standard user, developer mode off) is refused with an OSError: then False, the
+    reason kept in `skipped`."""
+    if os.name != "nt":
+        os.symlink(target, link)
+        return True
+    try:
+        os.symlink(target, link)
+    except OSError as e:
+        skipped.append(f"{link.name}: {e}")
+        return False
+    return True
+
+
+def through_link(run, files, again):
+    """A run whose inputs or folder are reached through a symbolic link. On POSIX: its recorded
+    paths, joined to the record's folder, lead to `files`. On Windows os.path removes a recorded
+    ".." before it follows the link, so that text join is no measure there; what the tool does
+    is checked instead: each path relative with "/", the record, reached through the link, run
+    again by run_file into `again` (trips.parquet and links.parquet the first run's bytes), and
+    opened by Run.open."""
+    if os.name != "nt":
+        assert all_lead_to(run.record, files)
+        return
+    record = read(run.record)
+    for table, key in (("network", "nodes_file"), ("network", "links_file"),
+                       ("demand", "trips_file"), ("transit", "gtfs_file")):
+        assert not os.path.isabs(record[table][key]) and "\\" not in record[table][key]
+    rerun = oms.run_file(run.record, out=again)
+    same_run(Path(run.record).parent, Path(rerun.record).parent, record=False)
+    assert oms.Run.open(run.record).stopped_by_rule == run.stopped_by_rule
+
+
 def test_a_recorded_path_joined_to_the_records_folder_is_the_file_given(tmp_path, monkeypatch):
     files = inputs(tmp_path / "inputs")
     one = {"iteration_cap": 1}
@@ -111,17 +148,18 @@ def test_a_recorded_path_joined_to_the_records_folder_is_the_file_given(tmp_path
     monkeypatch.chdir(tmp_path)
     relative = {k: os.path.join("inputs", p.name) for k, p in files.items()}
     assert all_lead_to(run_case(relative, "rel", one).record, files)
-    os.symlink(tmp_path / "inputs", tmp_path / "link")
-    linked = {k: tmp_path / "link" / p.name for k, p in files.items()}
-    assert all_lead_to(run_case(linked, tmp_path / "via-link", one).record, linked)
+    skipped = []
+    if symlink(tmp_path / "inputs", tmp_path / "link", skipped):
+        linked = {k: tmp_path / "link" / p.name for k, p in files.items()}
+        through_link(run_case(linked, tmp_path / "via-link", one), linked, tmp_path / "again-1")
     deep = run_case(files, tmp_path / "a" / "b" / "c" / "run", one)
     assert all_lead_to(deep.record, files)
     assert read(deep.record)["network"]["nodes_file"] == "../../../../inputs/nodes.parquet"
     # `out` through a symbolic link to a folder at another depth: the path is relative to the
-    # folder the record is really in, and os.path resolves it from the link.
+    # folder the record is really in, and os.path resolves it from the link (on POSIX).
     (tmp_path / "real" / "one" / "two").mkdir(parents=True)
-    os.symlink(tmp_path / "real" / "one" / "two", tmp_path / "short")
-    assert all_lead_to(run_case(files, tmp_path / "short" / "run", one).record, files)
+    if symlink(tmp_path / "real" / "one" / "two", tmp_path / "short", skipped):
+        through_link(run_case(files, tmp_path / "short" / "run", one), files, tmp_path / "again-2")
     # In memory: no file key; a network half from memory cannot run again.
     nodes, links, trips, _, _ = tables()
     network = oms.Network.from_tables(nodes, files["links"])
@@ -133,6 +171,8 @@ def test_a_recorded_path_joined_to_the_records_folder_is_the_file_given(tmp_path
     assert leads_to(mixed.record, "network", "links_file", files["links"])
     with pytest.raises(ValueError, match="network.nodes_file is missing"):
         oms.run_file(mixed.record, out="again")
+    if skipped:
+        pytest.skip("the symbolic-link parts (every other part passed): " + "; ".join(skipped))
 
 
 def same_run(a, b, record=True):
