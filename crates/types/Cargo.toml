@@ -12,5 +12,6 @@ authors.workspace = true
 workspace = true
 
 [dependencies]
+libm = { workspace = true }
 rand_chacha = { workspace = true }
 rayon = { workspace = true }

@@ -18,8 +18,8 @@
 //! unit, and a bike's speed is a free-flow speed.
 //!
 //! Determinism: the same seed and the same binary on the same platform give bit-identical
-//! results, at any number of threads. Not across platforms: the platform's `ln` differs in its
-//! last bits, and the Gumbel draws use it.
+//! results, at any number of threads. The Gumbel draws' logarithm is `libm`'s (pure Rust), not
+//! the platform's maths library, whose last bits differ from one platform to another.
 
 // Identifiers are `u32` widened to `usize`; a narrower pointer would make that lossy.
 const _: () = assert!(usize::BITS >= 32, "openmobisim needs a pointer width of at least 32 bits");

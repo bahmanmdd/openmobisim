@@ -211,8 +211,8 @@ impl DrawBlock {
 
     /// A standard Gumbel draw from word `i`: `−ln(−ln u)`, `u` from [`open_unit`](Self::open_unit).
     ///
-    /// Its mean is Euler's constant (0.5772…) and its variance π²/6. Uses the platform's `ln`, so
-    /// the bits are reproducible on one platform, not across platforms.
+    /// Its mean is Euler's constant (0.5772…) and its variance π²/6. The logarithm is `libm`'s
+    /// (pure Rust), not the platform's.
     ///
     /// # Panics
     ///
@@ -220,7 +220,7 @@ impl DrawBlock {
     #[inline]
     #[must_use]
     pub fn gumbel(&self, i: usize) -> f64 {
-        -(-self.open_unit(i).ln()).ln()
+        -libm::log(-libm::log(self.open_unit(i)))
     }
 
     /// A Bernoulli draw from word `i`: true with probability `p`.

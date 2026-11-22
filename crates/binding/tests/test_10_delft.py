@@ -26,6 +26,7 @@ their trips counted in parts 2 and 4, their mean time and share judged in part 5
 
 import csv
 import gzip
+import hashlib
 import math
 import os
 import random
@@ -112,6 +113,8 @@ def default_run(tmp_path_factory):
     iterations = pq.read_table(result.iterations).to_pylist()
     print(f"\nDelft: reads {read_s:.2f} s, run {run_s:.2f} s, {len(iterations)} iterations, "
           f"stopped by the rule: {result.stopped_by_rule}")
+    print(f"trips.parquet's fingerprint (its bytes' SHA-256, first 16 hexadecimal digits; printed, not judged): "
+          f"{hashlib.sha256(Path(result.trips).read_bytes()).hexdigest()[:16]}")
     return folder, result, run_s
 
 
@@ -175,7 +178,7 @@ def test_2_and_3_every_trip_finishes_and_the_run_takes_under_15_s(default_run):
     _, result, run_s = default_run
     trips, modes = by_mode(result)
     for mode, (share, mean) in modes.items():
-        print(f"{mode}: share {share:.3f}, mean trip {mean or 0:.0f} s")
+        print(f"{mode}: share {share:.3f}, mean trip {mean or 0:.1f} s")
     without = [t["trip_id"] for t in trips if t["mode"] is None]
     unfinished = [t for t in trips if t["mode"] is not None and not t["finished"]]
     for t in unfinished:

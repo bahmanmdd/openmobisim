@@ -1,7 +1,8 @@
 # openmobisim-graph
 
 The one network every later module reads: built once from node and link rows, then immutable,
-held as a structure of arrays. Depends on `openmobisim-types` only.
+held as a structure of arrays. Depends on `openmobisim-types` and `libm` (the projection's and
+the distances' maths in pure Rust, not the platform's) only.
 
 ## Inputs
 - Nodes (`NetworkBuilder::add_node`): an external id and a position, either longitude/latitude

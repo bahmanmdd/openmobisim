@@ -2,7 +2,8 @@
 
 The loop: five stages per iteration, search, choose, load, measure, assess, iterated to the
 stopping rule; and the three tables a run returns. Depends on `openmobisim-types`, `-graph`,
-`-loading`, `-search`, `-choice`, `-transit`, `-demand` and `rayon`, nothing else.
+`-loading`, `-search`, `-choice`, `-transit`, `-demand`, `rayon` and `libm` (the step's power in
+pure Rust, not the platform's), nothing else.
 
 ## Inputs
 - The `Network` (`openmobisim-graph`), the `Demand` (`openmobisim-demand`, built on that
