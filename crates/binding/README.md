@@ -173,8 +173,9 @@ given as a path), the record names it (`osm_file`, `gtfs_file`, `nodes_file`, `l
 `trips_file`; an extract cut to a region, `region` beside `osm_file`, as the box's four numbers
 or the polygon's points), relative to the record's folder from the canonical paths of both, with `/`
 between components (on Windows, a file on another drive than the record is recorded by its
-absolute path, `D:/…`, its canonical path without the verbatim prefix `\\?\`: a known limit,
-untested); a table given in memory has no key, and a record without the files of its network and its demand cannot run again. `run_file` writes the record of the run it ran, the
+absolute path, `D:/…`, its canonical path without the verbatim prefix `\\?\`, and a file on a
+network share by its canonical path as it is, `//?/UNC/server/share/…`, Windows' long form of
+`\\server\share\…`; both measured to run again and open, "Systems and user rights" below); a table given in memory has no key, and a record without the files of its network and its demand cannot run again. `run_file` writes the record of the run it ran, the
 fingerprints of the inputs as they are now; when one differs from the record's (an input file
 changed), a `UserWarning` names the input (network, demand or transit) and both fingerprints,
 and the run goes on; a record without an input's fingerprint warns that it cannot be compared.
@@ -284,39 +285,53 @@ trip's `bike` is text in its `modes` cell like any other mode: a bike's ride of 
 three files takes its hand 360 s, and a rerun from the record repeats a run with bikes byte for
 byte (on Delft, with a bike trip).
 
+## Systems and user rights
+Measured on GitHub's runners (`windows-latest`, `ubuntu-latest`, `macos-latest` on Apple
+silicon), the wheel installed, Python 3.14:
+- **Windows, a standard user**: a new local account in the group Users alone (`whoami /groups`:
+  no Administrators, medium integrity), started by `Start-Process -Credential`, working in
+  folders it owns. The binding's tests pass as they do for the administrator, but for the two
+  symbolic-link cases of `test_run_file.py`, skipped with the reason when the user may not
+  create a link (152 passed and 5 skipped, against 153 and 4). A run from three
+  table files, run again by `run_file` (its `trips.parquet` and `links.parquet` the first run's
+  bytes) and opened by `Run.open` (its map and summary the fresh run's bytes), works in one
+  folder; with the inputs on one drive and the run on the other (C: and D:, both ways); with the
+  inputs, the run or both on a network share named `\\localhost\<share>\…`; with the run's
+  folder or the inputs reached through a directory junction (`mklink /J`, which needs no right);
+  and through a symbolic link where the user may create one. Without developer mode (the
+  default) a standard user may not create a symbolic link (`WinError 1314`); the package never
+  creates one. `wheels.yml` runs the binding's tests as such a user, developer mode off, on
+  every release.
+- **Linux and macOS**: the tests of `ci.yml` and `wheels.yml` run as the runner's account
+  (`runner`, not root, no `sudo`), which may use `sudo` (and on macOS is in the group admin).
+  Once by hand as a new account without either: every test of the suite as it is now passed.
+- **Not measured**: a domain account, a share on another machine, Windows on ARM, a path over
+  260 characters.
+
 ## Tests
 `pytest crates/binding/tests` on the extension built in release (`maturin develop --release -m
 crates/binding/Cargo.toml` in a virtual environment with pytest, pyarrow 26.0.1, networkx 3.7).
-Each expected value comes from outside the simulator:
+Each expected value comes from outside the simulator. The pages (the map and the summary) are
+written and checked as files; their behaviour in a browser is not tested automatically.
 - `test_hand_run.py`: io-parquet's hand run rebuilt from Python tables; its three files pass
   `crates/io-parquet/tests/read_back.py` (pyarrow, the hand numbers) unchanged.
-- `test_map.py` also drives Chrome with real mouse presses over its DevTools protocol on a pipe
-  (`tests/cdp.py`, the standard library alone): the link panel, the pair opened from it without
-  moving the view, the clicks that close or do not (`crates/map/README.md`); addresses naming what
-  the page does not hold, ignored.
 - `test_summary.py`: `Run.summary` on the hand run writes the file and returns its path, the same
   bytes on a second call and in another folder, no address, the hand numbers by their `data-k`
   names (7 trips, 5 finished, 1 still travelling, 1 without an alternative, 9.0 vehicle-km, 1.5 km
   cycled, 3.0 km walked, three iteration rows, the iteration cap), the record shown; the run's
   four files and an input file refused by name, unchanged; a folder an `OSError`, no partial file.
-  With Chrome or Chromium (else skipped): the page ready, and one press of its button switches the
-  surface between paper and night. A title given names both pages (escaped), else the file's stem;
+  A title given names both pages (escaped), else the file's stem;
   the refusal holds with a title.
 - `test_map.py`: `Run.map` on the hand run writes the file and returns its path, the same bytes on
   a second call and in another folder, no `http://`, `https://` or `//host.domain` address, the
   stem as its title; a folder as the path is an `OSError`, no partial file left; the run's four
-  files and an input file refused by name, unchanged. Where a Chrome or Chromium binary is found
-  (else skipped), the file opened headless with `--dump-dom` reports `ready`, reads the hand counts
-  (3 links, 2 rows of car traffic, 2 pairs, 3 journeys, no transit hop) and shows the hand values
-  in its link panel and its pair panel (`crates/map/README.md`).
+  files and an input file refused by name, unchanged.
 - `test_drawing.py`: the links table's `shape` and `road_class` on the hand run (st1 bent
   through (750, 300) m, a primary road; ab a cycleway; st2 residential): the fingerprints and the
   trips the plain run's; the map's data hold the bend (7 500 and 3 000 dm) and the classes
   (version 1's order: 16, 4, 11), the same from a file as in memory; a point in
   longitude/latitude at a node's position held at that node's decimetres; the summary's car map
-  along the bend, mitred, by hand; in Chrome a real click on the bend picks st1 ("Link st1 ·
-  primary · 2,000 m") and one on its chord picks the cycleway there (st1 when drawn straight),
-  the hover naming the class, then the lanes and speed; a shape not points (with a point not
+  along the bend, mitred, by hand; a shape not points (with a point not
   finite, or the number 3.5) drawn straight, a road class `True` none (`road_classes_unread`), its map data that of st1 without a shape, counted and warned once; a
   misspelt `shapes` column ignored, counted and warned once.
 - `test_open.py`: `Run.open` as a property: the hand run from files opened with nothing passed
@@ -360,7 +375,11 @@ Each expected value comes from outside the simulator:
 - `test_run_file.py`: each recorded path, joined to the record's folder by `os.path.join`, is
   the file given (`os.path.samefile`), relative with `/`: inputs by absolute path, by relative
   path, through a symbolic link, `out` four levels down, `out` through a symbolic link to a
-  folder at another depth; no key for a table in memory. The case
+  folder at another depth; no key for a table in memory. On Windows, which removes a `..` before
+  it follows a link, the two symbolic-link cases check instead that each path is relative with
+  `/` and that the record runs again by `run_file` (the tables the first run's bytes) and opens
+  by `Run.open`; for a user who may not create a symbolic link they are skipped, the reason
+  given. The case
   of `test_record.py` from files with transit and a non-default value for every row a record
   holds, run again by `run_file` into a sibling folder: `trips.parquet`, `links.parquet` and
   `run.toml` byte-identical, `iterations.parquet` equal but for its five wall-clock columns; the

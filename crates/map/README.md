@@ -247,28 +247,7 @@ are written by `openmobisim_io_parquet::write` and read back, as the binding dra
 - Through the binding (`crates/binding/tests/test_map.py`): `Run.map` writes the file and returns
   its path, the same bytes twice, no address; a folder as the path an `OSError` with no partial
   file left; each of the run's four files and an input file (by another spelling of its path)
-  refused, unchanged. With real presses of the mouse (Chrome's DevTools protocol on a pipe,
-  `crates/binding/tests/cdp.py`), road traffic and cyclists ticked: a click on `st1`'s ribbon
-  selects st1 (180 veh/h, delay 1 %, 10 % of capacity, pair 2's 3 travellers), on the cyclists'
-  line under it the bike link, and with cyclists unticked the same point st1, never the path under
-  it; the pair row shows pair 2 without moving the view, the link staying, its row marked; an
-  empty click closes nothing; the row again closes the pair; Esc the link. The four sequences of the
-  click rule (st1, its pair's row, st2, the empty map; ×, st1, the empty map; the pair from the
-  address, st1, the empty map; that address opened again, the empty map) each end with the link last
-  clicked open, the pair open and its row marked. Where the cyclists' line, 3 000 cyclists wide,
-  lies over st1's ribbon, the bike link. Play, then the whole window ticked: over 1.2 s (more than
-  two steps) the box ticked, the slider off, the address's bin "all", the button "Play", the
-  subtitle "all bins, 07:00–08:00", st1's and st2's ribbons drawn. Play, then road traffic
-  unticked: over 1.2 s the play stopped at one bin, the slider on it, the cyclists ticked and their
-  pixels unchanged. The PNG's and the SVG's subtitle road traffic's caption, "07:00–07:01 · one
-  ribbon per direction · width = road capacity, colour = volume", then nothing with road traffic
-  unticked. With st1 bent and classed (`test_drawing.py`), a click on
-  the bend picks st1, named by its class, and one on its chord the cycleway there. An address naming a pair, link, hop or bin the page does not hold, or a bike or
-  walk link a car-only link or on a page without that layer, opens the page without them. A run
-  with a hand GTFS feed (`test_names.py`): the stops' names, the tram's kind and line, the places
-  and the journey's line reach the map and the summary; in Chrome its hop clicked, its stop
-  hovered and clicked, the legend's kinds read. Opened in headless Chrome or
-  Chromium where one is found, the page reports
-  `ready`, reads 3 links, 2 rows of car traffic, 2 pairs, 3 journeys and no hop, shows its title
-  `hand "<map>"` as written, `st1` in its first bin at 180 veh/h, delay 1 %, 10 % of capacity,
-  used by pair 2's 3 travellers, and pair 1's walk at 50 % and 19 min and bike at 25 % and 6.0 min.
+  refused, unchanged. A run with a hand GTFS feed (`test_names.py`): the stops' names, the tram's
+  kind and line, the places and the journey's line reach the map and the summary.
+- The page is checked as a file (its data, by hand); its behaviour in a browser (the clicks, the
+  panels, Play, the exports) is not tested automatically.

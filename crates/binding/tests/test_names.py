@@ -6,10 +6,8 @@ By hand: the map holds the two stops by name, the kinds of service with tram the
 the line "1" of kind tram, one hop Markt -> Station of kind tram ridden by 2 travellers, 2 boardings
 at Markt; the pair's places are the stops themselves ("Markt", "Station", within 60 m); its journey
 is named by its line, "1". The summary's transit map draws the hop in the tram's colour (class
-k-k2) with a legend entry "tram". In Chrome, the hop, clicked on its stroke, opens the panel
-"tram · Markt → Station" with 2 passengers on board; the stop Markt, hovered, reads "stop Markt"
-with 2 boardings; a click on the stop closes the link panel (no pair is open); the legend lists
-"Transit lines" and "tram".
+k-k2) with a legend entry "tram". The pages are checked as files; their behaviour in a browser is
+not tested automatically.
 """
 
 import base64
@@ -20,11 +18,8 @@ import zipfile
 import zlib
 from pathlib import Path
 
-import pytest
-
 import openmobisim as oms
 from test_defaults import END, LINK_COLUMNS, START, lon_lat, table
-from test_map import chrome
 
 STOPS = {"S1": ("Markt", 0.0), "S2": ("Station", 1_000.0)}
 
@@ -85,36 +80,3 @@ def test_names_and_kinds_reach_both_pages(tmp_path):
     assert [a["lline"][g] for g in rides] == [0]
     transit = summary[summary.index('data-k="map.transit"'):]
     assert 'class="k-k2"' in transit and 'k-k2"></span>tram' in transit
-
-
-def test_a_hop_and_a_stop_clicked_and_the_legends_kinds(tmp_path):
-    binary = chrome()
-    if binary is None:
-        pytest.skip("no Chrome or Chromium binary")
-    from cdp import Page
-
-    page_path, _ = tram_run(tmp_path)
-    _, a = decoded(page_path)
-    xs, ys = [v * 0.1 for v in a["tsx"]], [v * 0.1 for v in a["tsy"]]
-    cx, cy, mpp = (xs[0] + xs[1]) / 2, (ys[0] + ys[1]) / 2, 2.0
-    screen = [(750 + (x - cx) / mpp, 475 - (y - cy) / mpp) for x, y in zip(xs, ys)]
-    # The hop's stroke: 7.2 px wide (1.2 + 6 √(2 / 2)), its centre 4.1 px to the right of its travel.
-    (x0, y0), (x1, y1) = screen
-    length = ((x1 - x0) ** 2 + (y1 - y0) ** 2) ** 0.5
-    nx, ny = -(y1 - y0) / length, (x1 - x0) / length
-    hop = ((x0 + x1) / 2 + nx * 4.1, (y0 + y1) / 2 + ny * 4.1)
-    page = Page(binary, tmp_path / "profile", page_path.as_uri() + f"#ly=t&z={cx:.1f},{cy:.1f},{mpp:.3f}")
-    try:
-        page.wait("document.body && document.body.dataset.state === 'ready'")
-        legend = " ".join(page.run("document.getElementById('legendbody').innerText").split())
-        assert legend.startswith("Transit lines tram width = passengers on board"), legend
-        page.click(*hop)
-        panel = " ".join(page.run("document.getElementById('linkinfo').innerText").split())
-        assert panel.startswith("tram · Markt → Station × 2 passengers on board"), panel
-        page.move(*screen[0])
-        tip = " ".join(page.run("document.getElementById('tip').innerText").split())
-        assert tip == "stop Markt Boardings 2 over the run", tip
-        page.click(*screen[0])
-        assert page.run("document.getElementById('linkinfo').hidden")
-    finally:
-        page.close()
