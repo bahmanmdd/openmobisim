@@ -42,7 +42,7 @@ jobs:
           whoami
           whoami /groups | Select-String -Pattern 'Administrators|Mandatory Label'
           New-Item -ItemType Directory -Force D:\oms-admin | Out-Null
-          python .github/standard-user/measure.py $env:GITHUB_WORKSPACE D:\oms-admin none suite f1 f2 chrome
+          python .github/standard-user/measure.py $env:GITHUB_WORKSPACE D:\oms-admin none suite
           exit 0
       - name: A standard user, a share and its folders, made by the administrator
         continue-on-error: true
@@ -106,11 +106,11 @@ jobs:
           }
           New-Item -ItemType Directory -Force D:\oms-share\off, D:\oms-share\on | Out-Null
           Set-ItemProperty $mode AllowDevelopmentWithoutDevLicense 0
-          Run-As off 'who suite b c1 c2 d1 d2 d3 e1 e2 symlink chrome'
+          Run-As off 'who symlink suite'
           Set-ItemProperty $mode AllowDevelopmentWithoutDevLicense 1
-          Run-As on 'symlink suite f1 f2'
+          Run-As on 'symlink suite'
           exit 0
-      - name: The compact form for wheels.yml (the suite as a new standard user, Start-Process -Credential)
+      - name: wheels.yml's new step, its commands as they are there
         continue-on-error: true
         timeout-minutes: 8
         shell: pwsh
@@ -121,16 +121,18 @@ jobs:
           $work = (New-Item -ItemType Directory "$env:RUNNER_TEMP\tester").FullName
           New-Item -ItemType Directory "$work\temp" | Out-Null
           icacls $work /grant 'tester:(OI)(CI)F' /Q
+          Set-ItemProperty HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\AppModelUnlock AllowDevelopmentWithoutDevLicense 0
           $env:TEMP = $env:TMP = "$work\temp"
-          $cred = [pscredential]::new('tester', (ConvertTo-SecureString $pw -AsPlainText -Force))
-          $run = @{ Credential = $cred; LoadUserProfile = $true; Wait = $true; PassThru = $true; WorkingDirectory = $work;
+          $run = @{ Credential = [pscredential]::new('tester', (ConvertTo-SecureString $pw -AsPlainText -Force));
+                    LoadUserProfile = $true; Wait = $true; PassThru = $true; WorkingDirectory = $work;
                     RedirectStandardOutput = "$work\out.txt"; RedirectStandardError = "$work\err.txt" }
           Start-Process whoami.exe -ArgumentList '/groups' @run | Out-Null
           Get-Content "$work\out.txt"
-          if (Select-String -Quiet -SimpleMatch 'BUILTIN\Administrators' "$work\out.txt") { 'COMPACT: an administrator' }
-          $p = Start-Process (Get-Command python).Source -ArgumentList "-m pytest `"$env:GITHUB_WORKSPACE\crates\binding\tests`" -p no:cacheprovider -rs --basetemp `"$work\pytest`"" @run
+          if (Select-String -Quiet -SimpleMatch 'BUILTIN\Administrators' "$work\out.txt") { throw 'tester is an administrator' }
+          $tests = "-m pytest `"$env:GITHUB_WORKSPACE\crates\binding\tests`" -p no:cacheprovider -rs --basetemp `"$work\pytest`""
+          $p = Start-Process (Get-Command python).Source -ArgumentList $tests @run
           Get-Content "$work\out.txt", "$work\err.txt"
-          "COMPACT: pytest exit $($p.ExitCode)"
+          "WHEELS STEP: exit $($p.ExitCode)"
           exit 0
 
   posix:
