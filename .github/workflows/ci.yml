@@ -54,11 +54,11 @@ jobs:
           with_the_added_link_every_trip_takes_19_min_split_in_thirds_with_8_min_queues
           the_steady_hour_is_the_capacity_constrained_equilibrium
           over_twenty_seeds_each_queued_link_enters_at_its_capacity_within_3_percent
-      - name: Delft read in release (under 3 s; release only)
+      - name: Delft read in release, the read time printed (release only)
         run: cargo test --release -p openmobisim-io-osm --test delft -- --ignored --nocapture
       - name: Delft's region against version 1's tables, every difference traced (release only)
         run: cargo test --release -p openmobisim-io-osm --test delft_tables -- --ignored --nocapture
-      - name: Delft feed read in release, footpaths included (under 3 s; release only)
+      - name: Delft feed read in release, footpaths included, the read time printed (release only)
         run: cargo test --release -p openmobisim-io-gtfs --test delft -- --ignored --nocapture
       - name: The hand run's Parquet files read by pyarrow 26.0.1 against the hand numbers
         run: |
@@ -67,7 +67,7 @@ jobs:
           "$RUNNER_TEMP/pyarrow/bin/python" crates/io-parquet/tests/read_back.py target/tmp/io-parquet-hand-run
       - name: The hand run's record read by Python's tomllib against the hand numbers
         run: python3 crates/io-parquet/tests/read_record.py target/tmp/io-parquet-hand-run
-      - name: Sioux Falls's run written in release (under 1 s)
+      - name: Sioux Falls's run written in release, the write time printed
         run: cargo test --release -p openmobisim-io-parquet --test sioux_falls -- --ignored --nocapture
       - name: The Python binding built in release by maturin, its tests by pytest (pyarrow 26.0.1, networkx 3.7)
         run: |
@@ -75,7 +75,7 @@ jobs:
           "$RUNNER_TEMP/binding/bin/pip" install --quiet maturin==1.16.0 pytest==9.2.0 pyarrow==26.0.1 networkx==3.7
           VIRTUAL_ENV="$RUNNER_TEMP/binding" "$RUNNER_TEMP/binding/bin/maturin" develop --release -m crates/binding/Cargo.toml
           "$RUNNER_TEMP/binding/bin/python" -m pytest crates/binding/tests -s -p no:cacheprovider
-      - name: "Test 10, Delft: free-flow routes against networkx, every trip finishes, the run under 15 s, identical files twice and at 1 and 8 threads, within 1 % of 60 iterations"
+      - name: "Test 10, Delft: free-flow routes against networkx, every trip finishes, the run timed, identical files twice and at 1 and 8 threads, within 1 % of 60 iterations"
         run: TEST_10=1 "$RUNNER_TEMP/binding/bin/python" -m pytest crates/binding/tests/test_10_delft.py -s -p no:cacheprovider
       - name: Budgets
         run: bash tools/check_limits.sh

@@ -1,6 +1,7 @@
-"""Test 10: Delft, signals ignored. Release only, run by hand (not in CI): it runs about
-a minute. Run with `TEST_10=1 pytest crates/binding/tests/test_10_delft.py -s` after
-`maturin develop --release`; without `TEST_10=1` it is skipped.
+"""Test 10: Delft, signals ignored. Release only: it runs about 80 s on the developer's
+machine. CI runs it as a step of its own; the 15 s budget of part 3 is judged on the
+developer's machine only. Run with `TEST_10=1 pytest crates/binding/tests/test_10_delft.py -s`
+after `maturin develop --release`; without `TEST_10=1` it is skipped.
 
 The fixture (`fixtures/delft-tables/`, its README says where it comes from): Delft's network as
 tables, `nodes.csv.gz` and `links.csv.gz` (21 566 nodes; 12 460 car, 20 652 bike and 55 400

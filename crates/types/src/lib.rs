@@ -19,7 +19,9 @@
 //!
 //! Determinism: the same seed and the same binary on the same platform give bit-identical
 //! results, at any number of threads. The Gumbel draws' logarithm is `libm`'s (pure Rust), not
-//! the platform's maths library, whose last bits differ from one platform to another.
+//! the platform's maths library, whose last bits differ from one platform to another. Across
+//! platforms, as measured: Delft's default run (test 10) gives byte-identical trips on macOS
+//! (Apple silicon) and on Linux (x86_64); Windows is not measured.
 
 // Identifiers are `u32` widened to `usize`; a narrower pointer would make that lossy.
 const _: () = assert!(usize::BITS >= 32, "openmobisim needs a pointer width of at least 32 bits");
