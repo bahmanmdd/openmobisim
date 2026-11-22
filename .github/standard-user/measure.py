@@ -25,6 +25,7 @@ from pathlib import Path
 
 CHECKOUT, WORK, SHARE = Path(sys.argv[1]), Path(sys.argv[2]), sys.argv[3]
 TESTS = CHECKOUT / "crates" / "binding" / "tests"
+WORK.mkdir(parents=True, exist_ok=True)
 sys.path.insert(0, str(TESTS))
 
 import pyarrow as pa  # noqa: E402
@@ -104,6 +105,8 @@ def case(label, inputs, out, given=None, before=None):
             print(f"  run_file: ran; trips.parquet, links.parquet the first run's bytes: {same}",
                   flush=True)
             stage = "the fresh run's map and summary"
+            for folder in ("fresh", "opened", "again-pages"):
+                os.makedirs(os.path.join(out, folder), exist_ok=True)
             fresh = [Path(first.map(os.path.join(out, "fresh", "map.html"))).read_bytes(),
                      Path(first.summary(os.path.join(out, "fresh", "summary.html"))).read_bytes()]
             stage = "Run.open"

@@ -16,7 +16,7 @@ jobs:
   windows:
     name: Windows, a standard user
     runs-on: windows-latest
-    timeout-minutes: 50
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
@@ -35,8 +35,10 @@ jobs:
           python -m pip install --no-index --find-links dist openmobisim
       - name: As the runner's account (an administrator) - the suite, the symbolic-link cases, Chrome
         continue-on-error: true
+        timeout-minutes: 8
         shell: pwsh
         run: |
+          $ErrorActionPreference = 'Continue'
           whoami
           whoami /groups | Select-String -Pattern 'Administrators|Mandatory Label'
           New-Item -ItemType Directory -Force D:\oms-admin | Out-Null
@@ -46,11 +48,13 @@ jobs:
         continue-on-error: true
         shell: pwsh
         run: |
+          $ErrorActionPreference = 'Continue'
           $user = 'omsuser'
-          $pw = 'Aa1!' + [guid]::NewGuid().ToString('N')
+          # At most 14 characters: net user asks for a confirmation above that.
+          $pw = 'Aa1!' + [guid]::NewGuid().ToString('N').Substring(0, 10)
           Write-Output "::add-mask::$pw"
           "OMS_PW=$pw" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
-          net user $user $pw /add /expires:never
+          net user $user $pw /add
           net user $user | Select-String 'Group'
           "-- members of Administrators:"
           Get-LocalGroupMember Administrators | Format-Table -AutoSize | Out-String
@@ -58,21 +62,19 @@ jobs:
           icacls D:\oms-user /grant "${user}:(OI)(CI)F" /Q
           icacls D:\oms-user /setowner $user /Q
           icacls D:\oms-user
-          "-- the checkout before: "; icacls $env:GITHUB_WORKSPACE
-          $t = Get-Date
-          icacls $env:GITHUB_WORKSPACE /grant "${user}:(OI)(CI)RX" /C /Q
-          icacls $env:pythonLocation /grant "${user}:(OI)(CI)RX" /C /Q
-          "read access granted in $([int]((Get-Date) - $t).TotalSeconds) s"
+          "-- the checkout and Python, as they are (no grant made):"
+          icacls $env:GITHUB_WORKSPACE
+          icacls $env:pythonLocation
           New-Item -ItemType Directory -Force D:\oms-share | Out-Null
           icacls D:\oms-share /grant "${user}:(OI)(CI)F" /Q
           Get-Service LanmanServer | Format-Table -AutoSize | Out-String
           New-SmbShare -Name omsshare -Path D:\oms-share -FullAccess Everyone | Format-List Name, Path | Out-String
-          Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\AppModelUnlock' -ErrorAction SilentlyContinue | Format-List | Out-String
           exit 0
       - name: Start-Process -Credential as the standard user (does it start a process?)
         continue-on-error: true
         shell: pwsh
         run: |
+          $ErrorActionPreference = 'Continue'
           $cred = New-Object System.Management.Automation.PSCredential('omsuser', (ConvertTo-SecureString $env:OMS_PW -AsPlainText -Force))
           try {
             $p = Start-Process -FilePath whoami.exe -ArgumentList '/groups' -Credential $cred -WorkingDirectory D:\oms-user `
@@ -81,52 +83,71 @@ jobs:
             Get-Content D:\oms-user\sp-out.txt, D:\oms-user\sp-err.txt
           } catch { "Start-Process -Credential: $_" }
           exit 0
-      - name: As the standard user, through a scheduled task - (a) the suite, (b) to (e) the cases
+      - name: As the standard user, through a scheduled task - (a) the suite, (b) to (e) the cases; developer mode off, then on
         continue-on-error: true
+        timeout-minutes: 15
         shell: pwsh
         run: |
+          $ErrorActionPreference = 'Continue'
           $user = 'omsuser'
           $py = (Get-Command python).Source
-          $cmd = 'D:\oms-user\run.cmd'
-          @"
-          @echo off
-          set PYTHONDONTWRITEBYTECODE=1
-          cd /d D:\oms-user
-          "$py" "$env:GITHUB_WORKSPACE\.github\standard-user\measure.py" "$env:GITHUB_WORKSPACE" D:\oms-user \\localhost\omsshare who suite b c1 c2 d1 d2 d3 e1 e2 symlink chrome > D:\oms-user\out.txt 2>&1
-          echo %ERRORLEVEL% > D:\oms-user\done.txt
-          "@ | Set-Content -Encoding ascii $cmd
-          Get-Content $cmd
-          function Run-Task {
-            Remove-Item D:\oms-user\done.txt, D:\oms-user\out.txt -ErrorAction SilentlyContinue
+          $mode = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\AppModelUnlock'
+          "developer mode as the image has it: $((Get-ItemProperty $mode).AllowDevelopmentWithoutDevLicense)"
+          function Run-As($label, $cases) {
+            $cmd = "D:\oms-user\run-$label.cmd"
+            $out = "D:\oms-user\out-$label.txt"
+            $done = "D:\oms-user\done-$label.txt"
+            Set-Content -Encoding ascii $cmd @(
+              '@echo off', 'set PYTHONDONTWRITEBYTECODE=1', 'cd /d D:\oms-user',
+              "`"$py`" `"$env:GITHUB_WORKSPACE\.github\standard-user\measure.py`" `"$env:GITHUB_WORKSPACE`" D:\oms-user\$label \\localhost\omsshare\$label $cases > $out 2>&1",
+              "echo %ERRORLEVEL% > $done")
+            Get-Content $cmd | Write-Host
             $action = New-ScheduledTaskAction -Execute 'cmd.exe' -Argument "/c $cmd"
-            $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit (New-TimeSpan -Minutes 40)
-            Unregister-ScheduledTask -TaskName oms-standard-user -Confirm:$false -ErrorAction SilentlyContinue
-            Register-ScheduledTask -TaskName oms-standard-user -Action $action -Settings $settings -User $user -Password $env:OMS_PW -RunLevel Limited | Out-Null
-            Start-ScheduledTask -TaskName oms-standard-user
-            $deadline = (Get-Date).AddMinutes(40)
+            $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit (New-TimeSpan -Minutes 20)
+            Unregister-ScheduledTask -TaskName "oms-$label" -Confirm:$false -ErrorAction SilentlyContinue
+            Register-ScheduledTask -TaskName "oms-$label" -Action $action -Settings $settings -User $user -Password $env:OMS_PW -RunLevel Limited | Out-Null
+            $t = Get-Date
+            Start-ScheduledTask -TaskName "oms-$label"
+            $deadline = (Get-Date).AddMinutes(20)
             do {
               Start-Sleep -Seconds 5
-              $state = (Get-ScheduledTask -TaskName oms-standard-user).State
-              $result = (Get-ScheduledTaskInfo -TaskName oms-standard-user).LastTaskResult
-            } until ((Test-Path D:\oms-user\done.txt) -or ((Get-Date) -gt $deadline) -or ($state -eq 'Ready' -and $result -ne 267011 -and $result -ne 267009))
+              $state = (Get-ScheduledTask -TaskName "oms-$label").State
+              $result = (Get-ScheduledTaskInfo -TaskName "oms-$label").LastTaskResult
+            } until ((Test-Path $done) -or ((Get-Date) -gt $deadline) -or ($state -eq 'Ready' -and $result -ne 267011 -and $result -ne 267009))
             Start-Sleep -Seconds 2
-            Write-Host ("task state $state, last result $result (0x{0:x})" -f $result)
-            return (Test-Path D:\oms-user\done.txt)
+            Write-Host ("-- $label as the standard user: task state $state, last result $result (0x{0:x}), $([int]((Get-Date) - $t).TotalSeconds) s" -f $result)
+            if (Test-Path $out) { Get-Content $out | Write-Host } else { Write-Host 'no output' }
           }
-          $t = Get-Date
-          if (-not (Run-Task)) {
-            "-- the task did not finish; granting the batch logon right and trying again"
-            $sid = (New-Object System.Security.Principal.NTAccount($user)).Translate([System.Security.Principal.SecurityIdentifier]).Value
-            secedit /export /cfg D:\sec.inf /areas USER_RIGHTS | Out-Null
-            $inf = Get-Content D:\sec.inf
-            if ($inf -match '^SeBatchLogonRight') { $inf = $inf -replace '^(SeBatchLogonRight = .*)$', "`$1,*$sid" }
-            else { $inf = $inf -replace '^\[Privilege Rights\]$', "[Privilege Rights]`r`nSeBatchLogonRight = *$sid" }
-            Set-Content D:\sec.inf $inf -Encoding Unicode
-            secedit /configure /db D:\sec.sdb /cfg D:\sec.inf /areas USER_RIGHTS
-            Run-Task | Out-Null
-          }
-          "-- as the standard user, $([int]((Get-Date) - $t).TotalSeconds) s:"
-          if (Test-Path D:\oms-user\out.txt) { Get-Content D:\oms-user\out.txt } else { "no output" }
+          New-Item -ItemType Directory -Force D:\oms-share\off, D:\oms-share\on | Out-Null
+          Set-ItemProperty $mode AllowDevelopmentWithoutDevLicense 0
+          Run-As off 'who suite b c1 c2 d1 d2 d3 e1 e2 symlink chrome'
+          Set-ItemProperty $mode AllowDevelopmentWithoutDevLicense 1
+          Run-As on 'symlink suite f1 f2'
+          exit 0
+      - name: The compact form for wheels.yml (the suite as a standard user through a scheduled task)
+        continue-on-error: true
+        timeout-minutes: 8
+        shell: pwsh
+        working-directory: ${{ runner.temp }}
+        run: |
+          $pw = 'Aa1!' + (New-Guid).ToString('N').Substring(0, 10)
+          net user tester $pw /add | Out-Null
+          $work = "$env:RUNNER_TEMP\tester"
+          New-Item -ItemType Directory $work | Out-Null
+          icacls $work /grant 'tester:(OI)(CI)F' /Q | Out-Null
+          $py = (Get-Command python).Source
+          Set-Content -Encoding ascii "$work\run.cmd" @(
+            "cd /d $work", 'whoami /groups > out.txt',
+            "`"$py`" -m pytest `"$env:GITHUB_WORKSPACE\crates\binding\tests`" -p no:cacheprovider -rs --basetemp `"$work\pytest`" >> out.txt 2>&1",
+            'echo %ERRORLEVEL% > done.txt')
+          $action = New-ScheduledTaskAction -Execute cmd.exe -Argument "/c $work\run.cmd"
+          Register-ScheduledTask tests -Action $action -User tester -Password $pw -RunLevel Limited | Out-Null
+          Start-ScheduledTask tests
+          $deadline = (Get-Date).AddMinutes(15)
+          while (-not (Test-Path "$work\done.txt") -and (Get-Date) -lt $deadline) { Start-Sleep 5 }
+          Get-Content "$work\out.txt"
+          if (Select-String -Quiet -SimpleMatch 'BUILTIN\Administrators' "$work\out.txt") { Write-Output 'COMPACT: ran as an administrator' }
+          "COMPACT: pytest exit $(Get-Content "$work\done.txt" -ErrorAction SilentlyContinue)"
           exit 0
 
   posix:
@@ -164,6 +185,7 @@ jobs:
           exit 0
       - name: A new user without administrator rights runs the binding's tests
         continue-on-error: true
+        timeout-minutes: 10
         run: |
           PY=$(command -v python)
           if [ "$RUNNER_OS" = Linux ]; then
@@ -180,9 +202,31 @@ jobs:
           sudo cp -R crates PARAMETERS.md "$SRC/"
           sudo chmod -R a+rX "$SRC"
           d=$(dirname "$PY"); while [ "$d" != / ]; do ls -ld "$d"; sudo chmod o+x "$d"; d=$(dirname "$d"); done
+          # The 12 tests that drive Chrome are run apart: under this user Chrome crashed (Linux) or hung (macOS).
+          T="$SRC/crates/binding/tests"
+          CHROME_TESTS="test_drawing.py::test_a_click_on_the_bend_picks_the_link_and_one_on_its_chord_does_not
+            test_map.py::test_the_page_opens_and_shows_the_hand_values
+            test_map.py::test_real_clicks_select_a_link_open_a_pair_and_keep_the_view
+            test_map.py::test_a_hash_naming_what_the_page_does_not_hold_is_ignored
+            test_map.py::test_a_bike_or_walk_link_on_a_page_without_that_layer_is_ignored
+            test_map.py::test_four_click_sequences_end_as_the_rule_says
+            test_map.py::test_a_line_drawn_on_top_of_a_ribbon_wins_where_the_pointer_is_on_both
+            test_map.py::test_whole_period_ticked_while_playing_stops_the_play_and_shows_the_whole_window
+            test_map.py::test_road_traffic_hidden_while_playing_stops_the_play
+            test_map.py::test_the_exports_subtitle_says_only_what_is_drawn
+            test_names.py::test_a_hop_and_a_stop_clicked_and_the_legends_kinds
+            test_summary.py::test_the_page_opens_and_its_button_switches_the_theme"
+          DESELECT=""; for t in $CHROME_TESTS; do DESELECT="$DESELECT --deselect $T/$t"; done
           start=$(date +%s)
           sudo -u omsuser env PYTHONDONTWRITEBYTECODE=1 HOME=/tmp/omsuser-home sh -c \
-            "mkdir -p /tmp/omsuser-home && cd /tmp/omsuser-home && id && '$PY' -m pytest '$SRC/crates/binding/tests' -p no:cacheprovider -rsfE --tb=short --disable-warnings --basetemp /tmp/omsuser-home/pytest" \
+            "mkdir -p /tmp/omsuser-home && cd /tmp/omsuser-home && id && '$PY' -m pytest '$T' -p no:cacheprovider -rsfE --tb=short --disable-warnings --basetemp /tmp/omsuser-home/pytest $DESELECT" \
             || echo "pytest exit $?"
-          echo "as omsuser: $(( $(date +%s) - start )) s"
+          echo "as omsuser, without the Chrome tests: $(( $(date +%s) - start )) s"
+          if [ "$RUNNER_OS" = Linux ]; then CHROME=$(command -v google-chrome); else CHROME="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"; fi
+          echo "-- Chrome as omsuser, at most 60 s: $CHROME"
+          sudo -u omsuser env HOME=/tmp/omsuser-home perl -e 'alarm 60; exec @ARGV' "$CHROME" --headless=new --disable-gpu --no-sandbox \
+            --user-data-dir=/tmp/omsuser-home/chrome-profile --dump-dom about:blank 2>&1 | head -25 || true
+          echo "-- Chrome as the runner, at most 60 s"
+          perl -e 'alarm 60; exec @ARGV' "$CHROME" --headless=new --disable-gpu --no-sandbox \
+            --user-data-dir="$RUNNER_TEMP/chrome-profile" --dump-dom about:blank 2>&1 | head -5 || true
           exit 0
