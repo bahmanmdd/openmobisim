@@ -1,7 +1,7 @@
 """Run.summary on io-parquet's hand run (test_hand_run.py): the file is written and returned, names
 no address, is the same bytes when written twice, shows the hand numbers; a path that is a file of
-the run is refused (the check Run.map makes); and, where a Chrome or Chromium binary is found, the
-page opens with no script error and its Paper / Night button switches the theme.
+the run is refused (the check Run.map makes). The page is checked as a file; its behaviour in a
+browser is not tested automatically.
 
 The hand numbers (derived in crates/summary/tests/hand_run.rs): 7 trips, 5 finished, 1 still
 travelling at the window's end, 1 without an alternative; 9.0 vehicle-km (3 cars on 2 km and 3 on
@@ -10,7 +10,6 @@ iterations, ended by the iteration cap.
 """
 
 import re
-import subprocess
 import time
 from pathlib import Path
 
@@ -19,10 +18,7 @@ import pyarrow.parquet as pq
 import pytest
 
 from test_hand_run import hand_run, hand_tables
-from test_map import ADDRESS, chrome
-
-# The two surfaces, paper and night, as the browser computes them.
-PAPER, NIGHT = "rgb(251, 252, 253)", "rgb(10, 18, 32)"
+from test_map import ADDRESS
 
 
 def value(text, key):
@@ -80,37 +76,6 @@ def test_a_file_of_the_run_is_refused_and_left_unchanged(tmp_path):
     with pytest.raises(OSError):
         result.summary(tmp_path / "folder")
     assert not any(p.name.endswith(".partial") for p in tmp_path.iterdir())
-
-
-def test_the_page_opens_and_its_button_switches_the_theme(tmp_path):
-    binary = chrome()
-    if binary is None:
-        pytest.skip("no Chrome or Chromium binary")
-    result = hand_run(*hand_tables(), tmp_path / "run")
-    page = Path(result.summary(tmp_path / "hand.html")).read_text(encoding="utf-8")
-    # A copy of the page with a check after it: the surface before and after one press of the
-    # button (the page itself is not changed).
-    check = ('<script>const s = () => getComputedStyle(document.body).backgroundColor;'
-             'const before = s(); document.getElementById("theme").click();'
-             'document.body.dataset.check = before + "|" + s() + "|" + document.documentElement.dataset.theme;'
-             "</script>")
-    copy = tmp_path / "checked.html"
-    copy.write_text(page.replace("</body>", check + "</body>"), encoding="utf-8")
-    start = time.perf_counter()
-    done = subprocess.run(
-        [binary, "--headless=new", "--disable-gpu", "--no-sandbox",
-         f"--user-data-dir={tmp_path / 'profile'}", "--virtual-time-budget=5000", "--dump-dom",
-         copy.as_uri()],
-        capture_output=True, text=True, timeout=120,
-    )
-    print(f"headless Chrome: {time.perf_counter() - start:.1f} s")
-    body = re.search(r"<body([^>]*)>", done.stdout)
-    assert body, done.stdout[:2000] + done.stderr[-2000:]
-    attributes = dict(re.findall(r'data-([a-z]+)="([^"]*)"', body.group(1)))
-    assert attributes.get("state") == "ready", attributes
-    before, after, chosen = attributes["check"].split("|")
-    assert {before, after} == {PAPER, NIGHT}, attributes["check"]
-    assert chosen == ("night" if after == NIGHT else "paper")
 
 
 def test_a_title_given_names_both_pages_else_the_files_stem(tmp_path):

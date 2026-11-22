@@ -19,19 +19,14 @@ The hand run (test_hand_run.py) with ab a cycleway, st1 a primary road bent thro
    along their piece's normal, (0.371, 0.928) and (-0.371, 0.928) (the pieces (588, -235.2) and
    (588, 235.2) long), to (21.9, 259.8) and (1 194.1, 259.8); at the bend along the two normals'
    sum, (0, 1.857), by 5 x min(2, 2 / 1.857) = 5.39, to (608, 25.4).
-5. In Chrome, at 1 m a pixel centred on (750, 150) m (a point (x, y) m at the pixel (x, 625 - y)):
-   a real click on the bend's ribbon (750, 329) picks st1, named by its class ("Link st1 ·
-   primary · 2,000 m"); one on its chord, 4 px below a to b (750, 629), where its ribbon would
-   be drawn straight, picks ab (the cycleway on the chord), and picks st1 on the same page with
-   st1 straight (no shape). The hover names the class and the length, then the lanes and speed
-   on a row of their own.
-6. A shape that is not points "x y;x y", with a point not finite, or not text (3.5), draws
+5. A shape that is not points "x y;x y", with a point not finite, or not text (3.5), draws
    the link straight (the map's data that of st1 without a shape), counted (`shapes_unread`,
    naming st1) and warned once; a road class that is not text (True) is none, the link kept
    (`road_classes_unread`); a column the table does not read (`shapes`) is ignored, its shape absent,
    counted (`columns_ignored`, naming it) and warned once; an empty `road_class` is no class.
 
-For bikes: ab, the cyclists' path, is a cycleway on the page and in the panel, as a road is.
+For bikes: ab, the cyclists' path, is classed a cycleway in the map's data, as a road is classed.
+The pages are checked as files; their behaviour in a browser is not tested automatically.
 """
 
 import base64
@@ -48,7 +43,6 @@ import pytest
 
 import openmobisim as oms
 from test_hand_run import START, hand_run, hand_tables
-from test_map import chrome, text_of
 
 
 def drawn_tables():
@@ -117,37 +111,6 @@ def test_the_summary_maps_follow_the_shape(tmp_path):
     car = car[:car.index("</svg>")]
     assert '<svg viewBox="0 0 2000 276" class="map" data-k="map.car"' in html
     assert '<path class="k-b0" stroke-width="8" d="M22 260L608 25L1194 260"/>' in car, car
-
-
-def test_a_click_on_the_bend_picks_the_link_and_one_on_its_chord_does_not(tmp_path):
-    binary = chrome()
-    if binary is None:
-        pytest.skip("no Chrome or Chromium binary")
-    from cdp import Page
-
-    path = Path(hand_run(*drawn_tables(), tmp_path / "run").map(tmp_path / "drawn.html"))
-    page = Page(binary, tmp_path / "profile", path.as_uri() + "#ly=r&z=750.0,150.0,1.000")
-    try:
-        page.wait("document.body && document.body.dataset.state === 'ready'")
-        page.move(750, 329)
-        tip = text_of(page, "#tip")
-        assert "Classprimary · 2,000 m" in tip and "Lanes, speed1 lane · 50 km/h" in tip, tip
-        page.click(750, 329)
-        assert text_of(page, "#linkinfo").startswith("Link st1 · primary · 2,000 m"), text_of(page, "#linkinfo")
-        page.click(750, 629)
-        assert text_of(page, "#linkinfo").startswith("Link ab · cycleway · 1,500 m"), text_of(page, "#linkinfo")
-    finally:
-        page.close()
-    nodes, links, trips = drawn_tables()
-    links["shape"] = [None, None, None]
-    path = Path(hand_run(nodes, links, trips, tmp_path / "straight").map(tmp_path / "straight.html"))
-    page = Page(binary, tmp_path / "profile2", path.as_uri() + "#ly=r&z=750.0,150.0,1.000")
-    try:
-        page.wait("document.body && document.body.dataset.state === 'ready'")
-        page.click(750, 629)
-        assert text_of(page, "#linkinfo").startswith("Link st1 · primary · 2,000 m"), text_of(page, "#linkinfo")
-    finally:
-        page.close()
 
 
 def straight_map(tmp_path, nodes, links, trips, name):

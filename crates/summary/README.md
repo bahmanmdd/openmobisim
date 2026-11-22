@@ -140,5 +140,5 @@ binding draws a page (`tests/common/mod.rs`, `kept`):
   for one from tables.
 - Through the binding (`crates/binding/tests/test_summary.py`): `Run.summary` writes the file and
   returns its path, the same bytes twice, the hand numbers; the run's files refused (the check of
-  `Run.map`); in headless Chrome or Chromium where one is found, the page is ready (its script ran)
-  and its button switches the surface between the two themes.
+  `Run.map`). The page is checked as a file; its behaviour in a browser (its script, the theme
+  button) is not tested automatically.

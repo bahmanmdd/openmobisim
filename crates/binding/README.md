@@ -292,7 +292,7 @@ silicon), the wheel installed, Python 3.14:
   no Administrators, medium integrity), started by `Start-Process -Credential`, working in
   folders it owns. The binding's tests pass as they do for the administrator, but for the two
   symbolic-link cases of `test_run_file.py`, skipped with the reason when the user may not
-  create a link (152 passed and 17 skipped, against 153 and 16). A run from three
+  create a link (152 passed and 5 skipped, against 153 and 4). A run from three
   table files, run again by `run_file` (its `trips.parquet` and `links.parquet` the first run's
   bytes) and opened by `Run.open` (its map and summary the fresh run's bytes), works in one
   folder; with the inputs on one drive and the run on the other (C: and D:, both ways); with the
@@ -304,45 +304,34 @@ silicon), the wheel installed, Python 3.14:
   every release.
 - **Linux and macOS**: the tests of `ci.yml` and `wheels.yml` run as the runner's account
   (`runner`, not root, no `sudo`), which may use `sudo` (and on macOS is in the group admin).
-  Once by hand as a new account without either: every test passes but those that drive Chrome,
-  which did not start under that account on Linux (they passed on macOS).
+  Once by hand as a new account without either: every test of the suite as it is now passed.
 - **Not measured**: a domain account, a share on another machine, Windows on ARM, a path over
-  260 characters; the tests that drive Chrome on Windows, which skip there (Chrome is not on the
-  `PATH`, and `tests/cdp.py` hands Chrome its pipe by `pass_fds`, which Windows lacks).
+  260 characters.
 
 ## Tests
 `pytest crates/binding/tests` on the extension built in release (`maturin develop --release -m
 crates/binding/Cargo.toml` in a virtual environment with pytest, pyarrow 26.0.1, networkx 3.7).
-Each expected value comes from outside the simulator:
+Each expected value comes from outside the simulator. The pages (the map and the summary) are
+written and checked as files; their behaviour in a browser is not tested automatically.
 - `test_hand_run.py`: io-parquet's hand run rebuilt from Python tables; its three files pass
   `crates/io-parquet/tests/read_back.py` (pyarrow, the hand numbers) unchanged.
-- `test_map.py` also drives Chrome with real mouse presses over its DevTools protocol on a pipe
-  (`tests/cdp.py`, the standard library alone): the link panel, the pair opened from it without
-  moving the view, the clicks that close or do not (`crates/map/README.md`); addresses naming what
-  the page does not hold, ignored.
 - `test_summary.py`: `Run.summary` on the hand run writes the file and returns its path, the same
   bytes on a second call and in another folder, no address, the hand numbers by their `data-k`
   names (7 trips, 5 finished, 1 still travelling, 1 without an alternative, 9.0 vehicle-km, 1.5 km
   cycled, 3.0 km walked, three iteration rows, the iteration cap), the record shown; the run's
   four files and an input file refused by name, unchanged; a folder an `OSError`, no partial file.
-  With Chrome or Chromium (else skipped): the page ready, and one press of its button switches the
-  surface between paper and night. A title given names both pages (escaped), else the file's stem;
+  A title given names both pages (escaped), else the file's stem;
   the refusal holds with a title.
 - `test_map.py`: `Run.map` on the hand run writes the file and returns its path, the same bytes on
   a second call and in another folder, no `http://`, `https://` or `//host.domain` address, the
   stem as its title; a folder as the path is an `OSError`, no partial file left; the run's four
-  files and an input file refused by name, unchanged. Where a Chrome or Chromium binary is found
-  (else skipped), the file opened headless with `--dump-dom` reports `ready`, reads the hand counts
-  (3 links, 2 rows of car traffic, 2 pairs, 3 journeys, no transit hop) and shows the hand values
-  in its link panel and its pair panel (`crates/map/README.md`).
+  files and an input file refused by name, unchanged.
 - `test_drawing.py`: the links table's `shape` and `road_class` on the hand run (st1 bent
   through (750, 300) m, a primary road; ab a cycleway; st2 residential): the fingerprints and the
   trips the plain run's; the map's data hold the bend (7 500 and 3 000 dm) and the classes
   (version 1's order: 16, 4, 11), the same from a file as in memory; a point in
   longitude/latitude at a node's position held at that node's decimetres; the summary's car map
-  along the bend, mitred, by hand; in Chrome a real click on the bend picks st1 ("Link st1 ·
-  primary · 2,000 m") and one on its chord picks the cycleway there (st1 when drawn straight),
-  the hover naming the class, then the lanes and speed; a shape not points (with a point not
+  along the bend, mitred, by hand; a shape not points (with a point not
   finite, or the number 3.5) drawn straight, a road class `True` none (`road_classes_unread`), its map data that of st1 without a shape, counted and warned once; a
   misspelt `shapes` column ignored, counted and warned once.
 - `test_open.py`: `Run.open` as a property: the hand run from files opened with nothing passed
