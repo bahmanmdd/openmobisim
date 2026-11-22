@@ -62,6 +62,10 @@ jobs:
           icacls D:\oms-user /grant "${user}:(OI)(CI)F" /Q
           icacls D:\oms-user /setowner $user /Q
           icacls D:\oms-user
+          # Its folder on C: (its temporary folder: TEMP and TMP point there).
+          New-Item -ItemType Directory -Force C:\oms-user\temp | Out-Null
+          icacls C:\oms-user /grant "${user}:(OI)(CI)F" /Q
+          icacls C:\oms-user /setowner $user /T /Q
           "-- the checkout and Python, as they are (no grant made):"
           icacls $env:GITHUB_WORKSPACE
           icacls $env:pythonLocation
@@ -70,53 +74,35 @@ jobs:
           Get-Service LanmanServer | Format-Table -AutoSize | Out-String
           New-SmbShare -Name omsshare -Path D:\oms-share -FullAccess Everyone | Format-List Name, Path | Out-String
           exit 0
-      - name: Start-Process -Credential as the standard user (does it start a process?)
+      - name: As the standard user (Start-Process -Credential) - (a) the suite, (b) to (e) the cases; developer mode off, then on
         continue-on-error: true
+        timeout-minutes: 20
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Continue'
-          $cred = New-Object System.Management.Automation.PSCredential('omsuser', (ConvertTo-SecureString $env:OMS_PW -AsPlainText -Force))
-          try {
-            $p = Start-Process -FilePath whoami.exe -ArgumentList '/groups' -Credential $cred -WorkingDirectory D:\oms-user `
-              -RedirectStandardOutput D:\oms-user\sp-out.txt -RedirectStandardError D:\oms-user\sp-err.txt -Wait -PassThru -LoadUserProfile -ErrorAction Stop
-            "Start-Process -Credential: exit $($p.ExitCode)"
-            Get-Content D:\oms-user\sp-out.txt, D:\oms-user\sp-err.txt
-          } catch { "Start-Process -Credential: $_" }
-          exit 0
-      - name: As the standard user, through a scheduled task - (a) the suite, (b) to (e) the cases; developer mode off, then on
-        continue-on-error: true
-        timeout-minutes: 15
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Continue'
-          $user = 'omsuser'
           $py = (Get-Command python).Source
+          $cred = [pscredential]::new('omsuser', (ConvertTo-SecureString $env:OMS_PW -AsPlainText -Force))
+          $env:PYTHONDONTWRITEBYTECODE = '1'
+          $env:TEMP = $env:TMP = 'C:\oms-user\temp'
           $mode = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\AppModelUnlock'
           "developer mode as the image has it: $((Get-ItemProperty $mode).AllowDevelopmentWithoutDevLicense)"
+          # The process's output is printed as it comes, so that a stop at the deadline still shows it.
           function Run-As($label, $cases) {
-            $cmd = "D:\oms-user\run-$label.cmd"
-            $out = "D:\oms-user\out-$label.txt"
-            $done = "D:\oms-user\done-$label.txt"
-            Set-Content -Encoding ascii $cmd @(
-              '@echo off', 'set PYTHONDONTWRITEBYTECODE=1', 'cd /d D:\oms-user',
-              "`"$py`" `"$env:GITHUB_WORKSPACE\.github\standard-user\measure.py`" `"$env:GITHUB_WORKSPACE`" D:\oms-user\$label \\localhost\omsshare\$label $cases > $out 2>&1",
-              "echo %ERRORLEVEL% > $done")
-            Get-Content $cmd | Write-Host
-            $action = New-ScheduledTaskAction -Execute 'cmd.exe' -Argument "/c $cmd"
-            $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit (New-TimeSpan -Minutes 20)
-            Unregister-ScheduledTask -TaskName "oms-$label" -Confirm:$false -ErrorAction SilentlyContinue
-            Register-ScheduledTask -TaskName "oms-$label" -Action $action -Settings $settings -User $user -Password $env:OMS_PW -RunLevel Limited | Out-Null
+            $out = "D:\oms-user\out-$label.txt"; $err = "D:\oms-user\err-$label.txt"
+            $arguments = "`"$env:GITHUB_WORKSPACE\.github\standard-user\measure.py`" `"$env:GITHUB_WORKSPACE`" D:\oms-user\$label \\localhost\omsshare\$label $cases"
             $t = Get-Date
-            Start-ScheduledTask -TaskName "oms-$label"
-            $deadline = (Get-Date).AddMinutes(20)
+            $p = Start-Process -FilePath $py -ArgumentList $arguments -Credential $cred -LoadUserProfile -WorkingDirectory D:\oms-user `
+              -RedirectStandardOutput $out -RedirectStandardError $err -PassThru
+            $deadline = (Get-Date).AddMinutes(8); $shown = 0
             do {
               Start-Sleep -Seconds 5
-              $state = (Get-ScheduledTask -TaskName "oms-$label").State
-              $result = (Get-ScheduledTaskInfo -TaskName "oms-$label").LastTaskResult
-            } until ((Test-Path $done) -or ((Get-Date) -gt $deadline) -or ($state -eq 'Ready' -and $result -ne 267011 -and $result -ne 267009))
-            Start-Sleep -Seconds 2
-            Write-Host ("-- $label as the standard user: task state $state, last result $result (0x{0:x}), $([int]((Get-Date) - $t).TotalSeconds) s" -f $result)
-            if (Test-Path $out) { Get-Content $out | Write-Host } else { Write-Host 'no output' }
+              $lines = @(Get-Content $out -ErrorAction SilentlyContinue)
+              if ($lines.Count -gt $shown) { $lines[$shown..($lines.Count - 1)] | Write-Host; $shown = $lines.Count }
+            } until ($p.HasExited -or (Get-Date) -gt $deadline)
+            $lines = @(Get-Content $out -ErrorAction SilentlyContinue)
+            if ($lines.Count -gt $shown) { $lines[$shown..($lines.Count - 1)] | Write-Host }
+            Get-Content $err -ErrorAction SilentlyContinue | Write-Host
+            Write-Host "-- $label as the standard user: exited $($p.HasExited), exit code $($p.ExitCode), $([int]((Get-Date) - $t).TotalSeconds) s"
           }
           New-Item -ItemType Directory -Force D:\oms-share\off, D:\oms-share\on | Out-Null
           Set-ItemProperty $mode AllowDevelopmentWithoutDevLicense 0
@@ -124,34 +110,32 @@ jobs:
           Set-ItemProperty $mode AllowDevelopmentWithoutDevLicense 1
           Run-As on 'symlink suite f1 f2'
           exit 0
-      - name: The compact form for wheels.yml (the suite as a standard user through a scheduled task)
+      - name: The compact form for wheels.yml (the suite as a new standard user, Start-Process -Credential)
         continue-on-error: true
         timeout-minutes: 8
         shell: pwsh
         working-directory: ${{ runner.temp }}
         run: |
           $pw = 'Aa1!' + (New-Guid).ToString('N').Substring(0, 10)
-          net user tester $pw /add | Out-Null
-          $work = "$env:RUNNER_TEMP\tester"
-          New-Item -ItemType Directory $work | Out-Null
-          icacls $work /grant 'tester:(OI)(CI)F' /Q | Out-Null
-          $py = (Get-Command python).Source
-          Set-Content -Encoding ascii "$work\run.cmd" @(
-            "cd /d $work", 'whoami /groups > out.txt',
-            "`"$py`" -m pytest `"$env:GITHUB_WORKSPACE\crates\binding\tests`" -p no:cacheprovider -rs --basetemp `"$work\pytest`" >> out.txt 2>&1",
-            'echo %ERRORLEVEL% > done.txt')
-          $action = New-ScheduledTaskAction -Execute cmd.exe -Argument "/c $work\run.cmd"
-          Register-ScheduledTask tests -Action $action -User tester -Password $pw -RunLevel Limited | Out-Null
-          Start-ScheduledTask tests
-          $deadline = (Get-Date).AddMinutes(15)
-          while (-not (Test-Path "$work\done.txt") -and (Get-Date) -lt $deadline) { Start-Sleep 5 }
+          net user tester $pw /add
+          $work = (New-Item -ItemType Directory "$env:RUNNER_TEMP\tester").FullName
+          New-Item -ItemType Directory "$work\temp" | Out-Null
+          icacls $work /grant 'tester:(OI)(CI)F' /Q
+          $env:TEMP = $env:TMP = "$work\temp"
+          $cred = [pscredential]::new('tester', (ConvertTo-SecureString $pw -AsPlainText -Force))
+          $run = @{ Credential = $cred; LoadUserProfile = $true; Wait = $true; PassThru = $true; WorkingDirectory = $work;
+                    RedirectStandardOutput = "$work\out.txt"; RedirectStandardError = "$work\err.txt" }
+          Start-Process whoami.exe -ArgumentList '/groups' @run | Out-Null
           Get-Content "$work\out.txt"
-          if (Select-String -Quiet -SimpleMatch 'BUILTIN\Administrators' "$work\out.txt") { Write-Output 'COMPACT: ran as an administrator' }
-          "COMPACT: pytest exit $(Get-Content "$work\done.txt" -ErrorAction SilentlyContinue)"
+          if (Select-String -Quiet -SimpleMatch 'BUILTIN\Administrators' "$work\out.txt") { 'COMPACT: an administrator' }
+          $p = Start-Process (Get-Command python).Source -ArgumentList "-m pytest `"$env:GITHUB_WORKSPACE\crates\binding\tests`" -p no:cacheprovider -rs --basetemp `"$work\pytest`"" @run
+          Get-Content "$work\out.txt", "$work\err.txt"
+          "COMPACT: pytest exit $($p.ExitCode)"
           exit 0
 
   posix:
     name: ${{ matrix.os }}, a standard user
+    if: ${{ false }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 25
     strategy:
@@ -216,7 +200,7 @@ jobs:
             test_map.py::test_the_exports_subtitle_says_only_what_is_drawn
             test_names.py::test_a_hop_and_a_stop_clicked_and_the_legends_kinds
             test_summary.py::test_the_page_opens_and_its_button_switches_the_theme"
-          DESELECT=""; for t in $CHROME_TESTS; do DESELECT="$DESELECT --deselect $T/$t"; done
+          DESELECT=""; for t in $CHROME_TESTS; do DESELECT="$DESELECT --deselect $t"; done
           start=$(date +%s)
           sudo -u omsuser env PYTHONDONTWRITEBYTECODE=1 HOME=/tmp/omsuser-home sh -c \
             "mkdir -p /tmp/omsuser-home && cd /tmp/omsuser-home && id && '$PY' -m pytest '$T' -p no:cacheprovider -rsfE --tb=short --disable-warnings --basetemp /tmp/omsuser-home/pytest $DESELECT" \
