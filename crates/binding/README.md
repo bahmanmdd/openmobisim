@@ -106,8 +106,9 @@ page    = result.summary(path, title=None)
   by `Run.open`. A run never writes `run.toml`, so settings and results may share a folder. Each
   is found in the folder given; the path of a file of that name is taken as its folder. Refused,
   saying what to give instead, nothing written: a file of any other name (`ValueError`; a path
-  where nothing is, `FileNotFoundError`), and, given to `run_file`, a folder that holds a run's
-  record and no `run.toml` (or the record's own path). A run into a folder that already holds a
+  where nothing is, `FileNotFoundError`), a folder without the file (`FileNotFoundError`), and,
+  given to `run_file`, a folder that holds a run's record and no `run.toml` (or the record's own
+  path). A run into a folder that already holds a
   finished run (its `run_record.toml`) is told in one `UserWarning` naming the folder, and its
   files are replaced.
 - **`run_file(folder=None, *, out)`**: the settings file `run.toml` in `folder` (none: the
@@ -132,13 +133,16 @@ page    = result.summary(path, title=None)
   settings file instead), and the run reads its part one alone, but for the inputs'
   fingerprints in `[result.network]`, `[result.demand]` and `[result.transit]`: an input whose
   fingerprint differs (an input file changed) is named in one more `UserWarning` with both
-  fingerprints, and the run goes on. A settings file holds no fingerprint; nothing is compared.
+  fingerprints, and the run goes on; one it lacks, or that is not text, is not compared. A
+  `result` that is not a table is a stray key, ignored and named. A settings file holds no
+  fingerprint; nothing is compared.
 - **`Run.open(folder, network=None, demand=None, transit=None)`**: the finished run in `folder`
   (its record, `run_record.toml`, its four tables beside it) opened without running anything,
   returning a `Run` like the one `run` returns. Each input not passed is rebuilt from the file
   the record names, by the one function `run_file` uses (`src/record.rs`, `inputs`); read from
   the record besides: the window, `window_start_s` to `[result] window_end_used_s` (required;
-  the end the run used), `link_bin` (absent: its default), `[result] stopped_by_rule` (absent:
+  the end the run used; the end given, `window_end_s`, is not read), these first, before any
+  input is rebuilt, `link_bin` (absent: its default), `[result] stopped_by_rule` (absent:
   `Run.stopped_by_rule` is `None` and the pages say the run's end is not recorded),
   `[result.repairs]` and the inputs' fingerprints. A key or table either part never holds is
   ignored, all of them named in one `UserWarning`. The tables the pages read are read once,
@@ -151,7 +155,7 @@ rest.** `Run.open`, `Run.map` and `Run.summary` meet each condition so:
 | Condition | Met by |
 |---|---|
 | a path that is neither a folder nor a file named `run_record.toml` (`run.toml` included) | refused (`ValueError`, or `FileNotFoundError` when nothing is there), saying what to give |
-| the record missing or not TOML; a key under `[parameters]` it should not hold; its window, `[result] window_end_used_s`, `[network]`, `[demand]` or `[demand] classes` missing | refused (`OSError` or `ValueError` naming it) |
+| the record missing (`FileNotFoundError`, saying what to give) or not TOML; a key under `[parameters]` it should not hold; `window_start_s`, `[result] window_end_used_s`, `[network]`, `[demand]` or `[demand] classes` missing | refused (`OSError` or `ValueError` naming it) |
 | a key or table elsewhere a record never holds | `UserWarning` naming them all; ignored |
 | an input given in memory when the run was made (no file in the record) and not passed (`Run.open`) | refused: `pass it: network=` (or `demand=`) |
 | `[result] stopped_by_rule` not a boolean (`Run.open`) | refused, naming what it is |
@@ -160,7 +164,7 @@ rest.** `Run.open`, `Run.map` and `Run.summary` meet each condition so:
 | a table missing or unreadable, a column the pages need missing or of a type that cannot be read | refused naming the file (`OSError` when it cannot be opened, else `ValueError`); no page written |
 | a row of `trips.parquet`, `links.parquet` or `routes.parquet` whose own trip or link names nothing the inputs hold | refused naming the file and the row |
 | an input, passed or rebuilt, whose fingerprint differs from the record's | `UserWarning` naming it and both fingerprints; goes on with it |
-| the record without an input's fingerprint | `UserWarning` that it cannot be compared; goes on (also `run_file` on a record renamed `run.toml`) |
+| the record without an input's fingerprint, or one that is not text | `UserWarning` that it cannot be compared; goes on |
 | a transit passed to a run that had none | `UserWarning`; the transit set aside |
 | a table's columns in another order, other columns beside them, a list's inner field named `element` | read as written, no warning |
 | a trip without a row in `trips.parquet` | read as not run (the run drops the trips its window cannot hold and writes no row for them); `UserWarning` only when their number is not the record's count of trips the run dropped |

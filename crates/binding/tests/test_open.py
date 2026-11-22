@@ -151,7 +151,9 @@ def test_an_input_not_the_runs_or_without_a_fingerprint_warns_and_the_opening_go
     assert pages(run, tmp_path / "opened") == pages(fresh, tmp_path / "fresh")
     edit_record(fresh.record, "[result.network]\n", "[result.network]\nspeed = 1\n")
     run, said = opened(fresh.record)
-    assert said[0] == "run_record.toml: 1 keys a record never holds, ignored: speed [result.network]", said
+    assert said == ["run_record.toml: 1 keys a record never holds, ignored: speed [result.network]",
+                    f"run_record.toml: the record has no fingerprint of the network: the network given or rebuilt "
+                    f"({network_line.split(chr(34))[1]}) cannot be compared with the run's; the work goes on with it"], said
     assert pages(run, tmp_path / "opened") == pages(fresh, tmp_path / "fresh")
 
 

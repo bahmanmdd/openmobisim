@@ -4,8 +4,9 @@
 //!
 //! Each file is found by its fixed name in the folder given; the path of a file of that name is
 //! taken as its folder, and `run_file` given no folder reads the current one. Refused, saying what
-//! to give instead: a file of any other name; and, given to `run_file`, a folder that holds a run's
-//! record and no settings file. Both files are read with Python's standard `tomllib`.
+//! to give instead: a file of any other name; a folder without the file; and, given to `run_file`,
+//! a folder that holds a run's record and no settings file. Both files are read with Python's
+//! standard `tomllib`.
 //!
 //! A settings file holds the keys of the record's part one (`openmobisim_io_parquet::KEYS`, the
 //! tables before `result`): `format` (only 1, when present), `window_start_s` and `window_end_s`
@@ -18,11 +19,13 @@
 //! `UserWarning` (a coefficient table's keys are the columns of the choice row); `stop_walk_max`
 //! or `transfer_walk_max` without `[transit]` is ignored, warned. A settings file that holds
 //! `[result]` is a run's record renamed: one `UserWarning` says to write a settings file instead,
-//! and the run reads part one alone, but for the inputs' fingerprints, compared as below.
+//! and the run reads part one alone, but for the inputs' fingerprints it holds, compared as below
+//! (one it lacks, or that is not text, is not compared, nothing more said); a `result` that is not
+//! a table is a stray key, ignored and named.
 //!
 //! A record is read whole, both parts (a `repairs` table's keys are not checked). Besides part
-//! one, `Run.open` reads `[result] window_end_used_s` (required: the end of the window its tables
-//! cover), `stopped_by_rule` (absent: the run's end is not recorded, which the pages say),
+//! one, but for the end given, which it does not read, `Run.open` reads `[result]
+//! window_end_used_s` (required: the end of the window its tables cover), `stopped_by_rule` (absent: the run's end is not recorded, which the pages say),
 //! `[result.repairs]` and the inputs' fingerprints. Known and not read: the version, the counts,
 //! the readers' reports.
 //!
@@ -90,17 +93,18 @@ fn refuse(f: File, why: &str) -> PyErr {
     PyValueError::new_err(format!("{}: {why}", f.name()))
 }
 
-/// The file `f` that `path` names: `path` itself when its name is `f`'s, else `f` in the folder
-/// `path` (none: the current folder). Refused, saying what to give instead: a path that is
-/// neither (a `ValueError` for a file of another name, a `FileNotFoundError` for nothing there);
-/// and, for the settings, a folder that holds a run's record and no settings file.
+/// The file `f` that `path` names: `path` itself when it is not a folder and its name is `f`'s,
+/// else `f` in the folder `path` (none: the current folder). Refused, saying what to give
+/// instead: a path that is neither (a `ValueError` for a file of another name, a
+/// `FileNotFoundError` for nothing there); a folder without `f` (a `FileNotFoundError`); and, for
+/// the settings, a folder that holds a run's record and no settings file (a `ValueError`).
 fn find(path: Option<&Path>, f: File) -> PyResult<PathBuf> {
     let path = path.unwrap_or_else(|| Path::new("."));
     let named = |name: &str| path.file_name().is_some_and(|n| n == name);
-    let file = if named(f.name()) {
-        path.to_path_buf()
-    } else if path.is_dir() {
+    let file = if path.is_dir() {
         path.join(f.name())
+    } else if named(f.name()) {
+        path.to_path_buf()
     } else {
         let what = match f {
             File::Settings if named(RECORD) => format!("it is the record a run wrote; {AGAIN}"),
@@ -122,15 +126,27 @@ fn find(path: Option<&Path>, f: File) -> PyResult<PathBuf> {
             PyFileNotFoundError::new_err(message)
         });
     };
-    if f == File::Settings && !file.exists() && file.with_file_name(RECORD).exists() {
-        let folder = file.parent().unwrap_or(path);
-        return Err(PyValueError::new_err(format!(
+    if file.exists() {
+        return Ok(file);
+    }
+    let folder = file.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or(Path::new("."));
+    Err(match f {
+        File::Settings if folder.join(RECORD).exists() => PyValueError::new_err(format!(
             "{}: the folder holds a run's record, run_record.toml, and no settings file, \
              run.toml; {AGAIN}",
             folder.display()
-        )));
-    }
-    Ok(file)
+        )),
+        File::Settings => PyFileNotFoundError::new_err(format!(
+            "{}: no run.toml there; run_file reads the settings file run.toml in the folder \
+             given (none given: the current folder)",
+            folder.display()
+        )),
+        File::Record => PyFileNotFoundError::new_err(format!(
+            "{}: no run_record.toml there; Run.open opens the folder of a finished run, which \
+             holds the record the run wrote",
+            folder.display()
+        )),
+    })
 }
 
 /// The table at the dotted name `name` of `toml` (`""`: the top), if the file `f` holds it; a
@@ -156,15 +172,16 @@ fn table<'py>(
 /// so in one `UserWarning`, and its part two is not checked. A `repairs` table's keys are kinds of
 /// repair, not checked.
 fn known(f: File, toml: &Bound<'_, PyDict>) -> PyResult<()> {
-    let renamed = f == File::Settings && toml.contains("result")?;
-    if renamed {
+    let mut ignored = Vec::new();
+    if f == File::Settings && result(toml)?.is_some() {
         let message = "run.toml: it holds [result]: it is a run's record renamed, not a settings \
                        file; the run reads it down to [result], the settings that run ran with, \
-                       and compares the inputs' fingerprints. Write a settings file instead (the \
-                       record's lines before [result] are one)";
+                       and compares the inputs' fingerprints it holds. Write a settings file \
+                       instead (the record's lines before [result] are one)";
         crate::warn(toml.py(), &[message.to_owned()])?;
+    } else if f == File::Settings && toml.contains("result")? {
+        ignored.push("result".to_owned());
     }
-    let mut ignored = Vec::new();
     for (name, keys) in KEYS {
         if f == File::Settings && name.starts_with("result") {
             continue;
@@ -376,8 +393,6 @@ struct Rebuilt<'py> {
     demand: Bound<'py, Demand>,
     transit: Option<Bound<'py, Transit>>,
     run_keywords: Bound<'py, PyDict>,
-    /// The window given, `window_start_s` and `window_end_s`.
-    window: (u32, u32),
 }
 
 /// The inputs passed to `Run.open` (none to `run_file`): network, demand, transit.
@@ -388,8 +403,9 @@ pub(crate) type Passed<'a, 'py> = (
 );
 
 /// An input recorded in the file `f` compared with the one built or passed: a `UserWarning`
-/// naming it and both fingerprints when they differ, or saying it cannot be compared when the
-/// record has no fingerprint of it; the work goes on in both.
+/// naming it and both fingerprints when they differ, or, for a record, saying it cannot be
+/// compared when it has no fingerprint of it (a record renamed `run.toml` was told once, by
+/// [`known`]); the work goes on in all.
 fn compare(
     py: Python<'_>,
     f: File,
@@ -400,6 +416,7 @@ fn compare(
     let built = format!("{built:016x}");
     let message = match recorded {
         Some(recorded) if recorded == built => return Ok(()),
+        None if f == File::Settings => return Ok(()),
         Some(recorded) => format!(
             "{}: the {input} changed since the record was written: its fingerprint is \
              {built}, the record's {recorded}; the work goes on with the {input} as it is",
@@ -414,23 +431,22 @@ fn compare(
     crate::warn(py, &[message])
 }
 
+/// `toml`'s `[result]`, part two, if it holds one as a table.
+fn result<'py>(toml: &Bound<'py, PyDict>) -> PyResult<Option<Bound<'py, PyDict>>> {
+    Ok(toml.get_item("result")?.and_then(|r| r.cast_into::<PyDict>().ok()))
+}
+
 /// The inputs' fingerprints `toml` records in part two (`[result.network]`, `[result.demand]`,
-/// `[result.transit]`, this one only `with_transit`), each `None` where it has none; `None` for
-/// a file without `[result]`, a settings file, of which nothing is compared.
-fn recorded(
-    f: File,
-    toml: &Bound<'_, PyDict>,
-    with_transit: bool,
-) -> PyResult<Option<[Option<String>; 3]>> {
-    if !toml.contains("result")? {
-        return Ok(None);
-    }
+/// `[result.transit]`, this one only `with_transit`), each `None` where it has none or none that
+/// reads as text; `None` for a file without `[result]`, a settings file, of which nothing is
+/// compared.
+fn recorded(toml: &Bound<'_, PyDict>, with_transit: bool) -> PyResult<Option<[Option<String>; 3]>> {
+    let Some(result) = result(toml)? else { return Ok(None) };
     let print = |input: &str| -> PyResult<Option<String>> {
-        let name = format!("result.{input}");
-        match table(f, toml, &name)? {
-            Some(t) => value::<String>(f, &t, &name, "fingerprint"),
-            None => Ok(None),
-        }
+        let Some(t) = result.get_item(input)?.and_then(|t| t.cast_into::<PyDict>().ok()) else {
+            return Ok(None);
+        };
+        Ok(t.get_item("fingerprint")?.and_then(|v| v.extract::<String>().ok()))
     };
     let transit = if with_transit { print("transit")? } else { None };
     Ok(Some([print("network")?, print("demand")?, transit]))
@@ -451,8 +467,6 @@ fn inputs<'py>(
     passed: Passed<'_, 'py>,
     no_file: NoFile,
 ) -> PyResult<Rebuilt<'py>> {
-    let window: (u32, u32) =
-        (required(f, toml, "", "window_start_s")?, required(f, toml, "", "window_end_s")?);
     let missing = |name: &str| refuse(f, &format!("[{name}] is missing; it is required"));
     let net = table(f, toml, "network")?.ok_or_else(|| missing("network"))?;
     let dem = table(f, toml, "demand")?.ok_or_else(|| missing("demand"))?;
@@ -493,7 +507,7 @@ fn inputs<'py>(
         None => Some(folder.join(required::<String>(f, &dem, "demand", "trips_file")?)),
     };
     let classes: Vec<String> = required(f, &dem, "demand", "classes")?;
-    let recorded = recorded(f, toml, tra.is_some())?;
+    let recorded = recorded(toml, tra.is_some())?;
 
     let network = match (passed.0, network_files) {
         (Some(n), _) => n.clone(),
@@ -528,7 +542,7 @@ fn inputs<'py>(
         (None, None) => unreachable!("a demand passed or its file"),
     };
     agree(py, f, (&network, &demand, transit.as_ref()), recorded)?;
-    Ok(Rebuilt { network, demand, transit, run_keywords, window })
+    Ok(Rebuilt { network, demand, transit, run_keywords })
 }
 
 /// The network read from its files, with the keywords of `[parameters]` it reads.
@@ -581,9 +595,11 @@ pub(crate) fn run_file(py: Python<'_>, folder: Option<PathBuf>, out: PathBuf) ->
     let f = File::Settings;
     let file = find(folder.as_deref(), f)?;
     let (toml, folder) = load(py, f, &file)?;
+    let window =
+        (required(f, &toml, "", "window_start_s")?, required(f, &toml, "", "window_end_s")?);
     let i = inputs(py, f, &toml, &folder, (None, None, None), NoFile::MissingKey)?;
     let (network, demand, transit) = (&i.network, &i.demand, i.transit.as_ref());
-    crate::run(py, network, demand, transit, i.window, out, Some(&i.run_keywords))
+    crate::run(py, network, demand, transit, window, out, Some(&i.run_keywords))
 }
 
 /// Open the finished run in `folder` (the path of its `run_record.toml`: that file's folder), its
@@ -591,22 +607,17 @@ pub(crate) fn run_file(py: Python<'_>, folder: Option<PathBuf>, out: PathBuf) ->
 /// from the files the record names ([`inputs`]; one the record names no file of must be passed);
 /// an input whose fingerprint differs from the record's, or that it has no fingerprint of, is
 /// shown in a warning and the opening goes on. The window (`window_start_s` and `[result]
-/// window_end_used_s`), `link_bin` (absent: its default), `[result] stopped_by_rule` (a boolean;
-/// absent, the run's end is not recorded, which the pages say) and `[result.repairs]` (each an
-/// integer) come from the record. The three tables the pages read and the iterations are read
-/// once here: a table that cannot be read is refused naming it, and what the readers set aside
-/// is shown in warnings.
+/// window_end_used_s`; the end given, `window_end_s`, is not read), `link_bin` (absent: its
+/// default), `[result] stopped_by_rule` (a boolean; absent, the run's end is not recorded, which
+/// the pages say) and `[result.repairs]` (each an integer) come from the record, read before any
+/// input is built. The three tables the pages read and the iterations are read once here: a
+/// table that cannot be read is refused naming it, and what the readers set aside is shown in
+/// warnings.
 pub(crate) fn open(py: Python<'_>, folder: &Path, passed: Passed<'_, '_>) -> PyResult<Run> {
     let f = File::Record;
     let record = find(Some(folder), f)?;
     let (toml, folder) = load(py, f, &record)?;
-    let i = inputs(py, f, &toml, &folder, passed, NoFile::PassIt)?;
-    let bin = match i.run_keywords.get_item("link_bin")? {
-        Some(b) => {
-            b.extract::<u32>().map_err(|e| refuse(f, &format!("parameters.link_bin: {e}")))?
-        }
-        None => openmobisim_loop::parameters::Parameters::defaults(0).link_bin,
-    };
+    let start: u32 = required(f, &toml, "", "window_start_s")?;
     let result = table(f, &toml, "result")?.ok_or_else(|| {
         refuse(f, "[result] is missing; it is required (the end of the window the run used)")
     })?;
@@ -627,7 +638,14 @@ pub(crate) fn open(py: Python<'_>, folder: &Path, passed: Passed<'_, '_>) -> PyR
             repairs.push((key.clone(), required::<u64>(f, &t, "result.repairs", &key)?));
         }
     }
-    let window = crate::Window { start: i.window.0, end, bin };
+    let i = inputs(py, f, &toml, &folder, passed, NoFile::PassIt)?;
+    let bin = match i.run_keywords.get_item("link_bin")? {
+        Some(b) => {
+            b.extract::<u32>().map_err(|e| refuse(f, &format!("parameters.link_bin: {e}")))?
+        }
+        None => openmobisim_loop::parameters::Parameters::defaults(0).link_bin,
+    };
+    let window = crate::Window { start, end, bin };
     let inputs = (&i.network, &i.demand, i.transit.as_ref());
     let ended = crate::Ended { stopped_by_rule, repairs };
     let opened = Run::of(&record, window, ended, inputs)?;

@@ -43,11 +43,17 @@ self-comparison allowed).
    stop_walk_max or transfer_walk_max under [parameters] with no [transit]; [result] (a record
    renamed) told in one UserWarning, its part two not read.
 9. The two files by their fixed names: run_file given the folder, the path of its run.toml or no
-   folder (the current one) writes the same record; refused, saying what to give instead, and
-   nothing written: a folder holding a run's record and no run.toml, the path of a record, a
-   file of another name (run_file and Run.open), run.toml given to Run.open. A run into a folder
-   that holds a finished run: one UserWarning naming it, then its files replaced (the record the
-   new run's); a folder holding run.toml alone: no warning.
+   folder (the current one) writes the same record; a folder itself named run.toml is a folder
+   (the same trips.parquet). Refused, saying what to give instead, and nothing written: a folder
+   holding a run's record and no run.toml (given by its path, or as "run.toml" from inside it,
+   the folder then named "."), the path of a record, a file of another name (run_file and
+   Run.open), run.toml given to Run.open, a folder holding neither file (both). A run into a
+   folder that holds a finished run: one UserWarning naming it, then its files replaced (the
+   record the new run's); a folder holding run.toml alone: no warning. A stray top key `result`
+   that is not a table: ignored, named in one warning; an empty [result], or one whose
+   fingerprint is not text: the renamed record's one warning and nothing more; each run the
+   minimal settings' record, byte for byte. Run.open does not read the end given: a record
+   without window_end_s opens.
 10. One window end: a settings file ending at 35 950 s, not a whole number of 300 s bins from
    28 800 s: the record keeps window_end_s = 35950 and [result] window_end_used_s = 36000 (24
    bins by hand), window_end_moved counted; the settings edited to 36 300 s (25 whole bins): the
@@ -583,6 +589,8 @@ def test_the_two_files_are_found_by_their_names_and_another_name_is_refused(tmp_
     written = [Path(r.record).read_bytes() for r in (by_folder, by_file, here)]
     assert written[0] == written[1] == written[2]
     finished = tmp_path / "by-folder"
+    empty = tmp_path / "empty"
+    empty.mkdir()
     other = folder / "settings.toml"
     shutil.copyfile(record, other)
     refused = [  # (the call, the error, the message)
@@ -595,11 +603,20 @@ def test_the_two_files_are_found_by_their_names_and_another_name_is_refused(tmp_
          "run_file reads a settings file named run.toml"),
         (lambda: oms.Run.open(record), ValueError, "it is a settings file; Run.open opens a finished run"),
         (lambda: oms.Run.open(other), ValueError, "Run.open opens a finished run"),
+        (lambda: oms.run_file(empty, out=tmp_path / "refused"), FileNotFoundError,
+         f"{empty}: no run.toml there"),
+        (lambda: oms.Run.open(empty), FileNotFoundError, f"{empty}: no run_record.toml there"),
     ]
     for call, error, message in refused:
         with pytest.raises(error, match=re.escape(message)):
             call()
+    monkeypatch.chdir(finished)
+    with pytest.raises(ValueError, match=re.escape(".: the folder holds a run's record")):
+        oms.run_file("run.toml", out=tmp_path / "refused")
     assert not (tmp_path / "refused").exists()
+    named = shutil.copytree(folder, tmp_path / "run.toml")
+    from_named = oms.run_file(named, out=tmp_path / "from-named")
+    assert Path(from_named.trips).read_bytes() == Path(by_folder.trips).read_bytes()
     assert oms.Run.open(finished).stopped_by_rule == by_folder.stopped_by_rule
     assert oms.Run.open(finished / "run_record.toml").stopped_by_rule == by_folder.stopped_by_rule
     # A run into a folder holding a finished run: one warning, its files replaced.
@@ -626,3 +643,29 @@ def test_one_window_end_the_end_given_kept_and_the_end_used_a_result(tmp_path):
     whole = read(oms.run_file(record, out=tmp_path / "whole").record)
     assert (whole["window_end_s"], whole["result"]["window_end_used_s"]) == (36_300, 36_300)
     assert "window_end_moved" not in whole["result"].get("repairs", {})
+
+
+def test_a_stray_result_is_ignored_and_a_record_opens_without_its_end_given(tmp_path):
+    record = minimal_case(tmp_path / "case")
+    baseline = Path(oms.run_file(record, out=tmp_path / "baseline").record).read_bytes()
+    record.write_text("result = 3\n" + MINIMAL)
+    with pytest.warns(UserWarning) as caught:
+        stray = oms.run_file(record, out=tmp_path / "stray")
+    assert [str(w.message) for w in caught] == \
+        ["run.toml: 1 keys a settings file never holds, ignored: result"]
+    assert Path(stray.record).read_bytes() == baseline
+    for name, part_two in (("empty", "\n[result]\n"), ("not-text", "\n[result.network]\nfingerprint = 5\n")):
+        record.write_text(MINIMAL + part_two)
+        with pytest.warns(UserWarning) as caught:
+            again = oms.run_file(record, out=tmp_path / name)
+        said = [str(w.message) for w in caught]
+        assert len(said) == 1 and said[0].startswith(RENAMED), said
+        assert Path(again.record).read_bytes() == baseline
+    finished = tmp_path / "baseline" / "run_record.toml"
+    text = finished.read_text(encoding="utf-8")
+    assert text.count("window_end_s = 36000\n") == 1
+    finished.write_text(text.replace("window_end_s = 36000\n", ""), encoding="utf-8")
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        opened = oms.Run.open(tmp_path / "baseline")
+    assert opened.stopped_by_rule == read(finished)["result"]["stopped_by_rule"]
