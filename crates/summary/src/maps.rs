@@ -10,7 +10,7 @@ use std::fmt::Write as _;
 
 use openmobisim_graph::network::Network;
 use openmobisim_io_gtfs::Kind;
-use openmobisim_map::rules::{DELAY_BAND_LABELS, DELAY_BANDS, FLOW_FULL, delay, flow_share};
+use openmobisim_map::rules::{DELAY_BAND_LABELS, DELAY_FLOOR_S, FLOW_FULL, delay_band, flow_share};
 use openmobisim_types::ids::{EntityId, LinkId, NodeId, StopId};
 use openmobisim_types::mode::Mode;
 
@@ -156,8 +156,9 @@ fn base(frame: &Frame, network: &Network) -> String {
     )
 }
 
-/// Car traffic over the window: each link with cars in its delay band (its cars' mean crossing
-/// time over the free-flow time, less one), as wide as its capacity.
+/// Car traffic over the window: each link with cars in its delay band (the map's `delay_band`: its
+/// cars' mean crossing time over the free-flow time, less one, banded; the first band when they
+/// lose under `DELAY_FLOOR_S` seconds each), as wide as its capacity.
 fn cars(frame: &Frame, s: &Summarised<'_>, roads: &Roads) -> Groups {
     let net = s.network;
     let mut caps: Vec<f64> = (0..net.link_count())
@@ -178,7 +179,7 @@ fn cars(frame: &Frame, s: &Summarised<'_>, roads: &Roads) -> Groups {
     let mut groups = Groups::new();
     for (&l, &(n, time)) in &roads.links {
         let free = net.free_flow_time(l, Mode::Car).get();
-        let band = DELAY_BANDS.iter().filter(|&&e| delay(time / f64::from(n), free) >= e).count();
+        let band = delay_band(time / f64::from(n), free);
         let c = net.capacity(l).as_veh_per_hour();
         let w = 2.0 + 6.0 * (if c.is_finite() { c / reference } else { 1.0 }).min(1.0).sqrt();
         let w = half_units(w);
@@ -266,7 +267,8 @@ pub(crate) fn maps(
             })
             .collect();
         let note = format!(
-            "{bands}· delay over free flow over the window; width = road capacity, one ribbon per direction on the right of its travel"
+            "{bands}· delay over free flow over the window, a link whose cars lose under {DELAY_FLOOR_S} s each in the band {}; width = road capacity, one ribbon per direction on the right of its travel",
+            DELAY_BAND_LABELS[0]
         );
         out.push(map(&frame, "Car traffic", "car", &cars(&frame, s, roads), &note));
     }

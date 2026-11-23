@@ -64,7 +64,7 @@ function baseOf(l) {
 }
 // Link l's colour, as its place in palette(): its band, or its step of the volume's ramp.
 function colourIndex(l) {
-  if (S.colour === "delay") return band(delay[l]);
+  if (S.colour === "delay") return delayBand(l);
   if (S.colour === "vc") return band(CAP[l] > 0 ? peak[l] / CAP[l] : 0, VC_BANDS);
   return Math.max(0, Math.min(NCOL - 1, Math.round(Math.sqrt(Math.min(vol[l], VMAX) / VMAX) * (NCOL - 1))));
 }

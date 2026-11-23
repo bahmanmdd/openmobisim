@@ -101,6 +101,10 @@ function highlightItem(it) {
   ctx.strokeStyle = TH.surface; ctx.lineWidth = 5; ctx.stroke(p); ctx.strokeStyle = TH.ink; ctx.lineWidth = 2.2; ctx.stroke(p);
 }
 function fmt(x) { return Number(x).toLocaleString(undefined, { maximumFractionDigits: 0 }); }
+// A time in seconds: to 0.01 s under 10 s, to 0.1 s from 10 s on (9.996 s, rounded to 10 s, is "10.0 s").
+function secs(t) { return (Math.round(t * 100) < 1000 ? t.toFixed(2) : t.toFixed(1)) + " s"; }
+// The seconds each car crossing link l loses: its mean time less its free-flow time, never below 0.
+function lost(l) { return Math.max(meanT[l] - FF[l], 0); }
 // A count and its noun, singular for one: "1 cyclist", "3 cyclists".
 function count(n, one) { return fmt(n) + " " + one + (n === 1 ? "" : "s"); }
 // A car link's lanes and free-flow speed; its facts, those and its length.
@@ -115,10 +119,11 @@ function tip(l, ev) {
   rows.push(["Direction", "from node " + nodeId(LU[l]) + " to node " + nodeId(LD[l])]);
   if (TWIN[l] >= 0) rows.push(["Other direction", "link " + linkId(TWIN[l]) + (HAS_TRAFFIC ? ", " + fmt(vol[TWIN[l]]) + " veh/h" : "")]);
   if (HAS_TRAFFIC) { rows.push(["Volume", fmt(vol[l]) + " veh/h"]); if (vol[l] > 0) {
-    // The colour's quantity: the delay over free flow, mean time / free flow - 1; both times in seconds.
-    rows.push(["Delay", fmt(delay[l] * 100) + "% over free flow"]);
-    rows.push(["Mean time", meanT[l].toFixed(1) + " s"]);
-    rows.push(["Free flow", FF[l].toFixed(1) + " s"]); } }
+    // The colour's quantities: the delay over free flow, mean time / free flow - 1, and the seconds each car loses
+    // (under FLOOR, the link is drawn as free flow).
+    rows.push(["Delay", fmt(delay[l] * 100) + "% over free flow · " + secs(lost(l)) + " per car"]);
+    rows.push(["Mean time", secs(meanT[l])]);
+    rows.push(["Free flow", secs(FF[l])]); } }
   if (CAP[l] > 0) rows.push(["Capacity", fmt(CAP[l]) + " veh/h" + (vol[l] > 0 ? " (" + fmt(vol[l] / CAP[l] * 100) + "% used" + (S.bins[1] - S.bins[0] > 1 ? ", " + fmt(peak[l] / CAP[l] * 100) + "% in its busiest " + peakWords() : "") + ")" : "")]);
   const n = linkTravellers(l); if (n) rows.push(["Trips shown", count(n, "traveller") + " whose journey uses it (click for their pairs)"]);
   showTip("link " + linkId(l), rows, ev);
@@ -278,7 +283,7 @@ function linkPanel() {
   let name, facts = [];
   if (it.kind === "road") {
     name = "Link " + linkId(i) + " · " + (CLASSED ? className(i) + " · " + fmt(LEN[i]) + " m" : linkKind(i) + " · " + (LM[i] & CAR ? carFacts(i) : fmt(LEN[i]) + " m"));
-    if (HAS_TRAFFIC && vol[i] > 0) facts = [fmt(vol[i]) + " veh/h", "delay " + fmt(delay[i] * 100) + "%"].concat(CAP[i] > 0 ? [fmt(vol[i] / CAP[i] * 100) + "% of capacity"] : []);
+    if (HAS_TRAFFIC && vol[i] > 0) facts = [fmt(vol[i]) + " veh/h", "delay " + fmt(delay[i] * 100) + "% (" + secs(lost(i)) + " per car)"].concat(CAP[i] > 0 ? [fmt(vol[i] / CAP[i] * 100) + "% of capacity"] : []);
   } else if (it.kind === "transit") {
     name = KINDS[A.tk[i]] + " · " + STOPS[A.ta[i]] + " → " + STOPS[A.tb[i]];
     facts = [fmt(A.tl[i]) + " passengers on board"];
@@ -317,14 +322,16 @@ function setBins(a, b) { S.bins = [a, b]; aggregate(a, b); subtitle(); redraw(fa
 let PLAY = 0;
 function stopPlay() { S.playing = false; clearTimeout(PLAY); $("play").textContent = "Play"; }
 const COLOUR_WORDS = { delay: "delay over free flow", volume: "volume", vc: "volume over capacity" };
-// The subtitle is road traffic's caption, written only while road traffic is drawn, as each other layer's words are.
+// The subtitle is road traffic's caption, written only while road traffic is drawn, as each other layer's words are;
+// a run without car traffic says so there, its network drawn plain.
 function subtitle() {
-  $("subtitle").textContent = HAS_TRAFFIC && S.ly.road ? binLabel() + " · one ribbon per direction · width = road capacity, colour = " + COLOUR_WORDS[S.colour] : "";
+  $("subtitle").textContent = !HAS_TRAFFIC ? "No car traffic in this run" : S.ly.road ? binLabel() + " · one ribbon per direction · width = road capacity, colour = " + COLOUR_WORDS[S.colour] : "";
   renderLegend();
 }
 // What the road's colour shows now: its title, its bands or ramp.
 function roadLegend() {
-  if (S.colour === "delay") return { label: "Delay over free flow: mean time ÷ free-flow time − 1", bands: BAND_LABELS, stops: TH.bands };
+  // The delay's title says the floor: a link whose cars lose under FLOOR seconds each is in the first band.
+  if (S.colour === "delay") return { label: "Delay over free flow: mean time ÷ free-flow time − 1; a link whose cars lose under " + FLOOR + " s each is drawn as " + BAND_LABELS[0], bands: BAND_LABELS, stops: TH.bands };
   if (S.colour === "vc") return { label: "Volume over capacity" + (S.bins[1] - S.bins[0] > 1 ? ", the busiest " + peakWords() : ""), bands: VC_LABELS, stops: TH.bands };
   // The colour is the square root of the volume over VMAX: the middle of the bar is a quarter of VMAX.
   return { label: "Volume per direction (veh/h)", low: "0", mid: fmt(VMAX / 4), high: fmt(VMAX) + "+", stops: TABLES.volume };

@@ -5,7 +5,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use openmobisim_io_parquet::RouteLeg;
-use openmobisim_map::rules::{DELAY_BAND_LABELS, DELAY_BANDS, delay};
+use openmobisim_map::rules::{DELAY_BAND_LABELS, DELAY_FLOOR_S, delay, delay_band};
 use openmobisim_map::{Ridden, clock, html_text};
 use openmobisim_types::ids::{EntityId, LinkId};
 use openmobisim_types::mode::Mode;
@@ -40,7 +40,8 @@ fn by_mode(s: &Summarised<'_>) -> [(usize, usize, f64); 5] {
 }
 
 /// The cars on the roads, from the links table: per link and bin, its delay over free flow (the
-/// bin's mean crossing time over the free-flow time, less one: the map's), banded.
+/// bin's mean crossing time over the free-flow time, less one: the map's), banded as the map bands
+/// it (`delay_band`: the first band when its cars lose under `DELAY_FLOOR_S` seconds each).
 pub(crate) struct Roads {
     /// Vehicle-km and vehicle-hours of the cars that entered a link in the window.
     pub vkm: f64,
@@ -72,7 +73,7 @@ pub(crate) fn roads(s: &Summarised<'_>) -> Roads {
         let free = s.network.free_flow_time(l, Mode::Car).get();
         let late = delay(r.car_time[i] / cars, free);
         let km = cars * s.network.length(l).get() / 1_000.0;
-        out.bands[DELAY_BANDS.iter().filter(|&&e| late >= e).count()] += km;
+        out.bands[delay_band(r.car_time[i] / cars, free)] += km;
         out.vkm += km;
         out.vh += r.car_time[i] / 3_600.0;
         out.delay_h += cars * free * late / 3_600.0;
@@ -350,12 +351,14 @@ pub(crate) fn on_the_roads(s: &Summarised<'_>, r: &Roads) -> String {
     let note = format!(
         "<p class=\"note\">Over {}: <b>{}</b> vehicle-km in <b>{}</b> vehicle-hours on links, a mean \
          speed of <b>{}</b> km/h; <b>{}</b> % of that time is delay beyond free flow. A link's delay in \
-         a bin is its cars' mean crossing time over the free-flow time, less one, as on the map.</p>",
+         a bin is its cars' mean crossing time over the free-flow time, less one, and a link whose cars \
+         lose under {DELAY_FLOOR_S} s each in the bin is in the band {}, both as on the map.</p>",
         window(s),
         num(r.vkm, 1),
         num(r.vh, 1),
         num(r.vkm / r.vh, 1),
-        num(100.0 * r.delay_h / r.vh, 1)
+        num(100.0 * r.delay_h / r.vh, 1),
+        DELAY_BAND_LABELS[0]
     );
     format!(
         "<div class=\"grid2\"><div>{}{}{note}</div><div>{chart}</div></div><h3>Busiest links, by \
