@@ -136,7 +136,7 @@ fn the_network_and_its_traffic_are_the_hand_values() {
     assert_eq!(m.get("bin_seconds").number(), 60.0);
     assert_eq!(m.get("window_start").number(), 25_200.0);
     assert_eq!(m.get("trips").number(), 7.0);
-    // The delay's floor the page bands by (the user's ruling): 2 s per car.
+    // The delay's floor the page bands by, a fixed display rule: 2 s per car.
     assert_eq!(m.get("delay_floor_s").number(), 2.0);
     let origin: Vec<f64> = m.get("origin").list().iter().map(common::Json::number).collect();
     assert_eq!(origin, [0.0, 0.0]);

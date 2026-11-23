@@ -86,8 +86,8 @@ km/h.
   (the script mirrors it, the summary reads it): the cars' mean crossing time ÷ the car free-flow
   time − 1, never below 0, banded 0–15 %, 15–50 %, 50–100 %, 100 %+ by `rules::delay_band`, a link
   whose cars lose under `rules::DELAY_FLOOR_S` (2 s) each in the first band whatever its delay (a
-  link of 1 m at 80 km/h crossed in 0.43 s is 853 % over free flow and costs each car 0.39 s), the
-  legend saying so; bikes and walkers are drawn by their counts, never by delay; volume ÷ capacity from
+  link crossed in 0.433 s against 0.045 s free flow is 862 % over free flow and costs each car
+  0.39 s), the legend saying so; bikes and walkers are drawn by their counts, never by delay; volume ÷ capacity from
   the busiest period's volume, banded 0–0.6, 0.6–0.8, 0.8–1.0, 1.0+, a car link without a capacity
   limit in the first band. The busiest period is fixed: the busiest run of `k = max(1, min(bins
   shown, round(900 s / bin)))` consecutive bins, named by its length `k` × bin (15 min for bins of
@@ -242,8 +242,10 @@ are written by `openmobisim_io_parquet::write` and read back, as the binding dra
   page holds 2 000 holding 2 003 trips, the lowest ids kept at equal travellers; three cars of 244,
   248 and 247 s whose journey's time is their mean, 246.33 s, not the middle value; the delay rule
   (1 / 144 at 145 s against 144 s, 0 below free flow and for a free-flow time of 0); the delay's
-  band with its floor of 2 s per car (862 % at 0.39 s per car and 19 % at 1.9 s in the first band,
-  20 % at 2 s in 15–50 %, 60 % and 150 % in the next two); road classes
+  band with its floor of 2 s per car (862 % at 0.39 s per car, 19 % at 1.9 s, 4 % at 6 s and a car
+  faster than free flow in the first band, 20 % at exactly 2 s in 15–50 %, 60 % and 150 % in the next
+  two; on a 144 s link 0.7 % at 1 s in the first, 25 % at 36 s in 15–50 %; a free-flow time of 0 in
+  the first); road classes
   on every link drawn in version 1's order (steps 15, primary 4, an unknown name 10) with their
   names, and `st1`'s bend at (750, 300) m held as 7 500 and 3 000 dm; one link unclassed, drawn by
   capacity; the cyclists' and walkers' width share at 0, 750, 3 000 and 6 000 travellers 0, 0.5,

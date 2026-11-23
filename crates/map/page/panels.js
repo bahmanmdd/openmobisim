@@ -101,8 +101,8 @@ function highlightItem(it) {
   ctx.strokeStyle = TH.surface; ctx.lineWidth = 5; ctx.stroke(p); ctx.strokeStyle = TH.ink; ctx.lineWidth = 2.2; ctx.stroke(p);
 }
 function fmt(x) { return Number(x).toLocaleString(undefined, { maximumFractionDigits: 0 }); }
-// A time in seconds: to 0.01 s under 10 s, to 0.1 s from 10 s on.
-function secs(t) { return t.toFixed(t < 10 ? 2 : 1) + " s"; }
+// A time in seconds: to 0.01 s under 10 s, to 0.1 s from 10 s on (9.996 s, rounded to 10 s, is "10.0 s").
+function secs(t) { return (Math.round(t * 100) < 1000 ? t.toFixed(2) : t.toFixed(1)) + " s"; }
 // The seconds each car crossing link l loses: its mean time less its free-flow time, never below 0.
 function lost(l) { return Math.max(meanT[l] - FF[l], 0); }
 // A count and its noun, singular for one: "1 cyclist", "3 cyclists".
@@ -331,7 +331,7 @@ function subtitle() {
 // What the road's colour shows now: its title, its bands or ramp.
 function roadLegend() {
   // The delay's title says the floor: a link whose cars lose under FLOOR seconds each is in the first band.
-  if (S.colour === "delay") return { label: "Delay over free flow: mean time ÷ free-flow time − 1; under " + FLOOR + " s per car: " + BAND_LABELS[0], bands: BAND_LABELS, stops: TH.bands };
+  if (S.colour === "delay") return { label: "Delay over free flow: mean time ÷ free-flow time − 1; a link whose cars lose under " + FLOOR + " s each is drawn as " + BAND_LABELS[0], bands: BAND_LABELS, stops: TH.bands };
   if (S.colour === "vc") return { label: "Volume over capacity" + (S.bins[1] - S.bins[0] > 1 ? ", the busiest " + peakWords() : ""), bands: VC_LABELS, stops: TH.bands };
   // The colour is the square root of the volume over VMAX: the middle of the bar is a quarter of VMAX.
   return { label: "Volume per direction (veh/h)", low: "0", mid: fmt(VMAX / 4), high: fmt(VMAX) + "+", stops: TABLES.volume };

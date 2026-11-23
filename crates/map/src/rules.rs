@@ -107,7 +107,7 @@ pub fn delay(mean_time: f64, free_flow: f64) -> f64 {
 
 /// The least delay per car, seconds (the cars' mean crossing time less the free-flow time), at
 /// which a link takes a delay band above the first: below it a link is drawn as free flow,
-/// whatever its delay over free flow (a link of 1 m crossed in 0.43 s against 0.045 s is 853 %
+/// whatever its delay over free flow (a link crossed in 0.433 s against 0.045 s free flow is 862 %
 /// over free flow and costs each car 0.39 s). Bikes and walkers are drawn by their counts, never
 /// by delay.
 pub const DELAY_FLOOR_S: f64 = 2.0;
