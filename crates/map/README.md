@@ -245,10 +245,10 @@ are written by `openmobisim_io_parquet::write` and read back, as the binding dra
   band with its floor of 2 s per car (862 % at 0.39 s per car, 19 % at 1.9 s, 4 % at 6 s and a car
   faster than free flow in the first band, 20 % at exactly 2 s in 15–50 %, 60 % and 150 % in the next
   two, exactly 50 % and 100 % in the band above the edge; on a 144 s link 0.7 % at 1 s in the first,
-  25 % at 36 s in 15–50 %; a free-flow time of 0 in the first); road classes on every link drawn in version 1's order (steps 15, primary 4, an unknown name 10) with their
-  names, and `st1`'s bend at (750, 300) m held as 7 500 and 3 000 dm; one link unclassed, drawn by
-  capacity; the cyclists' and walkers' width share at 0, 750, 3 000 and 6 000 travellers 0, 0.5,
-  1, 1 (1, 4.5, 8, 8 px).
+  25 % at 36 s in 15–50 %; a free-flow time of 0 in the first); road classes on every link drawn
+  in version 1's order (steps 15, primary 4, an unknown name 10) with their names, and `st1`'s bend
+  at (750, 300) m held as 7 500 and 3 000 dm; one link unclassed, drawn by capacity; the cyclists'
+  and walkers' width share at 0, 750, 3 000 and 6 000 travellers 0, 0.5, 1, 1 (1, 4.5, 8, 8 px).
 - `tests/record.rs`: the provenance line from a whole hand record; each key missing leaves its part
   out (what ended the run says it is not recorded); an empty record gives empty lines; the trips
   given and dropped by reason from a hand record.
@@ -262,6 +262,7 @@ are written by `openmobisim_io_parquet::write` and read back, as the binding dra
 - `tests/page_delay_band.mjs`, in Node (`node crates/map/tests/page_delay_band.mjs`; CI runs it as
   a step of its own): the page's own `band`, `delayBand` and `aggregate`, cut from `page/data.js`
   and run on one bin of hand traffic (3 cars per link), put the twelve links of `rules.rs`'s floor
-  cases in the same bands by hand, so the page colours a car link as `rules::delay_band` does.
+  cases in the same bands by hand, so the page colours a car link as `rules::delay_band` does (the
+  page's own edges, 15 %, 50 % and 100 %, and floor, 2 s, checked in `tests/hand_run.rs`).
 - The page is otherwise checked as a file (its data, by hand); its behaviour in a browser (the
   clicks, the panels, Play, the exports) is not tested automatically.
