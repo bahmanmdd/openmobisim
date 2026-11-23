@@ -49,8 +49,8 @@ utility of the run's choice model; in a time-only run it is the travel time in s
   4 096 elements and combines them in index order; a draw is a pure function of (seed, stream,
   entity identity). The Gumbel draws' logarithm is `libm`'s (pure Rust), not the platform's maths
   library, whose last bits differ from one platform to another. Across platforms, as measured:
-  Delft's default run (test 10) gives byte-identical trips on macOS (Apple silicon) and on Linux
-  (x86_64); Windows is not measured.
+  Delft's default run (test 10) gives byte-identical trips on macOS (Apple silicon), Linux
+  (x86_64) and Windows (x86_64); each wheel's test job prints the fingerprint of its trips file.
 
 ## Bikes
 A bike uses the same units as a car and a walker. No passenger-car unit exists, so a flow counts

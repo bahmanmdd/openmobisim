@@ -237,7 +237,8 @@ pub fn path_sizes(network: &Network, set: &mut [Alternative]) {
             } else {
                 links.iter().map(|&a| network.length(a).get() / total / f64::from(users[&a])).sum()
             };
-            set[i].ln_path_size = f64::ln(ps);
+            // `libm`'s logarithm, as every one in the run: the system's differs in its last bits.
+            set[i].ln_path_size = libm::log(ps);
         }
     }
 }
