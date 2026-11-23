@@ -35,6 +35,8 @@ jobs:
         run: cargo clippy --workspace --all-targets -- -D warnings
       - name: Tests
         run: cargo test --workspace
+      - name: The map page's delay band in Node, the page's own functions against the hand values of rules.rs
+        run: node --version && node crates/map/tests/page_delay_band.mjs
       - name: Convergence tier (release; tests 4 and 6 at a large population to a fixed count)
         run: cargo test --release -p openmobisim-loop --test braess --test sioux_falls -- --ignored
       - name: Car against bike behind a bottleneck, one run; two car routes, one behind a bottleneck, one run; Braess's 19-minute case and Nguyen-Dupuis's steady hour over 5 seeds; Nguyen-Dupuis's queued links over 20 seeds (release only)

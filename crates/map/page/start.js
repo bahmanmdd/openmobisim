@@ -191,8 +191,8 @@ function wire() {
   $("fit").addEventListener("click", () => { fitTo(EX0, EY0, EX1, EY1, 0.06); redraw(false); levelButtons(); writeHash(); });
   $("exportpng").addEventListener("click", () => exportAs("png")); $("exportsvg").addEventListener("click", () => exportAs("svg"));
   if (HAS_ROUTES) {
-    // Every pair held, the busiest first; the first line says which pairs those are.
-    const pick = $("pairpick"), first = fmt(NP) + " pairs, the busiest first";
+    // Every pair held, the busiest first; the first line says which pairs those are ("1 pair" when there is one).
+    const pick = $("pairpick"), first = NP === 1 ? "1 pair" : fmt(NP) + " pairs, the busiest first";
     pick.innerHTML = '<option value="-1">' + first + "…</option>" + Array.from({ length: NP }, (_, k) => '<option value="' + k + '">' + escHtml(pairText(k)) + "</option>").join("");
     pick.addEventListener("change", (e) => selectPair(+e.target.value, true));
     $("prev").addEventListener("click", () => selectPair(S.pair <= 0 ? NP - 1 : S.pair - 1, true)); $("next").addEventListener("click", () => selectPair((S.pair + 1) % NP, true));
