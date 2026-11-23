@@ -187,6 +187,10 @@ const NCOL = 24;
 // in the same four colours, so the two read alike.
 const BANDS = META.delay_bands, BAND_LABELS = META.delay_band_labels, VC_BANDS = META.vc_bands, VC_LABELS = META.vc_band_labels;
 function band(d, edges) { const e = edges || BANDS; let b = 0; while (b < e.length && d >= e[b]) b++; return b; }
+// A car link's delay band, as the encoder defines it (rules::delay_band): its band of the delay over free flow, the
+// first when its cars lose under FLOOR seconds each (the mean time less the free-flow time), whatever the delay.
+const FLOOR = META.delay_floor_s;
+function delayBand(l) { return meanT[l] - FF[l] < FLOOR ? 0 : band(delay[l]); }
 // The road's colours now: the four bands' (delay, volume over capacity) or the volume's ramp of NCOL steps.
 function palette() { return S.colour === "volume" ? TABLES.volume : TH.bands; }
 const S = { theme: "paper", colour: "delay", bins: [0, NB], playing: false, pair: -1, link: -1, sel: null, hover: -1, hoverItem: null, hoverOpt: -1, allOpts: false, allPairs: false, hidden: new Set(), picking: 0, pickFrom: null, cx: 0, cy: 0, mpp: 1, ly: { road: true, transit: false, bike: false, walk: false } };

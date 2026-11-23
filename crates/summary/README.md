@@ -83,7 +83,9 @@ says so. Numbers in the map's format: commas between thousands (`65,959`).
   simulated). The three add up to the trips. Mean trip and travel time are over the finished trips.
 - **Delay over free flow** is the map's one rule (`openmobisim_map::rules::delay`), applied per link
   and bin for the bands and over the window for the busiest links and the car map, in the map's
-  four bands and colours; the time beyond free flow is the cars' crossing times times it. A link's vehicle-km in a
+  four bands and colours by the map's `delay_band`: a link whose cars lose under 2 s each
+  (`DELAY_FLOOR_S`) is in the band 0–15 % whatever its delay, on the band table and the car map
+  (the busiest links keep their percentages, and the hours of delay count every second); the time beyond free flow is the cars' crossing times times it. A link's vehicle-km in a
   bin are its cars times its length. The busiest links: the cars that entered over the window over
   its hours, and their delay over the whole window.
 - **Boardings** are the map's count (`openmobisim_map::ridden`): the rides boarded over the window
@@ -133,6 +135,10 @@ binding draws a page (`tests/common/mod.rs`, `kept`):
   `ab`, which does not allow cars: the reader sets it aside with one warning and the page is built
   from the rest, 3 × 2 km = 6.0 vehicle-km on `st1`, all in the band 0–15 %, `st1` the one
   busiest link.
+- `tests/floor.rs`: the delay's floor by hand: a link of 10 s free flow whose cars take 11.9 s
+  (19 %, 1.9 s each) in the band 0–15 % (0.3 vehicle-km, 9.1 %), one of 100 s at 130 s (30 %) in
+  15–50 % (3.0, 90.9 %), the car map drawing each in its band's colour; the links table edited by
+  hand to those times.
 - `tests/transit.rs`: a hand timetable: 5 boardings, 1.25 rides per transit trip, 25.0 % changing
   vehicle; 5 stops, 2 runs; the transit map, and no kilometres walked on links.
 - `tests/transit.rs` also: with a tram and a bus line, the transit map's hops in the tram's and the

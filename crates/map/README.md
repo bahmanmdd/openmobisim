@@ -41,6 +41,8 @@ the message shown), `data-links`, `data-rows` (rows of car traffic), `data-pairs
 What the page lets a reader do:
 - switch the layers: road traffic, transit, cyclists, walkers;
 - colour the road traffic by delay over free flow, volume or volume ÷ capacity;
+- hover or click a car link for its volume, its delay over free flow and the seconds each car loses
+  there (times under 10 s to 0.01 s, from 10 s on to 0.1 s);
 - show the whole window or one bin (the time slider), and play road traffic's bins in turn, one every
   0.45 s: Pause, the whole window ticked and road traffic hidden stop the play;
 - choose a pair (every pair held is listed, the busiest first; ‹ › step through them), or pick its
@@ -51,7 +53,8 @@ What the page lets a reader do:
 - save the view as a PNG (twice the screen's resolution) or an SVG, with its title, subtitle and
   legend; the subtitle, on the page and in the exports, is road traffic's caption (the bins shown,
   the ribbons' width and colour), written only while road traffic is drawn, as each other layer's
-  words are;
+  words are; a run without car traffic says "No car traffic in this run" there, its network drawn
+  plain;
 - switch to the night theme;
 - keep the view (theme, colouring, bin, layers, pair, link, place and zoom) in the page's address
   after `#`, to come back to it or share it.
@@ -81,7 +84,10 @@ km/h.
   coloured by its square root up to the 99th percentile of the links' volumes, the middle of the
   legend's bar a quarter of that); the delay over free flow, `rules::delay`, the one definition
   (the script mirrors it, the summary reads it): the cars' mean crossing time ÷ the car free-flow
-  time − 1, never below 0, banded 0–15 %, 15–50 %, 50–100 %, 100 %+; volume ÷ capacity from
+  time − 1, never below 0, banded 0–15 %, 15–50 %, 50–100 %, 100 %+ by `rules::delay_band`, a link
+  whose cars lose under `rules::DELAY_FLOOR_S` (2 s) each in the first band whatever its delay (a
+  link of 1 m at 80 km/h crossed in 0.43 s is 853 % over free flow and costs each car 0.39 s), the
+  legend saying so; bikes and walkers are drawn by their counts, never by delay; volume ÷ capacity from
   the busiest period's volume, banded 0–0.6, 0.6–0.8, 0.8–1.0, 1.0+, a car link without a capacity
   limit in the first band. The busiest period is fixed: the busiest run of `k = max(1, min(bins
   shown, round(900 s / bin)))` consecutive bins, named by its length `k` × bin (15 min for bins of
@@ -152,7 +158,8 @@ km/h.
 ## The data layout (the contract between the encoder and the script)
 `meta`: `version`, `title`, `n_nodes`, `n_links`, `n_rows`, `n_bins`, `bin_seconds`,
 `window_start`, `trips`, `left_out` (the trips left out of the journeys), `origin` (`[x, y]`, m), `n_pairs` (held), `pairs_total`, `stops` (external
-ids of the stops held, in their order), `delay_bands`, `delay_band_labels`, `vc_bands`,
+ids of the stops held, in their order), `delay_bands`, `delay_band_labels`, `delay_floor_s` (2),
+`vc_bands`,
 `vc_band_labels`, `peak_seconds` (900), `road_classes` (the distinct road classes in sorted
 order when every link has one, else `null`), `road_tiers` and `road_tier_bounds` (the base
 line's widths and the tiers' bounds by road class), `flow_full` (3 000), `kinds` (the six kinds' names), `lines` (the lines
@@ -234,7 +241,9 @@ are written by `openmobisim_io_parquet::write` and read back, as the binding dra
   2 400, 2 399, 1 600 and 1 599 veh/h and without a limit; 2 003 pairs of 2 006 trips, of which the
   page holds 2 000 holding 2 003 trips, the lowest ids kept at equal travellers; three cars of 244,
   248 and 247 s whose journey's time is their mean, 246.33 s, not the middle value; the delay rule
-  (1 / 144 at 145 s against 144 s, 0 below free flow and for a free-flow time of 0); road classes
+  (1 / 144 at 145 s against 144 s, 0 below free flow and for a free-flow time of 0); the delay's
+  band with its floor of 2 s per car (862 % at 0.39 s per car and 19 % at 1.9 s in the first band,
+  20 % at 2 s in 15–50 %, 60 % and 150 % in the next two); road classes
   on every link drawn in version 1's order (steps 15, primary 4, an unknown name 10) with their
   names, and `st1`'s bend at (750, 300) m held as 7 500 and 3 000 dm; one link unclassed, drawn by
   capacity; the cyclists' and walkers' width share at 0, 750, 3 000 and 6 000 travellers 0, 0.5,

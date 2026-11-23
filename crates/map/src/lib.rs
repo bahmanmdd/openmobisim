@@ -228,6 +228,7 @@ fn page(run: &Mapped<'_>, title: &str) -> Result<String, MapError> {
         ("source", string(record::source(run.record))),
         ("delay_bands", numbers(&rules::DELAY_BANDS)),
         ("delay_band_labels", strings(rules::DELAY_BAND_LABELS)),
+        ("delay_floor_s", number(rules::DELAY_FLOOR_S)),
         ("vc_bands", numbers(&rules::VC_BANDS)),
         ("vc_band_labels", strings(rules::VC_BAND_LABELS)),
         ("peak_seconds", rules::PEAK_SECONDS.to_string()),

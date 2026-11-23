@@ -105,6 +105,25 @@ pub fn delay(mean_time: f64, free_flow: f64) -> f64 {
     if free_flow > 0.0 { (mean_time / free_flow - 1.0).max(0.0) } else { 0.0 }
 }
 
+/// The least delay per car, seconds (the cars' mean crossing time less the free-flow time), at
+/// which a link takes a delay band above the first: below it a link is drawn as free flow,
+/// whatever its delay over free flow (a link of 1 m crossed in 0.43 s against 0.045 s is 853 %
+/// over free flow and costs each car 0.39 s). Bikes and walkers are drawn by their counts, never
+/// by delay.
+pub const DELAY_FLOOR_S: f64 = 2.0;
+
+/// The delay band of cars crossing a link, 0 to 3 (an index of [`DELAY_BAND_LABELS`]): the bands
+/// [`DELAY_BANDS`] of [`delay`], and 0 when their delay per car is under [`DELAY_FLOOR_S`]. The one
+/// rule of the delay's colour: the map's page mirrors it, the summary reads it.
+#[must_use]
+pub fn delay_band(mean_time: f64, free_flow: f64) -> usize {
+    if mean_time - free_flow < DELAY_FLOOR_S {
+        return 0;
+    }
+    let d = delay(mean_time, free_flow);
+    DELAY_BANDS.iter().filter(|&&e| d >= e).count()
+}
+
 /// A link's drawing class: by its capacity when cars may use it, else [`CLASS_NO_CAR`].
 #[must_use]
 pub fn class(car: bool, capacity_veh_h: f64) -> u8 {
