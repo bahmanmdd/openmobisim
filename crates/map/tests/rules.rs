@@ -294,9 +294,10 @@ fn the_delay_is_the_mean_time_over_free_flow_less_one_never_below_0() {
 /// The delay's band by hand, the floor a fixed display rule of 2 s per car: a link crossed in
 /// 0.433 s against 0.045 s (862 %, 0.39 s per car) and one of 10 s free flow crossed in 11.9 s
 /// (19 %, 1.9 s) are in the first band; 12 s there (20 %, 2 s: at the floor) is in 15–50 %, 16 s
-/// (60 %) in 50–100 %, 25 s (150 %) in 100 %+; 145 s against 144 s (0.7 %, 1 s) in the first, 150 s
-/// (4 %, 6 s: past the floor, under 15 %) in the first, 180 s (25 %, 36 s) in 15–50 %, 100 s (faster
-/// than free flow) in the first; a free-flow time of 0 in the first.
+/// (60 %) in 50–100 %, 25 s (150 %) in 100 %+, 15 s and 20 s (exactly 50 % and 100 %: an edge
+/// belongs to the band above it) in 50–100 % and 100 %+; 145 s against 144 s (0.7 %, 1 s) in the
+/// first, 150 s (4 %, 6 s: past the floor, under 15 %) in the first, 180 s (25 %, 36 s) in 15–50 %,
+/// 100 s (faster than free flow) in the first; a free-flow time of 0 in the first.
 #[test]
 fn a_link_whose_cars_lose_under_2_s_each_is_in_the_first_band() {
     use openmobisim_map::rules::{DELAY_FLOOR_S, delay_band};
@@ -307,6 +308,8 @@ fn a_link_whose_cars_lose_under_2_s_each_is_in_the_first_band() {
         (12.0, 10.0),
         (16.0, 10.0),
         (25.0, 10.0),
+        (15.0, 10.0),
+        (20.0, 10.0),
         (145.0, 144.0),
         (150.0, 144.0),
         (180.0, 144.0),
@@ -316,5 +319,5 @@ fn a_link_whose_cars_lose_under_2_s_each_is_in_the_first_band() {
     .iter()
     .map(|&(mean, free)| delay_band(mean, free))
     .collect();
-    assert_eq!(bands, [0, 0, 1, 2, 3, 0, 0, 1, 0, 0]);
+    assert_eq!(bands, [0, 0, 1, 2, 3, 2, 3, 0, 0, 1, 0, 0]);
 }

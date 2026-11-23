@@ -1,7 +1,8 @@
 # The Python package `openmobisim`: five wheels (Linux, macOS and Windows) and the source archive, built by maturin
 # from `crates/binding`; the Linux x86_64, macOS arm64 and Windows wheels each installed on a clean runner of its
 # system and the binding's tests run against it (on Windows a second time, as a standard user without administrator
-# rights); everything published to PyPI when the tag v<version> is pushed, <version> being the package's own.
+# rights), then Delft's default run, its trips file's fingerprint printed; everything published to PyPI when the tag
+# v<version> is pushed, <version> being the package's own.
 #
 # One wheel per platform serves Python 3.11 and every later version: the extension is built on Python's stable ABI
 # (pyo3's `abi3-py311`, in the workspace's Cargo.toml). Run by hand (workflow_dispatch) to build and test without
@@ -56,7 +57,9 @@ jobs:
         with:
           maturin-version: v1.16.0
           target: ${{ matrix.target }}
-          args: --release --out dist -m crates/binding/Cargo.toml
+          # Linux's wheels are stripped: the release profile keeps line tables (`debug = 1`, for profiling), which
+          # Linux keeps inside the library and macOS and Windows outside it, never in the wheel.
+          args: --release --out dist -m crates/binding/Cargo.toml ${{ matrix.platform == 'linux' && '--strip' || '' }}
           # `auto` picks the oldest manylinux the toolchain can build for, so that the wheel installs on older
           # Linux systems too.
           manylinux: auto
@@ -152,6 +155,13 @@ jobs:
           $p = Start-Process (Get-Command python).Source -ArgumentList $tests @run
           Get-Content "$work\out.txt", "$work\err.txt"
           exit $p.ExitCode
+      # Test 10's part 2 alone: Delft's default run with the wheel, every trip finished, the run's time printed (not
+      # judged: CI is set), and the fingerprint of its trips file (its SHA-256, first 16 hexadecimal digits), printed
+      # to compare the three systems, not judged.
+      - name: Delft's default run with the installed wheel, its trips file's fingerprint printed
+        shell: bash
+        working-directory: ${{ runner.temp }}
+        run: TEST_10=1 python -m pytest "$GITHUB_WORKSPACE/crates/binding/tests/test_10_delft.py" -k test_2_and_3 -s -p no:cacheprovider ${{ runner.os == 'Windows' && '--basetemp "$RUNNER_TEMP/pytest-delft"' || '' }}
 
   publish:
     # Publishes to PyPI when a version tag (v0.2.0, ...) is pushed to the public repository on a commit of main, and
