@@ -222,10 +222,11 @@ formed by the choice crate's `cost_of`, so the cost a run reports is the one the
   links table counts the walkers of walk alternatives only.
 - Determinism: every parallel stage files its result by trip, every sum is in fixed order and
   every draw is keyed by identity, so the three tables are the same at any thread count and
-  over two runs. Across platforms, as measured: the run's logarithms (the Gumbel draws' and the
-  path size's), exponential, power, distances and projection are `libm`'s (pure Rust), and
-  Delft's default run (test 10) gives byte-identical trips on macOS (Apple silicon), Linux
-  (x86_64) and Windows (x86_64); each wheel's test job prints the fingerprint of its trips file.
+  over two runs. Across platforms, as measured: the run's logarithms (the Gumbel draws', the
+  log-sum's and the path size's), exponential, power, distances and projection are `libm`'s
+  (pure Rust), and Delft's default run (test 10) gives byte-identical trips on macOS (Apple
+  silicon), Linux (x86_64) and Windows (x86_64); each wheel's test job prints the fingerprint
+  of its trips file.
 
 ## Errors
 `run` refuses with a `RunError` only what no run can be made of: `link_bin`, `iteration_cap`,
