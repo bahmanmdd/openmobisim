@@ -7,7 +7,9 @@
 //! its capacity before any of the pair's cars, so a car of the pair on it starts a queue that
 //! grows for the rest of the hour. Time alone, the least cost. Iteration 0: the pair finds A
 //! (the free-flow fastest). A then queues and B does not, so at iteration 1 the search finds B.
-//! Whatever share of the pair moves to B, both links then carry more than their capacity, so
+//! The chance of being offered a new choice is below 1 for every traveller, so some of the pair
+//! stay on A (5 cars over the hour would do: A's 28.8 s is 4.8 headways of 6 s) while others
+//! move to B; both links then carry more than their capacity, so
 //! their queues grow, and once A's delay passes 28.8 s and B's 14.4 s, C is the fastest: the
 //! search finds it at iteration 2. So the pair holds A, then B, then C, unless the limit stops it:
 //! at 1 it holds A alone, at 2 A and B, at 3 all three. No other route joins O to D, so a limit

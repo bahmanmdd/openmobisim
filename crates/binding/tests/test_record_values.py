@@ -234,6 +234,7 @@ def test_max_transit_journeys_1_keeps_one_of_the_two_journeys_that_2_keeps(tmp_p
         assert (trip["alternatives"], trip["travel_time_s"]) == (alternatives, 1_300.0), limit
         assert read(result.record)["parameters"]["max_transit_journeys"] == limit
 
+
 def logit_tables(folder, **run_kw):
     result = logit_run(folder, **run_kw)
     return result, (folder / "trips.parquet").read_bytes() + (folder / "links.parquet").read_bytes()
