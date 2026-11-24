@@ -1,10 +1,12 @@
 //! What every stage reads about the run: the inputs, the window and, per trip, its departure
 //! on the window's clock, its class and the modes open to it in this run.
 
+use std::collections::HashMap;
+
 use openmobisim_demand::demand::{Demand, End};
 use openmobisim_graph::network::Network;
 use openmobisim_transit::timetable::Timetable;
-use openmobisim_types::ids::{EntityId, TripId, UserClassId};
+use openmobisim_types::ids::{EntityId, NodeId, TripId, UserClassId};
 use openmobisim_types::mode::{Mode, ModeSet};
 use openmobisim_types::time::{Second, StepGrid};
 use openmobisim_types::units::Duration;
@@ -30,9 +32,31 @@ pub(crate) struct Context<'a> {
     /// Per trip, the modes of its set the window can hold: none for a trip the run dropped
     /// (`crate::run`, "Repairs").
     pub modes: Vec<ModeSet>,
+    /// Per trip with cars open to it, its origin-destination pair for cars (the trips with the
+    /// same car origin node and destination node), by number; `None` for the others.
+    pub car_pair: Vec<Option<usize>>,
+    /// Per pair, its trips in trip order.
+    pub car_pair_trips: Vec<Vec<usize>>,
 }
 
 impl Context<'_> {
+    /// Number the trips' car origin-destination pairs, in the order of their first trip, into
+    /// `car_pair` and `car_pair_trips`: once per run, since a trip's ends do not change.
+    pub fn number_car_pairs(&mut self) {
+        let mut number: HashMap<(NodeId, NodeId), usize> = HashMap::new();
+        let (mut pair, mut trips) = (vec![None; self.trip_count()], Vec::<Vec<usize>>::new());
+        for (i, of) in pair.iter_mut().enumerate() {
+            let Some((o, d)) = self.ends(i, Mode::Car) else { continue };
+            let p = *number.entry((o.node, d.node)).or_insert(trips.len());
+            if p == trips.len() {
+                trips.push(Vec::new());
+            }
+            trips[p].push(i);
+            *of = Some(p);
+        }
+        (self.car_pair, self.car_pair_trips) = (pair, trips);
+    }
+
     /// How many trips.
     pub fn trip_count(&self) -> usize {
         self.departure.len()

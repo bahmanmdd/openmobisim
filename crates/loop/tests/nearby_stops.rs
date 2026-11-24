@@ -167,3 +167,52 @@ fn of_two_journeys_on_the_same_run_only_the_cheaper_for_the_traveller_is_offered
         none.trips.cost[0]
     );
 }
+
+#[test]
+fn max_transit_journeys_1_keeps_the_cheaper_of_the_two_journeys_and_2_keeps_both_in_order() {
+    // The first test's case. With the default coefficients the two journeys cost 3.41667 (from
+    // B, 1 300 s) and 3.20833 (from A, 1 400 s), derived there: a limit of 1 keeps the one from
+    // A. With time alone they cost 21.667 and 23.333 minutes: a limit of 1 keeps the one from B.
+    // A limit of 2 or more keeps both, in the order found.
+    let net = line(&[("o", 0.0), ("a", 100.0), ("b", 1_000.0), ("c", 5_000.0)]);
+    let tt = timetable(
+        &[("A", 100.0), ("B", 1_000.0), ("C", 5_000.0)],
+        &[&[("B", 1_000), ("C", 1_300)], &[("A", 800), ("C", 1_400)]],
+    );
+    let ends = (0.0, 5_000.0);
+    let one = one_trip(&net, &tt, ends, &Parameters { max_transit_journeys: 1, ..weighted() });
+    assert_eq!(times(&one), [1_400.0], "the cheaper for the traveller, from A");
+    let timed = Parameters { nearby_stops: 2, max_transit_journeys: 1, ..time_only(1) };
+    assert_eq!(times(&one_trip(&net, &tt, ends, &timed)), [1_300.0], "time alone: from B");
+    for limit in [2, u32::MAX] {
+        let both =
+            one_trip(&net, &tt, ends, &Parameters { max_transit_journeys: limit, ..weighted() });
+        assert_eq!(times(&both), [1_300.0, 1_400.0], "limit {limit}: both, in the order found");
+    }
+}
+
+#[test]
+fn of_three_journeys_a_limit_of_2_keeps_the_two_cheapest_in_the_order_found_the_cheapest_last() {
+    // The first test's case and a third stop, F at 400 m (300 s), with run r2: F 400 s → C 1 500 s.
+    // The default coefficients, nearby_stops 2. Found in this order: the earliest between any
+    // stops, r0 from B (1 300 s); the nearest stop alone, r1 from A (1 400 s); the cheapest between
+    // any stops, r2 from F (1 500 s). Costs: r0 3.41667 and r1 3.20833 (the first test); r2 walk
+    // 5 min × 0.165 = 0.825, wait 100 s × 0.145 / 60 = 0.24167, ride 1 100 s × 0.1 / 60 = 1.83333,
+    // transit 0.25: 3.15, the cheapest, found last. A limit of 2 keeps r1 and r2, in the order
+    // found; 1 keeps r2; 3 keeps all three.
+    let net = line(&[("o", 0.0), ("a", 100.0), ("f", 400.0), ("b", 1_000.0), ("c", 5_000.0)]);
+    let tt = timetable(
+        &[("A", 100.0), ("F", 400.0), ("B", 1_000.0), ("C", 5_000.0)],
+        &[&[("B", 1_000), ("C", 1_300)], &[("A", 800), ("C", 1_400)], &[("F", 400), ("C", 1_500)]],
+    );
+    let ends = (0.0, 5_000.0);
+    let with = |limit: u32| {
+        one_trip(&net, &tt, ends, &Parameters { max_transit_journeys: limit, ..weighted() })
+    };
+    assert_eq!(times(&with(3)), [1_300.0, 1_400.0, 1_500.0], "all three, in the order found");
+    assert_eq!(times(&with(2)), [1_400.0, 1_500.0], "the two cheapest, in the order found");
+    assert_eq!(times(&with(1)), [1_500.0], "the cheapest");
+    let by_hand = 0.825 + 100.0 * 0.145 / 60.0 + 1_100.0 * 0.1 / 60.0 + 0.25;
+    let one = with(1);
+    assert!((one.trips.cost[0] - by_hand).abs() < 1e-9, "{} against {by_hand}", one.trips.cost[0]);
+}

@@ -1,13 +1,17 @@
 //! Stage 1, search: the best alternative per mode open to the traveller at the current costs
 //! (for transit, at iteration 0 only, the earliest journey per number of rides, between any
 //! stops in reach and from and to each of the nearest few alone), appended to the traveller's
-//! set if new.
+//! set if new: a car route new to its origin-destination pair only while the pair holds fewer
+//! than `max_car_routes` routes (a traveller's first car route always), and of the journeys at
+//! most `max_transit_journeys`, the cheapest.
+
+use std::collections::HashSet;
 
 use openmobisim_loading::link_times::LinkTimes;
 use openmobisim_search::search::{Query, Route, fastest_many};
 use openmobisim_transit::cheapest::{CostQuery, Weights, cheapest_by_rides_many};
 use openmobisim_transit::raptor::{self, Journey, by_rides_many};
-use openmobisim_types::ids::{StopId, TransitRunId};
+use openmobisim_types::ids::{LinkId, StopId, TransitRunId};
 use openmobisim_types::mode::Mode;
 use openmobisim_types::units::Duration;
 use rayon::prelude::*;
@@ -149,7 +153,9 @@ fn journeys(ctx: &Context<'_>) -> Vec<Vec<Journey>> {
 
 /// The legs of each journey offered to trip `i`: of the journeys that ride the same runs in the
 /// same order (they differ in the stop boarded or left at), only the cheapest for the
-/// traveller, the first found at equal cost; in the order found.
+/// traveller, the first found at equal cost; of those, when there are more than
+/// `max_transit_journeys`, that many, the cheapest for the traveller, ties to the first found;
+/// in the order found.
 fn journey_legs(
     ctx: &Context<'_>,
     times: &LinkTimes,
@@ -176,7 +182,67 @@ fn journey_legs(
             None => kept.push((runs, cost, priced.legs)),
         }
     }
+    let limit = ctx.parameters.max_transit_journeys as usize;
+    if kept.len() > limit {
+        let mut by_cost: Vec<usize> = (0..kept.len()).collect();
+        by_cost.sort_by(|&a, &b| kept[a].1.total_cmp(&kept[b].1).then(a.cmp(&b)));
+        let mut keep = vec![false; kept.len()];
+        for &j in &by_cost[..limit] {
+            keep[j] = true;
+        }
+        let mut j = 0;
+        kept.retain(|_| {
+            j += 1;
+            keep[j - 1]
+        });
+    }
     kept.into_iter().map(|k| k.2).collect()
+}
+
+/// Hold the car routes the search found (`by_trip`, per trip) to `max_car_routes` per
+/// origin-destination pair (`Context::car_pair`). A pair holds the distinct car routes in its
+/// travellers' `sets`. A route new to its traveller's set and to the pair is kept only while the
+/// pair holds fewer than the limit, the trips taken in trip order; otherwise it is dropped here,
+/// so it is neither offered nor counted as found. It never replaces a route. A traveller's first
+/// car route is never dropped: the limit holds back further routes, never a car driver's only
+/// one, so a pair whose travellers' first routes differ (routes of equal time, the tie broken
+/// one way for some departures and the other way for others) can hold more than the limit. A
+/// pair is looked into only when its sets' car routes, repeats counted, and the routes found
+/// exceed the limit: within the limit, every route found fits, so nothing of the pair can be
+/// dropped.
+fn limit_car_routes(ctx: &Context<'_>, sets: &[Vec<Alternative>], by_trip: &mut [Option<Route>]) {
+    let limit = ctx.parameters.max_car_routes as usize;
+    let mut bound = vec![0_usize; ctx.car_pair_trips.len()];
+    for (i, set) in sets.iter().enumerate() {
+        if let Some(p) = ctx.car_pair[i] {
+            let held = set.iter().filter(|a| a.mode == Mode::Car).count();
+            bound[p] += held + usize::from(by_trip[i].is_some());
+        }
+    }
+    let mut dropped = Vec::new();
+    let looked_into = ctx.car_pair_trips.iter().enumerate().filter(|&(p, _)| bound[p] > limit);
+    for (_, trips) in looked_into {
+        let mut held: HashSet<&[LinkId]> = trips
+            .iter()
+            .flat_map(|&i| sets[i].iter().filter(|a| a.mode == Mode::Car))
+            .filter_map(Alternative::route)
+            .collect();
+        for &i in trips {
+            let Some(route) = &by_trip[i] else { continue };
+            if held.contains(&route.links[..]) {
+                continue;
+            }
+            let first = !sets[i].iter().any(|a| a.mode == Mode::Car);
+            if held.len() < limit || first {
+                held.insert(&route.links[..]);
+            } else {
+                dropped.push(i);
+            }
+        }
+    }
+    for i in dropped {
+        by_trip[i] = None;
+    }
 }
 
 /// What the search offers trip `i` that its `set` does not hold, in mode order: a route's
@@ -251,8 +317,11 @@ pub(crate) fn search(
     sets: &mut [Vec<Alternative>],
     iteration: u32,
 ) -> u64 {
-    let routes: Vec<(Mode, Vec<Option<Route>>)> =
+    let mut routes: Vec<(Mode, Vec<Option<Route>>)> =
         modes_at(iteration).iter().map(|&m| (m, routes_by(ctx, times, m))).collect();
+    if let Some((_, by_trip)) = routes.iter_mut().find(|(m, _)| *m == Mode::Car) {
+        limit_car_routes(ctx, sets, by_trip);
+    }
     let journeys = if iteration == 0 { journeys(ctx) } else { vec![Vec::new(); ctx.trip_count()] };
     sets.par_iter_mut()
         .enumerate()

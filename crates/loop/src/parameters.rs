@@ -140,6 +140,17 @@ pub struct Parameters {
     /// How many transit searches a trip end gets, at least 1: the first is between any stops
     /// in reach of both ends; each further one tries the next nearest stop of the end alone.
     pub nearby_stops: u8,
+    /// The limit on the car routes an origin-destination pair gathers, at least 1: a pair is the
+    /// trips with the same car origin node and destination node, and holds the distinct car routes
+    /// in their sets. A route the search finds that is new to its traveller's set and to the pair
+    /// is added only while the pair holds fewer, the trips taken in trip order; otherwise it is not
+    /// offered (and not counted as found). It never replaces a route. A traveller's first car
+    /// route is always added, so a pair whose travellers' first routes differ can hold more.
+    pub max_car_routes: u32,
+    /// The most transit journeys a traveller is offered, at least 1: of the journeys the search
+    /// finds for it (iteration 0), the cheapest for it, ties to the first found, kept in the order
+    /// found.
+    pub max_transit_journeys: u32,
     /// The choice model.
     pub choice: ChoiceModel,
     /// The nest scale of the logit, in (0, 1]; read by [`ChoiceModel::Logit`] only.
@@ -182,6 +193,8 @@ impl Parameters {
             boarding_slack: 60,
             max_rides: 4,
             nearby_stops: 3,
+            max_car_routes: 6,
+            max_transit_journeys: 10,
             choice: ChoiceModel::Logit,
             nest_scale: 0.5,
             step_exponent: 0.75,

@@ -190,6 +190,8 @@ mod tests {
             departure: vec![0.0],
             class: vec![0],
             modes: vec![ModeSet::of(&[Mode::Car])],
+            car_pair: vec![Some(0)],
+            car_pair_trips: vec![vec![0]],
         }
     }
 

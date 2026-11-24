@@ -252,6 +252,10 @@ fn refusals_name_what_they_refuse() {
     assert_eq!(run(&net, &dem, None, WINDOW, &bad).err(), Some(RunError::MaxRidesZero));
     let bad = Parameters { nearby_stops: 0, ..p.clone() };
     assert_eq!(run(&net, &dem, None, WINDOW, &bad).err(), Some(RunError::NearbyStopsZero));
+    let bad = Parameters { max_car_routes: 0, ..p.clone() };
+    assert_eq!(run(&net, &dem, None, WINDOW, &bad).err(), Some(RunError::MaxCarRoutesZero));
+    let bad = Parameters { max_transit_journeys: 0, ..p.clone() };
+    assert_eq!(run(&net, &dem, None, WINDOW, &bad).err(), Some(RunError::MaxTransitJourneysZero));
     let bad = Parameters { coefficients: vec![], ..p.clone() };
     assert_eq!(
         run(&net, &dem, None, WINDOW, &bad).err(),
