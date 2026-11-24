@@ -54,6 +54,10 @@ pub enum RunError {
     MaxRidesZero,
     /// `nearby_stops` is zero.
     NearbyStopsZero,
+    /// `max_car_routes` is zero.
+    MaxCarRoutesZero,
+    /// `max_transit_journeys` is zero.
+    MaxTransitJourneysZero,
     /// Under the logit, `step_exponent` is not a positive finite number: `1 / (k + 1)^a` is then
     /// no step of the averaging (it never falls, or it is not a number, or it is 0 from the first
     /// iteration on).
@@ -88,6 +92,8 @@ impl fmt::Display for RunError {
             Self::IterationCapZero => write!(f, "iteration_cap is zero"),
             Self::MaxRidesZero => write!(f, "max_rides is zero"),
             Self::NearbyStopsZero => write!(f, "nearby_stops is zero"),
+            Self::MaxCarRoutesZero => write!(f, "max_car_routes is zero"),
+            Self::MaxTransitJourneysZero => write!(f, "max_transit_journeys is zero"),
             Self::StepExponent(a) => {
                 write!(f, "step_exponent {a} is not a positive finite number")
             }
@@ -183,6 +189,20 @@ impl Run {
     }
 }
 
+/// The parameters that count something and may not be zero: the first zero, refused.
+fn none_zero(parameters: &Parameters) -> Result<(), RunError> {
+    let p = parameters;
+    let zero = [
+        (p.link_bin == 0, RunError::LinkBinZero),
+        (p.iteration_cap == 0, RunError::IterationCapZero),
+        (p.max_rides == 0, RunError::MaxRidesZero),
+        (p.nearby_stops == 0, RunError::NearbyStopsZero),
+        (p.max_car_routes == 0, RunError::MaxCarRoutesZero),
+        (p.max_transit_journeys == 0, RunError::MaxTransitJourneysZero),
+    ];
+    zero.into_iter().find(|(is, _)| *is).map_or(Ok(()), |(_, refused)| Err(refused))
+}
+
 /// Check the parameters, then build the window and the context.
 fn context<'a>(
     network: &'a Network,
@@ -191,18 +211,7 @@ fn context<'a>(
     window: (Second, Second),
     parameters: &'a Parameters,
 ) -> Result<(Context<'a>, Repairs), RunError> {
-    if parameters.link_bin == 0 {
-        return Err(RunError::LinkBinZero);
-    }
-    if parameters.iteration_cap == 0 {
-        return Err(RunError::IterationCapZero);
-    }
-    if parameters.max_rides == 0 {
-        return Err(RunError::MaxRidesZero);
-    }
-    if parameters.nearby_stops == 0 {
-        return Err(RunError::NearbyStopsZero);
-    }
+    none_zero(parameters)?;
     let a = parameters.step_exponent;
     if parameters.choice == ChoiceModel::Logit && !(a.is_finite() && a > 0.0) {
         return Err(RunError::StepExponent(a));
@@ -266,8 +275,19 @@ fn context<'a>(
         class.push(demand.class(trip).index());
         modes.push(open);
     }
-    let ctx =
-        Context { network, demand, timetable, parameters, window: grid, departure, class, modes };
+    let mut ctx = Context {
+        network,
+        demand,
+        timetable,
+        parameters,
+        window: grid,
+        departure,
+        class,
+        modes,
+        car_pair: Vec::new(),
+        car_pair_trips: Vec::new(),
+    };
+    ctx.number_car_pairs();
     Ok((ctx, repairs))
 }
 

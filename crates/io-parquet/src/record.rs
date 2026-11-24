@@ -95,7 +95,7 @@ const END_USED: &str = "s: window_end_s, moved up to a whole link_bin when it wa
 /// The rows of `PARAMETERS.md` written under `[parameters]`, in order, each with its unit as
 /// that table's Unit column writes it (`coefficients` is written as tables after them;
 /// `osm_class_defaults` is not written).
-const UNITS: [(&str, &str); 15] = [
+const UNITS: [(&str, &str); 17] = [
     ("capacity_per_lane", "veh/h per lane"),
     ("bike_speed", "km/h"),
     ("walk_speed", "km/h"),
@@ -104,6 +104,8 @@ const UNITS: [(&str, &str); 15] = [
     ("boarding_slack", "s"),
     ("max_rides", "rides"),
     ("nearby_stops", "searches per trip end"),
+    ("max_car_routes", "routes per origin-destination pair"),
+    ("max_transit_journeys", "journeys per trip"),
     ("choice", "name"),
     ("nest_scale", "none"),
     ("step_exponent", "none"),
@@ -144,6 +146,8 @@ pub const KEYS: [(&str, &[&str]); 11] = [
             "boarding_slack",
             "max_rides",
             "nearby_stops",
+            "max_car_routes",
+            "max_transit_journeys",
             "choice",
             "nest_scale",
             "step_exponent",
@@ -312,6 +316,8 @@ fn parameter<'a>(name: &str, given: &Given<'a>) -> Option<Value<'a>> {
         "boarding_slack" => Value::Int(u64::from(p.boarding_slack)),
         "max_rides" => Value::Int(u64::from(p.max_rides)),
         "nearby_stops" => Value::Int(u64::from(p.nearby_stops)),
+        "max_car_routes" => Value::Int(u64::from(p.max_car_routes)),
+        "max_transit_journeys" => Value::Int(u64::from(p.max_transit_journeys)),
         "choice" => Value::Str(match p.choice {
             ChoiceModel::Logit => "logit",
             ChoiceModel::Deterministic => "deterministic",

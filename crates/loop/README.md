@@ -11,7 +11,8 @@ pure Rust, not the platform's), nothing else.
 - The window `(start, end)`, two seconds of the clock: the study period, the user's, never
   defaulted; a whole number of link bins long (else its end is moved up to one, below).
 - `Parameters` (defaults and their sources in `PARAMETERS.md`): `link_bin` (s), `iteration_cap`,
-  `iteration_floor`, `seed`, `boarding_slack` (s), `max_rides`, `nearby_stops`, `choice`
+  `iteration_floor`, `seed`, `boarding_slack` (s), `max_rides`, `nearby_stops`, `max_car_routes`,
+  `max_transit_journeys`, `choice`
   (deterministic or logit), `nest_scale`, `step_exponent`, and per user class the sixteen coefficients of the
   choice row (below).
 
@@ -55,7 +56,8 @@ formed by the choice crate's `cost_of`, so the cost a run reports is the one the
   `crates/choice/README.md`).
 - **Search:** cars every iteration (`fastest_many` on the last loading's reading, free flow at
   iteration 0); bikes, walkers and transit at iteration 0 only, since their costs never change
-  in release 0.2, a property, not an option. A route not yet in the set is appended; it is *found* when
+  in release 0.2, a property, not an option. A route not yet in the set is appended (a car route
+  only while its origin-destination pair holds fewer than `max_car_routes` routes, below); it is *found* when
   its cost without the path-size term (the sum with that column left out) is strictly below
   that of every alternative of its mode in the set (the first alternative of a mode counts as found): a faster car route counts
   for a traveller whose bike is cheaper still. A set that grew has its path sizes rewritten at once, so
@@ -75,7 +77,19 @@ formed by the choice crate's `cost_of`, so the cost a run reports is the one the
   rides, the walks between rides and the transfers (each at or above zero, or the run is
   refused). A journey found twice is offered once, and of the journeys that ride the
   same runs in the same order (they differ in the stop boarded or left at) only the cheapest
-  for the traveller is offered, the first found at equal cost.
+  for the traveller is offered, the first found at equal cost. Of what remains, at most
+  `max_transit_journeys` are offered: when more were found, that many, the cheapest for the
+  traveller (its class's cost, ties to the first found), in the order found.
+- **Car routes per origin-destination pair:** a pair is the trips with the same car origin
+  node and destination node, and holds the distinct car routes in its travellers' sets. A car
+  route the search finds that is new to its traveller's set and to the pair is appended only
+  while the pair holds fewer than `max_car_routes`, the trips taken in trip order (so the same
+  at any thread count); otherwise it is not offered and not counted as found, and it replaces
+  no route (sets stay append-only): a faster route found by a pair at its limit is lost, the
+  limit's price (on Delft at 6, the mean car trip 1.3 % longer than without a limit). A limit at
+  least as large as the routes any pair finds changes nothing. A pair whose sets hold so few
+  car routes, repeats counted, that every new one fits is not looked into, so a high limit
+  costs one pass over the trips per iteration.
 - **Choose:** one row per alternative of sixteen columns, a utility per mode, times in
   minutes: `car_drive_min`, `bike_ride_min`, `walk_min`, `transit_in_vehicle_min`,
   `transit_access_min`, `transit_egress_min`, `transit_first_wait_min`,
@@ -230,7 +244,7 @@ formed by the choice crate's `cost_of`, so the cost a run reports is the one the
 
 ## Errors
 `run` refuses with a `RunError` only what no run can be made of: `link_bin`, `iteration_cap`,
-`max_rides` or `nearby_stops` zero; coefficient rows not one per class; an empty window or one
+`max_rides`, `nearby_stops`, `max_car_routes` or `max_transit_journeys` zero; coefficient rows not one per class; an empty window or one
 running past the clock; with a timetable, a class whose coefficient of a transit time or of the
 transfers is negative or not finite; the choice model's and the loading's refusals.
 
@@ -285,7 +299,9 @@ links are right for the cars recorded); part 2, the flows; part 3, the choices (
 or the car share against the logit share at the times met; printed, not judged); then the
 mixed numbers that follow from the three (the mean trip, a queue's delay); by hand, the bike's 360 s and 405 s, the walker's 1 125 s, a journey at 922.5 s,
 the cheaper mode taken, the nearest stop tried alone and two journeys on one run
-(`tests/nearby_stops.rs`), an empty route, an unfinished walker, the boarding slack and the most
+(`tests/nearby_stops.rs`, with the journeys kept by `max_transit_journeys`), the car routes a pair holds under
+`max_car_routes` (`tests/car_route_limit.rs`: three routes found one by one; a limit of 1, 2, and one never
+reached, which changes nothing), an empty route, an unfinished walker, the boarding slack and the most
 rides, the search weighing a journey's first wait and its waits at transfers each by its own
 coefficient (`tests/cheapest_journey.rs`), the refusals and the window's repairs, the stopping rule on hand-made rows; the choice row of each mode by hand
 (`tests/choice_row.rs`: a car and a bike with gap walks, a walk, a journey with one transfer,

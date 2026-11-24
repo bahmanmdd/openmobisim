@@ -167,3 +167,26 @@ fn of_two_journeys_on_the_same_run_only_the_cheaper_for_the_traveller_is_offered
         none.trips.cost[0]
     );
 }
+
+#[test]
+fn max_transit_journeys_1_keeps_the_cheaper_of_the_two_journeys_and_2_keeps_both_in_order() {
+    // The first test's case. With the default coefficients the two journeys cost 3.41667 (from
+    // B, 1 300 s) and 3.20833 (from A, 1 400 s), derived there: a limit of 1 keeps the one from
+    // A. With time alone they cost 21.667 and 23.333 minutes: a limit of 1 keeps the one from B.
+    // A limit of 2 or more keeps both, in the order found.
+    let net = line(&[("o", 0.0), ("a", 100.0), ("b", 1_000.0), ("c", 5_000.0)]);
+    let tt = timetable(
+        &[("A", 100.0), ("B", 1_000.0), ("C", 5_000.0)],
+        &[&[("B", 1_000), ("C", 1_300)], &[("A", 800), ("C", 1_400)]],
+    );
+    let ends = (0.0, 5_000.0);
+    let one = one_trip(&net, &tt, ends, &Parameters { max_transit_journeys: 1, ..weighted() });
+    assert_eq!(times(&one), [1_400.0], "the cheaper for the traveller, from A");
+    let timed = Parameters { nearby_stops: 2, max_transit_journeys: 1, ..time_only(1) };
+    assert_eq!(times(&one_trip(&net, &tt, ends, &timed)), [1_300.0], "time alone: from B");
+    for limit in [2, u32::MAX] {
+        let both =
+            one_trip(&net, &tt, ends, &Parameters { max_transit_journeys: limit, ..weighted() });
+        assert_eq!(times(&both), [1_300.0, 1_400.0], "limit {limit}: both, in the order found");
+    }
+}

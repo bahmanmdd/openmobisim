@@ -37,7 +37,7 @@ PARAMETERS = {
     # Given by the hand run.
     "capacity_per_lane": 1_800.0, "bike_speed": 15.0, "walk_speed": 4.8,
     # PARAMETERS.md's defaults (stop_walk_max and transfer_walk_max are absent: no transit).
-    "boarding_slack": 60, "max_rides": 4, "nearby_stops": 3,
+    "boarding_slack": 60, "max_rides": 4, "nearby_stops": 3, "max_car_routes": 6, "max_transit_journeys": 10,
     # Given.
     "choice": "deterministic",
     # Default.

@@ -695,6 +695,8 @@ fn parameters(given: &Given<'_>, demand: &RustDemand) -> PyResult<Parameters> {
         boarding_slack: given.get("boarding_slack", d.boarding_slack)?,
         max_rides: given.get("max_rides", d.max_rides)?,
         nearby_stops: given.get("nearby_stops", d.nearby_stops)?,
+        max_car_routes: given.get("max_car_routes", d.max_car_routes)?,
+        max_transit_journeys: given.get("max_transit_journeys", d.max_transit_journeys)?,
         choice,
         nest_scale: given.get("nest_scale", d.nest_scale)?,
         step_exponent: given.get("step_exponent", d.step_exponent)?,
