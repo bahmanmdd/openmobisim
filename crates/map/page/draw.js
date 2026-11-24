@@ -29,14 +29,14 @@ function measureRoom(cand) {
   ROOM_M = 2 * C * C / used[Math.floor(0.75 * (used.length - 1))] * S.mpp;
 }
 function roomPx() { return ROOM_M > 0 ? ROOM_M / S.mpp : 40; }
-// The widest ribbon (a road of the network's largest capacity): a quarter of the room up to ROOM_KNEE px of room,
-// and beyond it growing with the room's square root only, between 2.5 and WCAP px.
+// The widest ribbon the room leaves: a quarter of the room up to ROOM_KNEE px of room, and beyond it growing with the
+// room's square root only, between 2.5 and WCAP px (the large roads' ribbon is RIBBON_EXTRA px more, below).
 const ROOM_KNEE = 32;
 function ribbonMaxDrawn() { const r = roomPx(); return Math.max(2.5, Math.min(WCAP, ROOM_SHARE * Math.min(r, ROOM_KNEE) * Math.sqrt(Math.max(r, ROOM_KNEE) / ROOM_KNEE))); }
 function ribbonMax() { return Math.max(WFLOOR, ribbonMaxDrawn()); }
 // The space between a road's two directions (px): each ribbon sits on its own side of the centre line, to the
 // right of its travel, so the two read apart at every zoom.
-let GAP = 2;  // set by each frame: a fifth of the widest ribbon, 1 to 4 px
+let GAP = 2;  // set by each frame: a fifth of the widest ribbon the room leaves, 1 to 4 px
 function ribbonOffset(l, w) { return GAP / 2 + w / 2; }
 // Whether link l is drawn as a ribbon of road traffic now.
 function hasRibbon(l) { return S.ly.road && HAS_TRAFFIC && vol[l] > 0; }

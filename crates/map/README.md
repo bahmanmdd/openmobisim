@@ -40,7 +40,8 @@ the message shown), `data-links`, `data-rows` (rows of car traffic), `data-pairs
 
 What the page lets a reader do:
 - switch the layers: road traffic, transit, cyclists, walkers;
-- colour the road traffic by volume ÷ capacity (as it opens), delay over free flow or volume;
+- colour the road traffic by volume ÷ capacity (as it opens; delay when no car link has a capacity
+  limit), delay over free flow or volume;
 - hover or click a car link for its volume, its delay over free flow and the seconds each car loses
   there (times under 10 s to 0.01 s, from 10 s on to 0.1 s);
 - show the whole window or one bin (the time slider), and play road traffic's bins in turn, one every

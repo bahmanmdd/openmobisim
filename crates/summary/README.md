@@ -95,8 +95,9 @@ says so. Numbers in the map's format: commas between thousands (`65,959`).
   not on a link, so transit's walks are not in them.
 - **Charts**: each value axis runs from 0 to the least of 1, 2 or 5 times a power of ten at or above
   the largest value, with grid lines at 0, half and the top, each labelled with its value exactly.
-- **Car map widths**: a ribbon is as wide as its capacity over the 99th percentile of the car
-  links' capacities, the rule the map's script applies (the same rule in two places).
+- **Car map widths**: a ribbon is 2 + 6 √(its capacity over the 99th percentile of the car links'
+  capacities, at most 1) units wide; the map's page draws its ribbons by its own rule (a log scale
+  of capacity, `openmobisim-map`'s README).
 - **Themes**: the map's tokens (`openmobisim_map::theme`, one definition): surface, inks, the
   network's grey, the mark, the modes' colours, the delay bands; the cards tinted with the
   network's grey, 12 px radius, uppercase muted headings, the map's fonts. Light and dark follow
