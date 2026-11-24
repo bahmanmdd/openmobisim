@@ -219,6 +219,21 @@ def test_nearby_stops_2_offers_the_later_journey_from_the_nearest_stop_that_1_do
         assert read(result.record)["parameters"]["nearby_stops"] == nearby
 
 
+def test_max_transit_journeys_1_keeps_one_of_the_two_journeys_that_2_keeps(tmp_path):
+    # The case above at nearby_stops 2: two journeys, r0 from B (1 300 s) and r1 from A
+    # (1 400 s). With time alone the cheaper is r0, the earlier: a limit of 1 keeps it alone, a
+    # limit of 2 keeps both; r0 is taken in both.
+    nodes = {"o": 0.0, "a": 100.0, "b": 1_000.0, "c": 5_000.0}
+    links = [("o", "a", 100.0), ("a", "b", 900.0), ("b", "c", 4_000.0)]
+    stops = {"A": "a", "B": "b", "C": "c"}
+    runs = {"r0": [("B", 29_800), ("C", 30_100)], "r1": [("A", 29_600), ("C", 30_200)]}
+    for limit, alternatives in ((1, 1), (2, 2)):
+        result = transit_case(tmp_path / str(limit), nodes, links, stops, runs, ("o", "c", START),
+                              run_kw={"nearby_stops": 2, "max_transit_journeys": limit})
+        trip = by_id(result)["t0"]
+        assert (trip["alternatives"], trip["travel_time_s"]) == (alternatives, 1_300.0), limit
+        assert read(result.record)["parameters"]["max_transit_journeys"] == limit
+
 def logit_tables(folder, **run_kw):
     result = logit_run(folder, **run_kw)
     return result, (folder / "trips.parquet").read_bytes() + (folder / "links.parquet").read_bytes()

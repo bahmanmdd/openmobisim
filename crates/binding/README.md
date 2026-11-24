@@ -490,7 +490,8 @@ written and checked as files; their behaviour in a browser is not tested automat
   stop 1 100 m away out of reach (`without_stop` 1 against 0); `boarding_slack` 60 against
   120 s takes a run leaving 100 s after arrival or the next (400 against 1 300 s);
   `max_rides` 1 refuses a two-ride journey that 2 takes in 800 s; `nearby_stops` 1 against 2
-  offers 1 against 2 journeys. `nest_scale` 0.5 against 1: of 2 000 identical travellers
+  offers 1 against 2 journeys, and `max_transit_journeys` 1 against 2 keeps 1 against 2 of them.
+  `nest_scale` 0.5 against 1: of 2 000 identical travellers
   offered two transit journeys whose costs differ by 0.5, the share taking the cheaper within
   3 binomial standard deviations of the nested logit's `1 / (1 + exp(−0.5 / μ))`, 0.731
   against 0.622. `choice="deterministic"`: 1 000 travellers all take the cheaper bike over the

@@ -1,15 +1,16 @@
 //! Stage 1, search: the best alternative per mode open to the traveller at the current costs
 //! (for transit, at iteration 0 only, the earliest journey per number of rides, between any
 //! stops in reach and from and to each of the nearest few alone), appended to the traveller's
-//! set if new: a car route only while its origin-destination pair holds fewer than
-//! `max_car_routes` routes, and of the journeys at most `max_transit_journeys`, the cheapest.
+//! set if new: a car route new to its origin-destination pair only while the pair holds fewer
+//! than `max_car_routes` routes (a traveller's first car route always), and of the journeys at
+//! most `max_transit_journeys`, the cheapest.
+
+use std::collections::HashSet;
 
 use openmobisim_loading::link_times::LinkTimes;
 use openmobisim_search::search::{Query, Route, fastest_many};
 use openmobisim_transit::cheapest::{CostQuery, Weights, cheapest_by_rides_many};
 use openmobisim_transit::raptor::{self, Journey, by_rides_many};
-use std::collections::HashSet;
-
 use openmobisim_types::ids::{LinkId, StopId, TransitRunId};
 use openmobisim_types::mode::Mode;
 use openmobisim_types::units::Duration;
@@ -202,9 +203,13 @@ fn journey_legs(
 /// origin-destination pair (`Context::car_pair`). A pair holds the distinct car routes in its
 /// travellers' `sets`. A route new to its traveller's set and to the pair is kept only while the
 /// pair holds fewer than the limit, the trips taken in trip order; otherwise it is dropped here,
-/// so it is neither offered nor counted as found. It never replaces a route. A pair is looked
-/// into only when its sets' car routes, repeats counted, and the routes found exceed the limit:
-/// within it, every route found fits, so nothing of the pair can be dropped.
+/// so it is neither offered nor counted as found. It never replaces a route. A traveller's first
+/// car route is never dropped: the limit holds back further routes, never a car driver's only
+/// one, so a pair whose travellers' first routes differ (routes of equal time, the tie broken
+/// one way for some departures and the other way for others) can hold more than the limit. A
+/// pair is looked into only when its sets' car routes, repeats counted, and the routes found
+/// exceed the limit: within the limit, every route found fits, so nothing of the pair can be
+/// dropped.
 fn limit_car_routes(ctx: &Context<'_>, sets: &[Vec<Alternative>], by_trip: &mut [Option<Route>]) {
     let limit = ctx.parameters.max_car_routes as usize;
     let mut bound = vec![0_usize; ctx.car_pair_trips.len()];
@@ -222,13 +227,13 @@ fn limit_car_routes(ctx: &Context<'_>, sets: &[Vec<Alternative>], by_trip: &mut 
             .flat_map(|&i| sets[i].iter().filter(|a| a.mode == Mode::Car))
             .filter_map(Alternative::route)
             .collect();
-        debug_assert!(held.len() <= limit, "a pair never holds more than its limit");
         for &i in trips {
             let Some(route) = &by_trip[i] else { continue };
             if held.contains(&route.links[..]) {
                 continue;
             }
-            if held.len() < limit {
+            let first = !sets[i].iter().any(|a| a.mode == Mode::Car);
+            if held.len() < limit || first {
                 held.insert(&route.links[..]);
             } else {
                 dropped.push(i);
