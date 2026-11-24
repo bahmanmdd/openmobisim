@@ -40,7 +40,7 @@ the message shown), `data-links`, `data-rows` (rows of car traffic), `data-pairs
 
 What the page lets a reader do:
 - switch the layers: road traffic, transit, cyclists, walkers;
-- colour the road traffic by delay over free flow, volume or volume ÷ capacity;
+- colour the road traffic by volume ÷ capacity (as it opens), delay over free flow or volume;
 - hover or click a car link for its volume, its delay over free flow and the seconds each car loses
   there (times under 10 s to 0.01 s, from 10 s on to 0.1 s);
 - show the whole window or one bin (the time slider), and play road traffic's bins in turn, one every
@@ -108,9 +108,13 @@ km/h.
   without cars 4; drawn up to 1 at an overview, then 2, 3, 4, one fewer while moving; the base
   line 3.0, 2.0, 1.2, 0.8, 0.5 by class; the hover and panel name the link "car link · 1 lane ·
   50 km/h · 2,000 m". Every class is drawn at every zoom on a network under 5 000 links; the
-  links beyond the limit are drawn faint. A ribbon's width is its capacity over the 99th
-  percentile of the car links' capacities, computed by the script here and by the summary in Rust
-  (the same rule in two places).
+  links beyond the limit are drawn faint. A ribbon's width shows the road hierarchy by capacity
+  alone, whatever the traffic: its capacity's place on a log scale between the small roads' (the
+  5th percentile of the car links' capacities, or an eighth of the large roads' when lower) and
+  the large roads' (the 99th percentile; a car link without a limit too), from a fifth of the way
+  between 1 px and the top to the top, 1 px more than the widest ribbon the room leaves, at most
+  18 px. The summary's static maps keep their own rule
+  (2 + 6 √(capacity over the 99th percentile) units).
 - **Bikes and walkers** are summed per link over the window: views of the same links as the cars.
   A line's width is one rule for both: 1 + 7 √(min(n, 3 000) / 3 000) px for n cyclists or
   walkers over the window, full (8 px) at 3 000 and more (`rules::FLOW_FULL`: Delft's busiest
