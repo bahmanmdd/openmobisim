@@ -114,8 +114,9 @@ km/h.
   5th percentile of the car links' capacities, or an eighth of the large roads' when lower) and
   the large roads' (the 99th percentile; a car link without a limit too), from a fifth of the way
   between 1 px and the top to the top, 1 px more than the widest ribbon the room leaves, at most
-  18 px. The summary's static maps keep their own rule
-  (2 + 6 √(capacity over the 99th percentile) units).
+  18 px; the room is measured over the road classes the zoom draws in full, never fewer than the
+  second zoom's (an overview of the largest roads alone would read their spacing as room). The
+  summary's static maps keep their own rule (2 + 6 √(capacity over the 99th percentile) units).
 - **Bikes and walkers** are summed per link over the window: views of the same links as the cars.
   A line's width is one rule for both: 1 + 7 √(min(n, 3 000) / 3 000) px for n cyclists or
   walkers over the window, full (8 px) at 3 000 and more (`rules::FLOW_FULL`: Delft's busiest

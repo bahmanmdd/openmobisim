@@ -11,7 +11,10 @@ let ROOM_M = 0, EXPORTING = false;
 const BASE_FLOOR = [0.6, 0.85];
 function measureRoom(cand) {
   const C = ROOM_CELL, nx = Math.ceil(W / C), ny = Math.ceil(H / C), cells = new Float64Array(nx * ny);
-  const lim = Math.min(classLimit(), ZOOM.roads);  // the roads drawn at this zoom: those that carry ribbons
+  // The road classes this zoom draws in full, but never fewer than the second zoom's (ZOOM.limits[1]): an overview
+  // that draws the largest roads alone (a large network, past 25 m a pixel) would read their wide spacing as room
+  // and draw them wider than the next zoom does.
+  const lim = Math.min(Math.max(classLimit(), ZOOM.limits[1]), ZOOM.roads);
   for (const l of cand) {
     if (CLS[l] > lim) continue;
     for (let v = VS[l]; v < VS[l + 1] - 1; v++) {
@@ -29,7 +32,7 @@ function measureRoom(cand) {
   ROOM_M = 2 * C * C / used[Math.floor(0.75 * (used.length - 1))] * S.mpp;
 }
 function roomPx() { return ROOM_M > 0 ? ROOM_M / S.mpp : 40; }
-// The widest ribbon the room leaves: a quarter of the room up to ROOM_KNEE px of room, and beyond it growing with the
+// The widest ribbon the room leaves: ROOM_SHARE of the room up to ROOM_KNEE px of room, and beyond it growing with the
 // room's square root only, between 2.5 and WCAP px (the large roads' ribbon is RIBBON_EXTRA px more, below).
 const ROOM_KNEE = 32;
 function ribbonMaxDrawn() { const r = roomPx(); return Math.max(2.5, Math.min(WCAP, ROOM_SHARE * Math.min(r, ROOM_KNEE) * Math.sqrt(Math.max(r, ROOM_KNEE) / ROOM_KNEE))); }
