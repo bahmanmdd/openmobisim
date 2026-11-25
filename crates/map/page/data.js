@@ -193,7 +193,7 @@ const FLOOR = META.delay_floor_s;
 function delayBand(l) { return meanT[l] - FF[l] < FLOOR ? 0 : band(delay[l]); }
 // The road's colours now: the four bands' (delay, volume over capacity) or the volume's ramp of NCOL steps.
 function palette() { return S.colour === "volume" ? TABLES.volume : TH.bands; }
-const S = { theme: "paper", colour: "delay", bins: [0, NB], playing: false, pair: -1, link: -1, sel: null, hover: -1, hoverItem: null, hoverOpt: -1, allOpts: false, allPairs: false, hidden: new Set(), picking: 0, pickFrom: null, cx: 0, cy: 0, mpp: 1, ly: { road: true, transit: false, bike: false, walk: false } };
+const S = { theme: "paper", colour: "vc", bins: [0, NB], playing: false, pair: -1, link: -1, sel: null, hover: -1, hoverItem: null, hoverOpt: -1, allOpts: false, allPairs: false, hidden: new Set(), picking: 0, pickFrom: null, cx: 0, cy: 0, mpp: 1, ly: { road: true, transit: false, bike: false, walk: false } };
 let TH = TOK[S.theme], TABLES = {};
 function setTheme(name) {
   S.theme = name; TH = TOK[name];

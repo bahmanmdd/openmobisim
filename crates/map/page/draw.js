@@ -11,7 +11,10 @@ let ROOM_M = 0, EXPORTING = false;
 const BASE_FLOOR = [0.6, 0.85];
 function measureRoom(cand) {
   const C = ROOM_CELL, nx = Math.ceil(W / C), ny = Math.ceil(H / C), cells = new Float64Array(nx * ny);
-  const lim = Math.min(classLimit(), ZOOM.roads);  // the roads drawn at this zoom: those that carry ribbons
+  // The road classes this zoom draws in full, but never fewer than the second zoom's (ZOOM.limits[1]): an overview
+  // that draws the largest roads alone (a large network, past 25 m a pixel) would read their wide spacing as room
+  // and draw them wider than the next zoom does.
+  const lim = Math.min(Math.max(classLimit(), ZOOM.limits[1]), ZOOM.roads);
   for (const l of cand) {
     if (CLS[l] > lim) continue;
     for (let v = VS[l]; v < VS[l + 1] - 1; v++) {
@@ -29,20 +32,21 @@ function measureRoom(cand) {
   ROOM_M = 2 * C * C / used[Math.floor(0.75 * (used.length - 1))] * S.mpp;
 }
 function roomPx() { return ROOM_M > 0 ? ROOM_M / S.mpp : 40; }
-// The widest ribbon (a road of the network's largest capacity): a quarter of the room up to ROOM_KNEE px of room,
-// and beyond it growing with the room's square root only, between 2.5 and WCAP px.
+// The widest ribbon the room leaves: ROOM_SHARE of the room up to ROOM_KNEE px of room, and beyond it growing with the
+// room's square root only, between 2.5 and WCAP px (the large roads' ribbon is RIBBON_EXTRA px more, below).
 const ROOM_KNEE = 32;
 function ribbonMaxDrawn() { const r = roomPx(); return Math.max(2.5, Math.min(WCAP, ROOM_SHARE * Math.min(r, ROOM_KNEE) * Math.sqrt(Math.max(r, ROOM_KNEE) / ROOM_KNEE))); }
 function ribbonMax() { return Math.max(WFLOOR, ribbonMaxDrawn()); }
 // The space between a road's two directions (px): each ribbon sits on its own side of the centre line, to the
 // right of its travel, so the two read apart at every zoom.
-let GAP = 2;  // set by each frame: a fifth of the widest ribbon, 1 to 4 px
+let GAP = 2;  // set by each frame: a fifth of the widest ribbon the room leaves, 1 to 4 px
 function ribbonOffset(l, w) { return GAP / 2 + w / 2; }
 // Whether link l is drawn as a ribbon of road traffic now.
 function hasRibbon(l) { return S.ly.road && HAS_TRAFFIC && vol[l] > 0; }
-// A ribbon's width is its road's capacity over the network's large roads' (the 99th percentile of the car links'
-// capacities), from WFLOOR to ribbonMax(): every road of one capacity is one width, whatever its traffic; the traffic
-// is the colour and the hover. A car link without a limit is as wide as the widest.
+// A ribbon's width is set by its road's capacity alone, from WFLOOR px for the small roads to ribbonMax() +
+// RIBBON_EXTRA for the large roads (below): every road of one capacity is one width, whatever its traffic; the
+// traffic is the colour and the hover. RR, each car link's capacity over the large roads' (the 99th percentile of the
+// car links' capacities; 1 without a limit), sets the base lines' tiers.
 const RR = (() => {
   const caps = []; for (let l = 0; l < NL; l++) if ((LM[l] & CAR) && CAP[l] > 0) caps.push(CAP[l]);
   if (!caps.length) return null;
@@ -50,8 +54,24 @@ const RR = (() => {
   for (let l = 0; l < NL; l++) out[l] = !(LM[l] & CAR) ? 0 : CAP[l] > 0 ? CAP[l] / ref : 1;
   return out;
 })();
-function ribbonWidthOf(f) { const top = ribbonMax(); return WFLOOR + (top - WFLOOR) * Math.sqrt(f); }
-function ribbonWidth(l) { return ribbonWidthOf(RR ? Math.min(1, RR[l]) : 1); }
+// The width shows the road hierarchy: a ribbon's place between the network's small roads and its large roads, on a
+// log scale of capacity (a capacity is lanes times its class's value, so a lane more or a class up adds about the
+// same width wherever it starts): 0 at or under the small roads' capacity (the 5th percentile of the car links', or
+// an eighth of the large roads' when that is lower, so a network of near-equal roads draws them near one width), 1
+// at or over the large roads' (the 99th percentile; a car link without a limit too).
+const RLOG = (() => {
+  if (!RR) return null;
+  const caps = []; for (let l = 0; l < NL; l++) if ((LM[l] & CAR) && CAP[l] > 0) caps.push(CAP[l]);
+  const hi = percentile(caps, 0.99), lo = Math.min(percentile(caps, 0.05), hi / 8), out = new Float32Array(NL);
+  for (let l = 0; l < NL; l++) out[l] = !(LM[l] & CAR) ? 0 : CAP[l] > 0 ? Math.max(0, Math.min(1, Math.log(CAP[l] / lo) / Math.log(hi / lo))) : 1;
+  return out;
+})();
+// The large roads' ribbon is RIBBON_EXTRA px wider than the widest the room leaves (ribbonMax), at most WCAP px: the
+// few large roads stand out a little beyond the room the dense small streets leave. The small roads' ribbon keeps
+// RIBBON_SMALL of the way from WFLOOR to that, so its colour still reads (about the width it had before the scale).
+const RIBBON_EXTRA = 1, RIBBON_SMALL = 0.2;
+function ribbonWidthOf(f) { const top = Math.min(WCAP, ribbonMax() + RIBBON_EXTRA); return WFLOOR + (top - WFLOOR) * (RIBBON_SMALL + (1 - RIBBON_SMALL) * f); }
+function ribbonWidth(l) { return ribbonWidthOf(RLOG ? RLOG[l] : 1); }
 // The base line's width, as multiples of the thinnest, and which of BASE_WIDTHS a link takes. With road classes, by
 // its road's tier (version 1's): 0 a link without cars, 1 to 4 a car link by its capacity over the large roads' (RR),
 // from 0, then from each of META's bounds on. Without them, by its drawing class (0, the largest roads, the widest).

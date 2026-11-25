@@ -218,6 +218,9 @@ function start() {
   document.head.appendChild(icon);
   $("routegroup").hidden = !HAS_ROUTES; $("routehint").dataset.text = $("routehint").textContent;
   if (HAS_TRAFFIC) { $("bin").min = 0; $("bin").max = NB - 1; $("bin").value = 0; $("bin").disabled = true; }
+  // The page opens on volume over capacity; on a network without a capacity limit, where every ribbon would read
+  // 0, on the delay over free flow. The address's colour, when it names one, overrides either.
+  if (!RR) S.colour = "delay";
   const p = readHash(); setTheme(S.theme); $("colour").value = S.colour; resize();
   if (HAS_TRAFFIC) { const all = S.bins[1] - S.bins[0] === NB; $("allbins").checked = all; $("bin").disabled = all; $("bin").value = all ? 0 : S.bins[0]; }
   fitTo(EX0, EY0, EX1, EY1, 0.06); FIT.mpp = S.mpp; MAX_MPP = FIT.mpp * 1.6; MIN_MPP = Math.max(0.25, Math.min(0.5, FIT.mpp / 200));
