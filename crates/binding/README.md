@@ -1,7 +1,8 @@
 # openmobisim-binding
 
-The Python module `openmobisim`: nine names, nothing else (`Network`, `Transit`, `Demand`,
-`run`, `run_file`, `Run` and its methods `Run.map`, `Run.summary` and `Run.open`, a static
+The Python module `openmobisim`: eleven names, nothing else (`Network` and its method
+`Network.tables`, `Transit`, `Demand`,
+`run`, `run_file`, `make_case`, `Run` and its methods `Run.map`, `Run.summary` and `Run.open`, a static
 method). Built by maturin (the `pyproject.toml` at the top of the tree) as one
 extension on Python's stable ABI from 3.11 (abi3). Depends on `openmobisim-types`, `-graph`,
 `-transit`, `-demand`, `-loop`, `-io-osm`, `-io-gtfs`, `-io-parquet`, `-map`, `-summary` and `pyo3`; no Python
@@ -11,12 +12,14 @@ release's wheels (Linux, macOS, Windows) and its source archive are built, teste
 
 ```python
 import openmobisim as oms
-network = oms.Network.from_osm(path, region=None, **network_parameters)
+network = oms.Network.from_osm(path, region=None, car_roads="all", **network_parameters)
 network = oms.Network.from_tables(nodes, links, **network_parameters)
+nodes, links = network.tables()
 transit = oms.Transit.from_gtfs(path, network, **transit_parameters)
 demand  = oms.Demand.from_table(trips, classes, network, transit=None, **demand_parameters)
 result  = oms.run(network, demand, transit=None, window=(start_s, end_s), out=folder, **parameters)
 result  = oms.run_file(folder=None, out=folder)
+folder  = oms.make_case(folder, osm, population, region=None, gtfs=None, car_roads="all", trips_per_person=0.1, seed=0)
 result  = oms.Run.open(folder, network=None, demand=None, transit=None)
 page    = result.map(path, title=None)
 page    = result.summary(path, title=None)
@@ -177,10 +180,38 @@ rest.** `Run.open`, `Run.map` and `Run.summary` meet each condition so:
 Each warning names the file and the first five trips or links with their count. A warning given
 by `Run.open` is given again by each page, which reads the tables again.
 
+## Experimental: a lighter car network, and a case in one call
+Two helpers to get started, to be refined; neither changes the reader as it is.
+- **`Network.from_osm(path, region=None, car_roads="all")`**: `"all"` is the reader as it is;
+  `"main"` gives cars the main roads alone (motorways down to unclassified roads, a roundabout
+  tagged below its roads raised to them), bikes and walkers every street as before
+  (`crates/io-osm/README.md`). Any other value is a `ValueError`. A run's record writes
+  `[network] car_roads = "main"`, so it runs again on the same network.
+- **`make_case(folder, osm, population, region=None, gtfs=None, car_roads="all",
+  trips_per_person=0.1, seed=0)`**: writes `trips.parquet` and `run.toml` in `folder` and
+  returns it; `run_file(folder, out=...)` runs it. The network is `from_osm`'s (the extract and
+  the feed are named in `run.toml`, not copied); the trips are `population × trips_per_person`,
+  drawn from the streets by the reader's rules (`crates/io-osm/README.md`: where, who, through
+  traffic, the hour from 07:30; the window 07:30 to 09:30). Nothing is tuned or removed: how
+  congested the case is, and whether every trip finishes, follows from the numbers given. The
+  same arguments give the same files. Fewer than one trip is a `ValueError`. For bikes: 60 % of
+  the travellers own one.
+
 ## Outputs
-`Network`, `Transit` and `Demand` objects (opaque, immutable; each keeps the values it was
+`Network`, `Transit` and `Demand` objects (immutable; each keeps the values it was
 built with, the three build values, `transfer_walk_max`, `stop_walk_max`, for the run's
-record) and, from `run`, `run_file` and `Run.open`, a `Run`: `trips`, `links`, `iterations`,
+record). **`Network.tables()`** gives a network back as `(nodes, links)`, the two tables
+`Network.from_tables` reads, dicts of lists in id order: the nodes (`node_id`, then `lon_deg`,
+`lat_deg` for a network of longitude/latitude, brought back from its projection and written to
+1e-9 degree, a tenth of a millimetre, else `x_m`, `y_m` as they are) and the links (the eight
+columns, the car's speed and capacity written to nine decimals, the car fields `None` on a link
+without cars, then `shape`, in the nodes' kind, and `road_class`, each `None` where the link has
+none). So a network read from an extract can be looked at, changed and kept as tables: the tables
+of Delft's region build a network whose own tables are those tables. Not in the tables, as
+`from_tables` reads neither: the signal marks an extract gives (stored, applied nowhere), so
+the network of the tables has another fingerprint than the one read from the extract; and the
+build values (`bike_speed`, `walk_speed`), given again to `from_tables`. For bikes: a bike link
+comes back as a bike link. And, from `run`, `run_file` and `Run.open`, a `Run`: `trips`, `links`, `iterations`,
 `routes` (the paths of `trips.parquet`, `links.parquet`, `iterations.parquet` and
 `routes.parquet`, written by `crates/io-parquet`, whose README gives every column; `routes`
 one row per trip and leg of what each took at the last iteration), `record` (the path of
@@ -348,6 +379,17 @@ written and checked as files; their behaviour in a browser is not tested automat
   a second call and in another folder, no `http://`, `https://` or `//host.domain` address, the
   stem as its title; a folder as the path is an `OSError`, no partial file left; the run's four
   files and an input file refused by name, unchanged.
+- `test_tables_back.py`: `Network.tables()` by hand (three nodes near Delft given in degrees
+  come back within 1e-9 degree, each link's row as given, a shape's point, no car field on a
+  bike or walk link; a network in metres gives its metres back) and, as a property, on Delft's
+  region read from the extract: its tables build a network whose own tables are the same, with
+  no repair.
+- `test_make_case.py`: the two experimental helpers on Delft's region. `car_roads="main"`:
+  the bike and walk rows are the reader's as it is, no car link on a residential street,
+  living street or service road, fewer car links, another value refused. `make_case`: 2 000
+  trips for 20 000 people, ids, the hour, the classes' bikes, a through trip a car's alone over
+  at least 1 km, 5 % of them within four standard deviations, the same bytes twice, and the
+  folder run by `run_file`, its record holding `car_roads` and running again to the same trips.
 - `test_drawing.py`: the links table's `shape` and `road_class` on the hand run (st1 bent
   through (750, 300) m, a primary road; ab a cycleway; st2 residential): the fingerprints and the
   trips the plain run's; the map's data hold the bend (7 500 and 3 000 dm) and the classes

@@ -22,8 +22,9 @@
 //! car_drive_min = 1.0
 //! ...                          (one table per class, a key per column of the choice row)
 //!
-//! [network]                    osm_file and region (the region the extract was cut to, absent
-//!                              for the whole extract), or nodes_file and links_file; each
+//! [network]                    osm_file, region (the region the extract was cut to, absent
+//!                              for the whole extract) and car_roads = "main" (absent for
+//!                              cars on every car road), or nodes_file and links_file; each
 //!                              absent for a table given in memory, so the table may be empty
 //! [demand]                     trips_file (absent likewise), classes
 //! [transit]                    gtfs_file; absent without transit
@@ -72,12 +73,13 @@ use std::path::{Component, Path, Prefix};
 
 use openmobisim_demand::demand::Demand;
 use openmobisim_graph::network::Network;
-use openmobisim_io_osm::{Region, Report};
+use openmobisim_io_osm::{CarRoads, Region, Report};
 use openmobisim_loop::parameters::{COLUMNS, ChoiceModel};
 use openmobisim_loop::run::Run;
 use openmobisim_types::repairs::Repairs;
+use openmobisim_types::time::Second;
 
-use crate::{Given, Source, WriteError};
+use crate::{Files, Given, Source, WriteError};
 
 /// The file's first line.
 const HEAD: &str = "# The record of one openmobisim run, written by the run: part one, every line \
@@ -158,7 +160,7 @@ pub const KEYS: [(&str, &[&str]); 11] = [
             "coefficients",
         ],
     ),
-    ("network", &["osm_file", "region", "nodes_file", "links_file"]),
+    ("network", &["osm_file", "region", "car_roads", "nodes_file", "links_file"]),
     ("demand", &["trips_file", "classes"]),
     ("transit", &["gtfs_file"]),
     (
@@ -227,6 +229,17 @@ struct Toml {
 }
 
 impl Toml {
+    /// The text from its first line `head` to the window's keys.
+    fn start(head: &str, (start, end): (Second, Second)) -> Result<Self, WriteError> {
+        let mut t = Self { text: format!("{head}\n"), table: String::new() };
+        t.keys(&[
+            ("format", Value::Int(1)),
+            ("window_start_s", Value::Int(u64::from(start.get()))),
+            ("window_end_s", Value::Int(u64::from(end.get()))),
+        ])?;
+        Ok(t)
+    }
+
     /// Start a table: a blank line, then its header.
     fn table(&mut self, header: &str) {
         self.text.push_str(&format!("\n[{header}]\n"));
@@ -343,13 +356,7 @@ pub(crate) fn text(
     given: &Given<'_>,
     folder: Option<&Path>,
 ) -> Result<String, WriteError> {
-    let mut t = Toml { text: format!("{HEAD}\n"), table: String::new() };
-    let (start, end) = run.window_given;
-    t.keys(&[
-        ("format", Value::Int(1)),
-        ("window_start_s", Value::Int(u64::from(start.get()))),
-        ("window_end_s", Value::Int(u64::from(end.get()))),
-    ])?;
+    let mut t = Toml::start(HEAD, run.window_given)?;
     t.table("parameters");
     for (name, unit) in UNITS {
         if let Some(value) = parameter(name, given) {
@@ -365,7 +372,8 @@ pub(crate) fn text(
             t.key(column, &Value::Float(b), None)?;
         }
     }
-    settings_inputs(&mut t, demand, given, folder)?;
+    let classes = demand.class_ids().iter().collect();
+    settings_inputs(&mut t, &given.source, &given.files, classes, folder)?;
     t.text.push_str(&format!("\n{PART_TWO}"));
     t.table("result");
     t.key("openmobisim_version", &Value::Str(env!("CARGO_PKG_VERSION")), None)?;
@@ -437,25 +445,45 @@ fn files(
 /// input files' paths, the region the extract was cut to, and the classes.
 fn settings_inputs(
     t: &mut Toml,
-    demand: &Demand,
-    given: &Given<'_>,
+    source: &Source<'_>,
+    f: &Files<'_>,
+    classes: Vec<&str>,
     folder: Option<&Path>,
 ) -> Result<(), WriteError> {
-    let f = &given.files;
     t.table("network");
     files(t, &[("osm_file", f.osm)], folder)?;
-    if let Source::Osm(Report { region: Some(region), .. }) = given.source {
+    if let Source::Osm(Report { region: Some(region), .. }) = source {
         t.key("region", &Value::Region(region), None)?;
+    }
+    if let Source::Osm(Report { car_roads: CarRoads::Main, .. }) = source {
+        t.key("car_roads", &Value::Str("main"), None)?;
     }
     files(t, &[("nodes_file", f.nodes), ("links_file", f.links)], folder)?;
     t.table("demand");
     files(t, &[("trips_file", f.trips)], folder)?;
-    t.key("classes", &Value::Strs(demand.class_ids().iter().collect()), None)?;
-    if given.transit.is_some() {
+    t.key("classes", &Value::Strs(classes), None)?;
+    if f.gtfs.is_some() {
         t.table("transit");
         files(t, &[("gtfs_file", f.gtfs)], folder)?;
     }
     Ok(())
+}
+
+/// The settings file of a case made from an extract: the window, then the tables `[network]`,
+/// `[demand]` and `[transit]` as a record writes them (every parameter left to its default),
+/// each file's path relative to `folder`.
+pub(crate) fn case_text(
+    window: (Second, Second),
+    report: &Report,
+    files: &Files<'_>,
+    classes: Vec<&str>,
+    folder: &Path,
+) -> Result<String, WriteError> {
+    let head = "# A case made by openmobisim.make_case: openmobisim.run_file(this folder, \
+                out=...) runs it.";
+    let mut t = Toml::start(head, window)?;
+    settings_inputs(&mut t, &Source::Osm(report), files, classes, Some(folder))?;
+    Ok(t.text)
 }
 
 /// Part two's tables of the inputs, `[result.network]`, `[result.demand]` and

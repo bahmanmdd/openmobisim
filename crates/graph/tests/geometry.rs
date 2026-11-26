@@ -5,14 +5,15 @@
 //! the equator, 10 000 000 m in the south), and the WGS84 ellipsoid's meridian and parallel arcs,
 //! against which a projected distance on the central meridian is exactly k0 = 0.9996 times the
 //! arc. Between them they catch a wrong coefficient, a transposed axis, a radian/degree slip or a
-//! hemisphere error.
+//! hemisphere error. The way back, metres to degrees, is held to the property that it undoes the
+//! projection, and to the grid's origin.
 
 // Exact comparison is used only where the value is exact by construction.
 #![allow(clippy::float_cmp, reason = "the central-meridian identity is exact")]
 
 use openmobisim_graph::geometry::{
     Hemisphere, LonLat, Projection, ProjectionError, UTM_FALSE_EASTING, UTM_FALSE_NORTHING_SOUTH,
-    UTM_K0, UtmZone,
+    UTM_K0, UtmZone, Xy,
 };
 
 /// WGS84 semi-major axis and first eccentricity squared.
@@ -197,4 +198,41 @@ fn projectability_is_checked_where_it_is_cheap() {
     assert!(!LonLat::new(4.8, 85.0).is_projectable());
     assert!(!LonLat::new(181.0, 45.0).is_projectable());
     assert!(!LonLat::new(0.0, f64::INFINITY).is_projectable());
+}
+
+#[test]
+fn a_point_projected_and_brought_back_is_the_point() {
+    // A property: `unproject` undoes `project`. Over each zone's width and beyond its edge
+    // (4° either side of the central meridian), from 78°S to 82°N, in three zones of both
+    // hemispheres, to 1e-11 degree (a micrometre). `project` itself is held to the meridian
+    // and parallel arcs above.
+    for (meridian, south) in [(3.0, false), (15.0, false), (-45.0, true)] {
+        let lat0 = if south { -1.0 } else { 1.0 };
+        let proj = Projection::wgs84(zone_for(meridian, lat0));
+        for i in -8..=8 {
+            for j in -16..=16 {
+                let p = LonLat::new(meridian + f64::from(i) * 0.5, f64::from(j) * 5.0 + 2.0);
+                if (p.lat < 0.0) != south || p.lat > 84.0 {
+                    continue;
+                }
+                let back = proj.unproject(proj.project(p));
+                assert!(
+                    (back.lon - p.lon).abs() < 1e-11 && (back.lat - p.lat).abs() < 1e-11,
+                    "{p:?} came back as {back:?}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn the_grids_origin_is_the_central_meridian_at_the_equator() {
+    // By the grid's definition: easting 500 000 m is the central meridian, northing 0 the
+    // equator (10 000 000 m in the south).
+    let north = Projection::wgs84(zone_for(3.0, 1.0));
+    let o = north.unproject(Xy { x: UTM_FALSE_EASTING, y: 0.0 });
+    assert!((o.lon - 3.0).abs() < 1e-12 && o.lat.abs() < 1e-12, "{o:?}");
+    let south = Projection::wgs84(zone_for(-45.0, -1.0));
+    let o = south.unproject(Xy { x: UTM_FALSE_EASTING, y: UTM_FALSE_NORTHING_SOUTH });
+    assert!((o.lon + 45.0).abs() < 1e-12 && o.lat.abs() < 1e-12, "{o:?}");
 }

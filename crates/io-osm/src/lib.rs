@@ -25,15 +25,17 @@ pub mod region;
 pub mod source;
 mod strong;
 pub mod tags;
+pub mod trips;
 
 use std::path::Path;
 
 use openmobisim_graph::network::{BuildValues, Network};
 
-pub use import::{Report, network};
+pub use import::{Report, network, network_for};
 pub use pbf::read_pbf;
 pub use region::{Region, RegionError};
 pub use source::{Osm, OsmError, OsmNode, OsmWay};
+pub use tags::CarRoads;
 
 /// Read the `.osm.pbf` file at `path` (cut to `region`, if given) into the network, built with
 /// `values` (the caller's: `capacity_per_lane`, `bike_speed`, `walk_speed`, see

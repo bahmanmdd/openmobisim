@@ -175,7 +175,7 @@ what the run found and did.
   row (`openmobisim_loop::parameters::COLUMNS`). `osm_class_defaults` is never written: its one
   value is the OSM reader's one table (`crates/io-osm/README.md`).
 - `[network]`: `osm_file` and `region` (the region the extract was cut to: `[west, south, east,
-  north]` for a box, `[[lon, lat], …]` for a polygon, in degrees; absent for the whole extract),
+  north]` for a box, `[[lon, lat], …]` for a polygon, in degrees; absent for the whole extract) and `car_roads = "main"` (absent for cars on every car road),
   or `nodes_file` and `links_file`, each absent for a table given in memory (the table is then
   empty).
 - `[demand]`: `trips_file` (absent for a table given in memory), `classes` (the class ids in id
@@ -284,6 +284,11 @@ is text in its `modes` cell, read like any other text: the reader knows no mode.
 
 ## Tests
 `cargo test -p openmobisim-io-parquet`. Each expected value comes from outside the simulator:
+- **A made case** (experimental; `write_case`, `src/case.rs`): the trips the OSM reader drew
+  as `trips.parquet` (the trips table `Demand.from_table` reads: `trip_id`, the origin and
+  destination in the trips' kind, `departure_s`, `class_id`, `modes`) and `run.toml` (the
+  window, then `[network]`, `[demand]` and `[transit]` as a record writes them, every parameter
+  left to its default). Tested through the binding (`crates/binding/tests/test_make_case.py`).
 - **The hand run** (`tests/hand_run.rs`): seven trips on three links in a window from 07:00:00
   (25 200 s of the clock), so the clock and the window's seconds differ in every time column;
   every value derived by hand in the test's header: a bike that rides 1 500 m in 360 s, a

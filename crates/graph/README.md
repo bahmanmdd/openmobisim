@@ -22,7 +22,8 @@ the distances' maths in pure Rust, not the platform's) only.
 ## Outputs
 `Network`: counts and external-id tables of nodes and links; per node its position in metres
 and signalised flag; per link its two nodes, length, free-flow speed and time per mode,
-capacity, lanes, modes and signal flag; out- and in-links per node; the projection, if any;
+capacity, lanes, modes and signal flag; out- and in-links per node; the projection, if any
+(`project`, degrees to metres, and `unproject`, the way back, to a micrometre);
 `bike_speed()` and `walk_speed()`, the build values in m/s, the same on every link;
 `fingerprint()`, below; for drawing only, per link `shape()` (its points between the ends, in
 metres; empty: straight) and `road_class()`. No crate that runs anything reads these two; they
@@ -111,7 +112,9 @@ infinite capacity, 0 lanes; the bike and walk speeds read back, 36 km/h as 10 m/
 as 2 m/s); hand capacities (1 200 veh/h is 1/3 veh/s; 2 lanes × 1 800 veh/h
 is 1 veh/s; a car row's infinity kept as an unlimited capacity); Pythagoras (3 m and 4 m apart is 5 m); a hand count of a 3 × 3
 grid (9 nodes, 24 links, out-degrees 2, 3, 4); the standard library's sort for the id order;
-the UTM grid's definition and the WGS84 meridian and parallel arcs for the projection. Drawings
+the UTM grid's definition and the WGS84 meridian and parallel arcs for the projection, and for
+the way back the property that a point projected and brought back is the point (to 1e-11 degree,
+over three zones and both hemispheres) and the grid's origin. Drawings
 (`tests/drawing.rs`): a shape and a class kept as given; a link without one straight and
 unclassed; the length (1 000 m, not the 1 166.2 m along the bend) and the fingerprint unchanged
 by a shape and a class, on a street and a cycle path; a point in longitude/latitude projected as

@@ -38,8 +38,8 @@ use crate::region::{Region, clip};
 use crate::source::{Osm, OsmError, OsmWay};
 use crate::strong::largest_component;
 use crate::tags::{
-    Car, CarNotes, RoadClass, bike_way, car_fields, direction, road_class, signalised, splits,
-    walk_way,
+    Car, CarNotes, CarRoads, RoadClass, bike_way, car_fields, direction, minor_roundabout,
+    road_class, signalised, splits, walk_way,
 };
 
 /// What a read made of an extract, counted, what it set right instead of refusing, and the
@@ -64,6 +64,8 @@ pub struct Report {
     pub repairs: Repairs,
     /// The region the extract was cut to; `None`: the whole extract.
     pub region: Option<Region>,
+    /// The roads cars were read on.
+    pub car_roads: CarRoads,
 }
 
 /// What one direction of a way carries on a layer: the car's fields on the car layer, none on
@@ -131,7 +133,23 @@ pub fn network(
     values: BuildValues,
     region: Option<&Region>,
 ) -> Result<(Network, Report), OsmError> {
-    let mut report = Report { region: region.cloned(), ..Report::default() };
+    network_for(osm, values, region, CarRoads::All)
+}
+
+/// [`network`] with the roads cars drive chosen: under [`CarRoads::Main`] cars drive no minor
+/// street, and a roundabout tagged as one is driven as the largest main road meeting it
+/// ([`roundabout_classes`]). Bikes and walkers are read the same either way.
+///
+/// # Errors
+///
+/// As [`network`].
+pub fn network_for(
+    osm: &Osm,
+    values: BuildValues,
+    region: Option<&Region>,
+    car_roads: CarRoads,
+) -> Result<(Network, Report), OsmError> {
+    let mut report = Report { region: region.cloned(), car_roads, ..Report::default() };
     let mut ways: Vec<&OsmWay> = osm.ways.iter().collect();
     ways.sort_by_key(|w| w.id);
     let mut last = None;
@@ -179,6 +197,8 @@ pub fn network(
 
     // A way's tags are repaired, counted and warned only if the way gives a piece: a way the
     // region (or the extract) leaves without two nodes in a row is read with its repairs dropped.
+    let main = car_roads == CarRoads::Main;
+    let raised = if main { roundabout_classes(&held) } else { HashMap::new() };
     let mut links = Vec::new();
     for mode in [Mode::Car, Mode::Bike, Mode::Walk] {
         let specs: Vec<(Option<Spec>, bool)> = held
@@ -186,7 +206,8 @@ pub fn network(
             .map(|h| {
                 let mut dropped = Repairs::default();
                 let kept = !h.runs().is_empty();
-                spec(mode, h.way, if kept { &mut report.repairs } else { &mut dropped })
+                let repairs = if kept { &mut report.repairs } else { &mut dropped };
+                spec(mode, h.way, main, raised.get(&h.way.id).copied(), repairs)
             })
             .collect();
         links.extend(layer(mode, &held, &specs, &split_nodes, &mut report));
@@ -225,10 +246,70 @@ fn hold<'a>(
     Held { way, points, segment_m }
 }
 
+/// The car class of each roundabout of a minor street class ([`minor_roundabout`]) that a main
+/// car road meets: the largest class of the main roads sharing a held node with the ring.
+/// A ring drawn as several ways is one ring (the ways that share a held node, transitively), so
+/// every way of it gets the one class, whichever of them the roads meet. A ring no car road
+/// meets is not raised: cars do not drive it.
+fn roundabout_classes(held: &[Held<'_>]) -> HashMap<i64, RoadClass> {
+    let nodes_of = |h: &Held<'_>| -> Vec<i64> {
+        h.runs().into_iter().flatten().map(|k| h.way.nodes[k]).collect()
+    };
+    let mut largest_at: HashMap<i64, RoadClass> = HashMap::new();
+    let mut ways: Vec<(i64, Vec<i64>)> = Vec::new();
+    for h in held {
+        let n = h.way.nodes.len();
+        if minor_roundabout(&h.way.tags, n) {
+            ways.push((h.way.id, nodes_of(h)));
+        } else if let Some(class) =
+            road_class(&h.way.tags, n).filter(|c| c.car().is_some() && !c.is_minor())
+        {
+            for node in nodes_of(h) {
+                largest_at.entry(node).and_modify(|c| *c = (*c).min(class)).or_insert(class);
+            }
+        }
+    }
+    // The ring of each way: the first way (in way order) reached through shared nodes.
+    let mut ring: Vec<usize> = (0..ways.len()).collect();
+    fn first(ring: &mut [usize], mut i: usize) -> usize {
+        while ring[i] != i {
+            ring[i] = ring[ring[i]];
+            i = ring[i];
+        }
+        i
+    }
+    let mut way_at: HashMap<i64, usize> = HashMap::new();
+    for (i, (_, nodes)) in ways.iter().enumerate() {
+        for &node in nodes {
+            let other = *way_at.entry(node).or_insert(i);
+            let (a, b) = (first(&mut ring, other), first(&mut ring, i));
+            ring[a.max(b)] = a.min(b);
+        }
+    }
+    let mut class_of: HashMap<usize, RoadClass> = HashMap::new();
+    for (i, (_, nodes)) in ways.iter().enumerate() {
+        if let Some(class) = nodes.iter().filter_map(|n| largest_at.get(n)).min().copied() {
+            let r = first(&mut ring, i);
+            class_of.entry(r).and_modify(|c| *c = (*c).min(class)).or_insert(class);
+        }
+    }
+    (0..ways.len())
+        .filter_map(|i| class_of.get(&first(&mut ring, i)).map(|&class| (ways[i].0, class)))
+        .collect()
+}
+
 /// What `way` gives the layer of `mode`, and whether it counts in the layer's junctions (on
-/// the car layer, every road; on the others, every way the layer uses). A car way's tags that
-/// needed setting right are noted in `repairs`.
-fn spec(mode: Mode, way: &OsmWay, repairs: &mut Repairs) -> (Option<Spec>, bool) {
+/// the car layer, every road; on the others, every way the layer uses). Cars drive a way of a
+/// car class; with `main` (the main roads alone) no minor street, but a roundabout `raised` to
+/// a main class ([`roundabout_classes`]), as that class. A car way's tags that needed setting
+/// right are noted in `repairs`.
+fn spec(
+    mode: Mode,
+    way: &OsmWay,
+    main: bool,
+    raised: Option<RoadClass>,
+    repairs: &mut Repairs,
+) -> (Option<Spec>, bool) {
     let n = way.nodes.len();
     let plain = |(class, d): (RoadClass, crate::tags::Direction)| Spec {
         class,
@@ -247,8 +328,11 @@ fn spec(mode: Mode, way: &OsmWay, repairs: &mut Repairs) -> (Option<Spec>, bool)
             (s, counted)
         }
         _ => {
-            let Some(class) = road_class(&way.tags, n) else { return (None, false) };
-            let Some(defaults) = class.car() else { return (None, true) };
+            let Some(tagged) = road_class(&way.tags, n) else { return (None, false) };
+            let class = raised.unwrap_or(tagged);
+            let Some(defaults) = class.car().filter(|_| !(main && class.is_minor())) else {
+                return (None, true);
+            };
             let mut notes = CarNotes::default();
             let (f, b) = car_fields(&way.tags, direction(&way.tags, class), defaults, &mut notes);
             note(&notes, way.id, repairs);

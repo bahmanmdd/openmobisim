@@ -351,8 +351,9 @@ fn load<'py>(py: Python<'py>, f: File, path: &Path) -> PyResult<(Bound<'py, PyDi
 
 /// Where the network is read from.
 enum NetworkFiles {
-    /// The extract, and the region it was cut to (`[network] region`, as `tomllib` reads it).
-    Osm(PathBuf, Option<Py<PyAny>>),
+    /// The extract, the region it was cut to (`[network] region`, as `tomllib` reads it) and
+    /// the roads cars drive (`car_roads`, absent for all).
+    Osm(PathBuf, Option<Py<PyAny>>, Option<String>),
     Tables(PathBuf, PathBuf),
 }
 
@@ -363,7 +364,8 @@ fn network_files(f: File, net: &Bound<'_, PyDict>, folder: &Path) -> PyResult<Ne
     };
     match (file("osm_file")?, file("nodes_file")?, file("links_file")?) {
         (Some(osm), None, None) => {
-            Ok(NetworkFiles::Osm(osm, net.get_item("region")?.map(Bound::unbind)))
+            let car_roads = value::<String>(f, net, "network", "car_roads")?;
+            Ok(NetworkFiles::Osm(osm, net.get_item("region")?.map(Bound::unbind), car_roads))
         }
         (Some(_), _, _) => Err(refuse(
             f,
@@ -552,8 +554,15 @@ fn build_network(
     keywords: &Bound<'_, PyDict>,
 ) -> PyResult<Network> {
     match files {
-        NetworkFiles::Osm(osm, region) => {
-            Network::from_osm(py, osm, region.as_ref().map(|r| r.bind(py)), Some(keywords))
+        NetworkFiles::Osm(osm, region, car_roads) => {
+            let region = region.as_ref().map(|r| r.bind(py));
+            Network::from_osm(
+                py,
+                osm,
+                region,
+                car_roads.as_deref().unwrap_or("all"),
+                Some(keywords),
+            )
         }
         NetworkFiles::Tables(nodes, links) => {
             let (nodes, links) = (nodes.into_pyobject(py)?, links.into_pyobject(py)?);

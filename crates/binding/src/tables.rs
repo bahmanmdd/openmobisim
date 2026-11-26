@@ -34,14 +34,15 @@ use std::path::{Path, PathBuf};
 
 use openmobisim_demand::input::TripRow;
 use openmobisim_graph::geometry::{LonLat, Position, Xy};
-use openmobisim_graph::network::{LinkDrawing, LinkRow, NetworkBuilder, SHAPES_UNREAD};
+use openmobisim_graph::network::{LinkDrawing, LinkRow, Network, NetworkBuilder, SHAPES_UNREAD};
 use openmobisim_io_parquet::{Cells, InputTable, ReadError, read_table};
+use openmobisim_types::ids::{EntityId, LinkId, NodeId};
 use openmobisim_types::mode::{Mode, ModeSet};
 use openmobisim_types::repairs::Repairs;
 use openmobisim_types::time::Second;
 use pyo3::exceptions::{PyOSError, PyValueError};
 use pyo3::prelude::*;
-use pyo3::types::{PyBool, PyList, PyString};
+use pyo3::types::{PyBool, PyDict, PyList, PyString};
 
 /// The optional columns of the links table, for drawing only: `shape` (the points between the
 /// two ends, text `x y;x y`, of the nodes' kind) and `road_class` (text). Absent or null: none.
@@ -475,4 +476,80 @@ pub(crate) fn trips(trips: &Bound<'_, PyAny>) -> PyResult<(Vec<TripRow>, Repairs
         });
     }
     Ok((rows, repairs, given))
+}
+
+/// A number to nine decimals: free of the last bits a change of unit or the way back from the
+/// projection leaves (30 km/h held in m/s reads back as 30.000000000000004; a tenth of a
+/// millimetre in degrees is 1e-9).
+fn tidy(v: f64) -> f64 {
+    if v.is_finite() { (v * 1e9).round() / 1e9 } else { v }
+}
+
+/// `network` as the two tables [`network`] reads, dicts of lists: the nodes (`node_id`, then
+/// `lon_deg`, `lat_deg` for a network of longitude/latitude, brought back from its projection,
+/// else `x_m`, `y_m`) and the links ([`LINK_COLUMNS`], the car fields `None` on a link without
+/// cars, then `shape` and `road_class`, `None` where the link has none), each in id order.
+pub(crate) fn of_network<'py>(
+    py: Python<'py>,
+    net: &Network,
+) -> PyResult<(Bound<'py, PyDict>, Bound<'py, PyDict>)> {
+    let projection = net.projection();
+    let place = |xy: Xy| match projection {
+        Some(p) => {
+            let at = p.unproject(xy);
+            (tidy(at.lon), tidy(at.lat))
+        }
+        None => (xy.x, xy.y),
+    };
+    let node_id = |n: NodeId| net.node_ids().external(n.raw()).to_owned();
+    let (mut ids, mut first, mut second) = (Vec::new(), Vec::new(), Vec::new());
+    for n in NodeId::iter_space(net.node_count()) {
+        let (a, b) = place(net.node_position(n));
+        ids.push(node_id(n));
+        first.push(a);
+        second.push(b);
+    }
+    let nodes = PyDict::new(py);
+    let names = if projection.is_some() { ["lon_deg", "lat_deg"] } else { ["x_m", "y_m"] };
+    nodes.set_item("node_id", ids)?;
+    nodes.set_item(names[0], first)?;
+    nodes.set_item(names[1], second)?;
+
+    let (mut id, mut up, mut down, mut modes) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+    let (mut length, mut lanes, mut speed, mut capacity) =
+        (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+    let (mut shape, mut class) = (Vec::new(), Vec::new());
+    for l in LinkId::iter_space(net.link_count()) {
+        let car = net.modes(l).contains(Mode::Car);
+        id.push(net.link_ids().external(l.raw()).to_owned());
+        up.push(node_id(net.upstream(l)));
+        down.push(node_id(net.downstream(l)));
+        modes.push(net.modes(l).iter().map(|m| m.to_string()).collect::<Vec<_>>().join(";"));
+        length.push(net.length(l).0);
+        lanes.push(car.then(|| net.lanes(l)));
+        speed.push(car.then(|| tidy(net.free_flow_speed(l, Mode::Car).0 * 3.6)));
+        capacity.push(car.then(|| tidy(net.capacity(l).0 * 3600.0)));
+        let points: Vec<String> = net
+            .shape(l)
+            .iter()
+            .map(|&xy| {
+                let (a, b) = place(xy);
+                format!("{a} {b}")
+            })
+            .collect();
+        shape.push((!points.is_empty()).then(|| points.join(";")));
+        class.push(net.road_class(l).map(str::to_owned));
+    }
+    let links = PyDict::new(py);
+    links.set_item("link_id", id)?;
+    links.set_item("upstream", up)?;
+    links.set_item("downstream", down)?;
+    links.set_item("modes", modes)?;
+    links.set_item("length_m", length)?;
+    links.set_item("lanes", lanes)?;
+    links.set_item("car_speed_km_h", speed)?;
+    links.set_item("capacity_veh_h", capacity)?;
+    links.set_item("shape", shape)?;
+    links.set_item("road_class", class)?;
+    Ok((nodes, links))
 }
