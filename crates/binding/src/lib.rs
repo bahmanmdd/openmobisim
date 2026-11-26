@@ -1,14 +1,15 @@
 //! The Python binding: the module `openmobisim`, with `Network`, `Transit`, `Demand`, `run`,
-//! `run_file`, `Run` and its methods `Run.map`, `Run.summary` and `Run.open`, and nothing else.
+//! `run_file`, `make_case`, `Run` and its methods `Run.map`, `Run.summary` and `Run.open`, and nothing else.
 //!
 //! ```python
 //! import openmobisim as oms
-//! network = oms.Network.from_osm(path, region=None, **network_parameters)
+//! network = oms.Network.from_osm(path, region=None, car_roads="all", **network_parameters)
 //! network = oms.Network.from_tables(nodes, links, **network_parameters)
 //! transit = oms.Transit.from_gtfs(path, network, **transit_parameters)
 //! demand  = oms.Demand.from_table(trips, classes, network, transit=None, **demand_parameters)
 //! result  = oms.run(network, demand, transit=None, window=(start_s, end_s), out=folder, **parameters)
 //! result  = oms.run_file(folder=None, out=folder)
+//! folder  = oms.make_case(folder, osm, population, region=None, gtfs=None, car_roads="all")
 //! result  = oms.Run.open(folder, network=None, demand=None, transit=None)
 //! page    = result.map(path)
 //! page    = result.summary(path)
@@ -28,6 +29,7 @@
 //! done, the key and the first five ids; and kept as a dict, key to count, on the object
 //! (`Network.repairs`, `Transit.repairs`, `Demand.repairs`) and on the run (`Run.repairs`).
 
+mod case;
 mod keywords;
 mod record;
 mod reports;
@@ -40,7 +42,7 @@ use std::sync::Arc;
 use openmobisim_demand::demand::Demand as RustDemand;
 use openmobisim_graph::network::{BuildValues, Network as RustNetwork};
 use openmobisim_io_gtfs::{GtfsError, Lines, Report as GtfsReport};
-use openmobisim_io_osm::{OsmError, Report as OsmReport};
+use openmobisim_io_osm::{CarRoads, OsmError, Report as OsmReport};
 use openmobisim_io_parquet::{
     Files, Given as RunGiven, OutputError, Source, Transit as RunTransit, WriteError,
 };
@@ -145,28 +147,42 @@ struct Network {
 impl Network {
     /// Read one `.osm.pbf` extract, cut to `region` if given: a `(west, south, east, north)`
     /// box or a sequence of `(lon, lat)` points of a polygon, in WGS84 degrees, lists and tuples
-    /// alike. Keywords:
+    /// alike. `car_roads`: `"all"`, cars on every road of a car class, or `"main"`
+    /// (experimental), cars on motorways down to unclassified roads alone. Keywords:
     /// `capacity_per_lane` (veh/h per lane), `bike_speed`, `walk_speed` (km/h),
     /// `osm_class_defaults` (only `None`: the reader's one table, `crates/io-osm/README.md`).
     #[staticmethod]
-    #[pyo3(signature = (path, region=None, **network_parameters))]
+    #[pyo3(signature = (path, region=None, car_roads="all", **network_parameters))]
     #[allow(clippy::needless_pass_by_value, reason = "pyo3 hands the arguments over by value")]
     fn from_osm(
         py: Python<'_>,
         path: PathBuf,
         region: Option<&Bound<'_, PyAny>>,
+        car_roads: &str,
         network_parameters: Option<&Bound<'_, PyDict>>,
     ) -> PyResult<Self> {
         let given = Given::read(Entry::Network, "Network.from_osm", network_parameters)?;
         let values = build_values(&given)?;
         let region = keywords::region(region)?;
+        let car_roads = match car_roads {
+            "all" => CarRoads::All,
+            "main" => CarRoads::Main,
+            other => {
+                return Err(PyValueError::new_err(format!(
+                    "car_roads: {other:?} is neither \"all\" nor \"main\""
+                )));
+            }
+        };
         if given.raw("osm_class_defaults").is_some_and(|v| !v.is_none()) {
             return Err(PyValueError::new_err(
                 "osm_class_defaults: the OSM reader reads one class table, the one in \
                  crates/io-osm/README.md; it takes no other, so the only value is None",
             ));
         }
-        let read = py.detach(|| openmobisim_io_osm::read(&path, values, region.as_ref()));
+        let read = py.detach(|| {
+            let osm = openmobisim_io_osm::read_pbf(&path)?;
+            openmobisim_io_osm::network_for(&osm, values, region.as_ref(), car_roads)
+        });
         let (network, report) = read.map_err(|e| match e {
             OsmError::Io { .. } => PyOSError::new_err(e.to_string()),
             _ => value_error(&e),
@@ -225,6 +241,12 @@ impl Network {
     #[getter]
     fn repairs(&self, py: Python<'_>) -> PyResult<Py<PyDict>> {
         repairs_dict(py, counts(&self.repairs))
+    }
+
+    /// The network as the two tables `from_tables` reads, `(nodes, links)`, dicts of lists in
+    /// id order: a network read from an extract, to look at, change or keep as tables.
+    fn tables<'py>(&self, py: Python<'py>) -> PyResult<(Bound<'py, PyDict>, Bound<'py, PyDict>)> {
+        tables::of_network(py, &self.network)
     }
 }
 
@@ -799,5 +821,6 @@ fn openmobisim(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<Run>()?;
     m.add_function(wrap_pyfunction!(run, m)?)?;
     m.add_function(wrap_pyfunction!(record::run_file, m)?)?;
+    m.add_function(wrap_pyfunction!(case::make_case, m)?)?;
     Ok(())
 }

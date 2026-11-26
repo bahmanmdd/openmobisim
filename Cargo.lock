@@ -614,6 +614,8 @@ name = "openmobisim-io-osm"
 version = "0.2.0-dev"
 dependencies = [
  "flate2",
+ "libm",
+ "openmobisim-demand",
  "openmobisim-graph",
  "openmobisim-types",
  "osmpbf",

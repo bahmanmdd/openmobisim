@@ -25,7 +25,7 @@ travel, fixed-order reductions and random streams. It depends on `libm`, `rand_c
   (length / speed = duration, speed × duration = length, flow × duration = vehicles).
 - `reduce`: `fixed_order_sum`, `fixed_order_map_sum`, `fixed_order_chunk_reduce`,
   `fixed_order_map`.
-- `rng`: `Stream`, `RngKey`, `DrawAddress`, `StreamRng`, `DrawBlock` (sixteen words per address;
+- `rng`: `Stream` (choice, reselection, and the trips a reader draws), `RngKey`, `DrawAddress`, `StreamRng`, `DrawBlock` (sixteen words per address;
   uniform, open-uniform, Gumbel and Bernoulli draws).
 - `fingerprint`: `Fingerprint`, the 64-bit FNV-1a hash (offset basis `0xcbf29ce484222325`,
   prime `0x100000001b3`) that the network, the timetable and the demand feed what they were

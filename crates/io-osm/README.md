@@ -17,6 +17,26 @@ its lanes, free-flow speed and capacity, from its tags and its road class. Depen
   `Osm` with the ways tagged `highway` or `route=ferry` and the nodes they name. No options: one
   behaviour, version 1's Python default (`contract`, `connectivity="strong"`,
   `contract_drivable`, `layers`, `region_stubs`, `region_buffer_m=2000`).
+- **Experimental**, to be refined: `network_for(&osm, values, region, car_roads)`, the same with
+  the roads cars drive chosen. `CarRoads::All` is `network` itself. `CarRoads::Main` gives cars
+  the main roads alone, motorways down to `unclassified`, and no `residential`,
+  `living_street` or `service` road: a lighter car network whose main roads run past the side
+  streets as one link. A roundabout tagged as one of those three classes
+  (`junction=roundabout|circular`, a road, not closed to cars) is driven as the largest main
+  class meeting it, with that class's defaults, so that it does not cut the roads through it; a
+  ring drawn as several ways is one ring. Every road still counts in the car links' junctions
+  before the merging; bikes and walkers are read the same either way. The report holds
+  `car_roads`.
+- **Experimental**: `trips::draw(&network, trips, start, with_transit, seed)`, a morning's trips
+  drawn from the streets of a network read here, as the demand crate's `TripRow`s. Homes by
+  the length of residential and living streets per cell of 500 m, activities by the length of
+  the other streets (primary to tertiary and their links, unclassified, service, pedestrian);
+  the activity cell by activities × exp(−distance / 4 km); four classes at 40, 20, 20 and 20 %
+  (`car_and_bike`, `car_only`, `bike_only`, `no_vehicle`); 5 % of the trips cars of the class
+  `through` between two cut ends of motorways or trunk roads (the turnarounds) at least 1 km
+  apart, by capacity; departures evenly over one hour. The numbers are constants of
+  `src/trips.rs`, none calibrated: a start for trying ideas, not a model of the city. The same
+  network, count and seed give the same trips (`Stream::Population`).
 
 ## Outputs
 The `Network`, and a `Report`: `nodes`, `links` (of the three layers), `links_unreachable` (links
@@ -190,11 +210,20 @@ directions they give; a cycleway is a bike link and a walk link, no car link. A 
 `bike_speed` on every bike link. The bike layer has its own junctions, its own strong component
 (a one-way street a car cannot use may stay for bikes, joined by a cycleway) and its own
 contraction (merged where the road class is the same). Delft's region: 20 664 bike links,
-1 240.497 km. Tested in `tests/tags.rs` (`what_every_rule_means_for_a_bike`, the bike rules case
+1 240.497 km. `CarRoads::Main` leaves
+the bike links as they are, and the drawn trips give 60 % of the travellers a bike. Tested in `tests/tags.rs` (`what_every_rule_means_for_a_bike`, the bike rules case
 by case), `tests/connectivity.rs` and `tests/delft_tables.rs`.
 
 ## Tests
 `cargo test -p openmobisim-io-osm`. Each expected value comes from outside the crate:
+- The two experimental parts by hand: `tests/main_roads.rs` (`CarRoads::Main`: a main road
+  past a side street is one car link while bikes and walkers split there; a roundabout tagged
+  residential between secondary roads is driven as secondary; a ring of two ways is raised
+  whole, whichever way meets the larger road; one no main road meets is not driven) and
+  `tests/trips.rs` (trips start on the residential street and end on the tertiary road of a
+  two-street extract; ids, the departure hour, the classes' shares within four standard
+  deviations, the modes with and without a timetable, the same seed the same trips; no street
+  of the classes, no trips).
 - The class table against its sources (the capacities as the table above states them, end to
   end), tags by hand from the wiki pages named above and version 1's rules (`tests/tags.rs`, version 1's
   tag and bike and walk rule tests, those of kept rules): the road class and refusals, ways closed

@@ -46,11 +46,14 @@ pub enum Stream {
     /// raised for a traveller whose lowest-cost alternative of its mode would save more than a
     /// band of its cost. Addressed by (trip, iteration).
     MsaReselection = 1,
+    /// The trips drawn from a network's streets (the OpenStreetMap reader's `trips`).
+    /// Addressed by (trip, 0).
+    Population = 2,
 }
 
 impl Stream {
     /// Every stream, in discriminant order.
-    pub const ALL: [Stream; 2] = [Stream::Choice, Stream::MsaReselection];
+    pub const ALL: [Stream; 3] = [Stream::Choice, Stream::MsaReselection, Stream::Population];
 }
 
 /// What identifies a run's randomness: its seed.

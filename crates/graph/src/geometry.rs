@@ -238,6 +238,8 @@ pub struct Projection {
     false_northing: f64,
     /// Forward series coefficients α₁..α₄.
     alpha: [f64; 4],
+    /// Inverse series coefficients β₁..β₄.
+    beta: [f64; 4],
     /// `2√n / (1 + n)`, the conformal-latitude constant.
     two_sqrt_n_over_1pn: f64,
 }
@@ -259,6 +261,12 @@ impl Projection {
             61.0 * n3 / 240.0 - 103.0 * n4 / 140.0,
             49561.0 * n4 / 161_280.0,
         ];
+        let beta = [
+            n / 2.0 - 2.0 * n2 / 3.0 + 37.0 * n3 / 96.0 - n4 / 360.0,
+            n2 / 48.0 + n3 / 15.0 - 437.0 * n4 / 1440.0,
+            17.0 * n3 / 480.0 - 37.0 * n4 / 840.0,
+            4397.0 * n4 / 161_280.0,
+        ];
         Self {
             zone,
             k0_a: UTM_K0 * a_rect,
@@ -268,6 +276,7 @@ impl Projection {
                 Hemisphere::South => UTM_FALSE_NORTHING_SOUTH,
             },
             alpha,
+            beta,
             two_sqrt_n_over_1pn: 2.0 * n.sqrt() / (1.0 + n),
         }
     }
@@ -341,5 +350,40 @@ impl Projection {
         }
 
         Xy { x: UTM_FALSE_EASTING + self.k0_a * eta, y: self.false_northing + self.k0_a * xi }
+    }
+
+    /// Metres of this projection back to WGS84 degrees: the inverse of [`Projection::project`]
+    /// (Krüger's inverse series for the conformal latitude, then the latitude by Newton's method
+    /// on the relation `project` uses, Karney 2011, to the last bit or two: a point projected
+    /// and brought back is within 1e-11 degree, a micrometre).
+    #[must_use]
+    pub fn unproject(&self, p: Xy) -> LonLat {
+        let xi = (p.y - self.false_northing) / self.k0_a;
+        let eta = (p.x - UTM_FALSE_EASTING) / self.k0_a;
+        let (mut xi_p, mut eta_p) = (xi, eta);
+        for (j, &b) in self.beta.iter().enumerate() {
+            #[allow(clippy::cast_precision_loss, reason = "j is 0..4")]
+            let m = 2.0 * (j + 1) as f64;
+            xi_p -= b * libm::sin(m * xi) * libm::cosh(m * eta);
+            eta_p -= b * libm::cos(m * xi) * libm::sinh(m * eta);
+        }
+        let lambda = libm::atan2(libm::sinh(eta_p), libm::cos(xi_p));
+        // t = tan of the conformal latitude; tau = tan of the latitude, with
+        // t(tau) = tau √(1 + σ²) − σ √(1 + tau²), σ = sinh(e · atanh(e · tau / √(1 + tau²))).
+        let t = libm::sin(xi_p) / libm::hypot(libm::sinh(eta_p), libm::cos(xi_p));
+        let e = self.two_sqrt_n_over_1pn;
+        let mut tau = t;
+        for _ in 0..8 {
+            let root = libm::hypot(1.0, tau);
+            let sigma = libm::sinh(e * libm::atanh(e * tau / root));
+            let t_of = tau * libm::hypot(1.0, sigma) - sigma * root;
+            let step = (t - t_of) / libm::hypot(1.0, t_of) * (1.0 + (1.0 - e * e) * tau * tau)
+                / ((1.0 - e * e) * root);
+            tau += step;
+            if step.abs() <= 1e-15 * tau.abs().max(1.0) {
+                break;
+            }
+        }
+        LonLat::new((self.lambda0 + lambda).to_degrees(), libm::atan(tau).to_degrees())
     }
 }

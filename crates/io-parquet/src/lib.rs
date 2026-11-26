@@ -39,6 +39,7 @@ use openmobisim_types::repairs::Repairs;
 use openmobisim_types::units::Speed;
 use parquet::arrow::ArrowWriter;
 
+mod case;
 mod input;
 mod iterations;
 mod links;
@@ -47,6 +48,7 @@ mod record;
 mod routes;
 mod trips;
 
+pub use case::write_case;
 pub use input::{Cells, InputTable, ReadError, read_table};
 pub use read::{
     Links, OutputError, Routes, Tables, TripRows, agrees, read, read_iterations, read_links,

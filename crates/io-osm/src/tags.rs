@@ -27,8 +27,21 @@ pub const IMPLICIT_SPEED_LIMITS_KM_H: [(&str, f64); 7] = [
     ("zone20", 20.0),
 ];
 
-/// The road classes: the `highway` values the reader knows, and a ferry crossing (`route=ferry`).
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+/// Which roads cars drive: every road of a car class (the reader as it has been), or the main
+/// roads alone (experimental: a lighter car network).
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum CarRoads {
+    /// Every class the class table gives cars.
+    #[default]
+    All,
+    /// Motorways down to unclassified roads: no residential street, living street or service
+    /// road ([`RoadClass::is_minor`]), but a roundabout tagged as one that main roads meet.
+    Main,
+}
+
+/// The road classes: the `highway` values the reader knows, and a ferry crossing (`route=ferry`),
+/// in the order of the class table (a class before another is the larger road).
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
 #[allow(missing_docs, reason = "each variant is the `highway` value its name gives")]
 pub enum RoadClass {
     Motorway,
@@ -156,6 +169,12 @@ impl RoadClass {
         }
     }
 
+    /// Whether the class is a minor street, one cars do not drive under [`CarRoads::Main`].
+    #[must_use]
+    pub fn is_minor(self) -> bool {
+        matches!(self, Self::Residential | Self::LivingStreet | Self::Service)
+    }
+
     /// The car's defaults, `None` for a class cars do not use (the README's table). Speeds and
     /// lanes: version 1's, "common OSM speed conventions". Capacity per lane, junctions counted
     /// in (the reader models none): without at-grade junctions, a motorway's 2 000 veh/h
@@ -260,10 +279,7 @@ const NOT_A_CAR_STREET: [&str; 4] =
 pub fn road_class(tags: &Tags, node_count: usize) -> Option<RoadClass> {
     let highway = tag_of(tags, "highway")?;
     let class = RoadClass::from_highway(highway)?;
-    let closed_to_cars = ["motorcar", "motor_vehicle", "vehicle"]
-        .into_iter()
-        .find_map(|key| tag_of(tags, key))
-        .is_some_and(closes);
+    let closed_to_cars = closed_to_cars(tags);
     let not_a_street = highway == "service"
         && tag_of(tags, "service").is_some_and(|v| NOT_A_CAR_STREET.contains(&v));
     let refused = node_count < 2
@@ -272,6 +288,26 @@ pub fn road_class(tags: &Tags, node_count: usize) -> Option<RoadClass> {
         || (closed_to_cars && class.car().is_some())
         || not_a_street;
     (!refused).then_some(class)
+}
+
+/// Whether the most specific of `motorcar`, `motor_vehicle`, `vehicle` the way carries closes it
+/// to cars (`no`, `private`).
+fn closed_to_cars(tags: &Tags) -> bool {
+    ["motorcar", "motor_vehicle", "vehicle"]
+        .into_iter()
+        .find_map(|key| tag_of(tags, key))
+        .is_some_and(closes)
+}
+
+/// Whether the way is a roundabout (`junction=roundabout` or `circular`) of a minor street
+/// class ([`RoadClass::is_minor`]) that is a road and not closed to cars: under
+/// [`CarRoads::Main`], where main roads meet it, cars drive it as the largest of them
+/// (`crate::import`), so that a roundabout tagged below its roads does not cut them.
+#[must_use]
+pub fn minor_roundabout(tags: &Tags, node_count: usize) -> bool {
+    matches!(tag_of(tags, "junction"), Some("roundabout" | "circular"))
+        && road_class(tags, node_count).is_some_and(RoadClass::is_minor)
+        && !closed_to_cars(tags)
 }
 
 /// A ferry crossing: `route=ferry` and no `highway`.
