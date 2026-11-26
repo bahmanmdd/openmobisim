@@ -88,5 +88,5 @@ def test_make_case_draws_the_trips_and_the_folder_runs(tmp_path):
 
 
 def test_make_case_refuses_no_trips(tmp_path):
-    with pytest.raises(ValueError, match="at least one"):
+    with pytest.raises(ValueError, match="from 1 to"):
         oms.make_case(tmp_path / "none", OSM, 3, region=REGION)

@@ -5,7 +5,8 @@ Reads one OpenStreetMap extract, or the part of it a region holds, into the one 
 bike links and the walk links, each built from the ways its own rules admit, split at its own
 junctions, trimmed to its largest strongly connected component and contracted. A car link carries
 its lanes, free-flow speed and capacity, from its tags and its road class. Depends on
-`openmobisim-types`, `openmobisim-graph` and `osmpbf` (pure Rust, no C).
+`openmobisim-types`, `openmobisim-graph` and `osmpbf` (pure Rust, no C); the experimental trips
+(`trips::draw`) also on `openmobisim-demand`, for the trip row they are given as, and `libm`.
 
 ## Inputs
 - `read(path, values, region)`: one `.osm.pbf` file, the graph's three build values

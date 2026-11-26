@@ -70,10 +70,10 @@ pub const CLASSES: [(&str, f64, &[Mode]); 4] = [
 /// The class of the cars driving through.
 pub const THROUGH: &str = "through";
 
-/// The index of the first of `sums` (running totals) above `u` of the whole.
-fn pick(sums: &[f64], u: f64) -> usize {
-    let target = u * sums.last().copied().unwrap_or(0.0);
-    sums.partition_point(|&s| s <= target).min(sums.len().saturating_sub(1))
+/// The index of the first of `items`, whose running totals `sum` reads, above `u` of the whole.
+fn pick<T>(items: &[T], sum: impl Fn(&T) -> f64, u: f64) -> usize {
+    let target = u * items.last().map_or(0.0, &sum);
+    items.partition_point(|t| sum(t) <= target).min(items.len().saturating_sub(1))
 }
 
 /// A street: its length (in [`Cells`], the running total of the lengths of its cell) and its ends.
@@ -113,8 +113,7 @@ impl Cells {
     /// A point of a street of `cell`: the street by length (`u`), the point along it (`along`).
     fn point(&self, cell: usize, u: f64, along: f64) -> Xy {
         let streets = &self.streets[cell];
-        let sums: Vec<f64> = streets.iter().map(|s| s.0).collect();
-        let (_, a, b) = streets[pick(&sums, u)];
+        let (_, a, b) = streets[pick(streets, |s| s.0, u)];
         Xy::new(a.x + along * (b.x - a.x), a.y + along * (b.y - a.y))
     }
 }
@@ -209,7 +208,6 @@ pub fn draw(
 ) -> Vec<TripRow> {
     let Some((homes, activities)) = cells(network) else { return Vec::new() };
     let gates = gates(network);
-    let gate_sums: Vec<f64> = gates.iter().map(|g| g.1).collect();
     // The pull of every activity cell from a home cell, as running totals, made when first asked.
     let mut pulls: Vec<Option<Vec<f64>>> = vec![None; homes.centre.len()];
     let pull = |h: usize| -> Vec<f64> {
@@ -243,13 +241,17 @@ pub fn draw(
             let b = rng.block(DrawAddress::from_pair(k, 0));
             let (origin, destination, class, modes) =
                 if !gates.is_empty() && b.unit(0) < THROUGH_SHARE {
-                    let (entry, _, exits) = &gates[pick(&gate_sums, b.unit(1))];
-                    let sums: Vec<f64> = exits.iter().map(|x| x.1).collect();
-                    (*entry, exits[pick(&sums, b.unit(2))].0, THROUGH, ModeSet::of(&[Mode::Car]))
+                    let (entry, _, exits) = &gates[pick(&gates, |g| g.1, b.unit(1))];
+                    (
+                        *entry,
+                        exits[pick(exits, |x| x.1, b.unit(2))].0,
+                        THROUGH,
+                        ModeSet::of(&[Mode::Car]),
+                    )
                 } else {
-                    let (id, _, open) = CLASSES[pick(&class_sums, b.unit(1))];
-                    let h = pick(&homes.sums, b.unit(2));
-                    let a = pick(pulls[h].get_or_insert_with(|| pull(h)), b.unit(5));
+                    let (id, _, open) = CLASSES[pick(&class_sums, |&s| s, b.unit(1))];
+                    let h = pick(&homes.sums, |&s| s, b.unit(2));
+                    let a = pick(pulls[h].get_or_insert_with(|| pull(h)), |&s| s, b.unit(5));
                     let modes = open
                         .iter()
                         .filter(|&&m| with_transit || m != Mode::Transit)

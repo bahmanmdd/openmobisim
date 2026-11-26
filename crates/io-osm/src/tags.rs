@@ -279,7 +279,10 @@ const NOT_A_CAR_STREET: [&str; 4] =
 pub fn road_class(tags: &Tags, node_count: usize) -> Option<RoadClass> {
     let highway = tag_of(tags, "highway")?;
     let class = RoadClass::from_highway(highway)?;
-    let closed_to_cars = closed_to_cars(tags);
+    let closed_to_cars = ["motorcar", "motor_vehicle", "vehicle"]
+        .into_iter()
+        .find_map(|key| tag_of(tags, key))
+        .is_some_and(closes);
     let not_a_street = highway == "service"
         && tag_of(tags, "service").is_some_and(|v| NOT_A_CAR_STREET.contains(&v));
     let refused = node_count < 2
@@ -290,24 +293,14 @@ pub fn road_class(tags: &Tags, node_count: usize) -> Option<RoadClass> {
     (!refused).then_some(class)
 }
 
-/// Whether the most specific of `motorcar`, `motor_vehicle`, `vehicle` the way carries closes it
-/// to cars (`no`, `private`).
-fn closed_to_cars(tags: &Tags) -> bool {
-    ["motorcar", "motor_vehicle", "vehicle"]
-        .into_iter()
-        .find_map(|key| tag_of(tags, key))
-        .is_some_and(closes)
-}
-
 /// Whether the way is a roundabout (`junction=roundabout` or `circular`) of a minor street
-/// class ([`RoadClass::is_minor`]) that is a road and not closed to cars: under
+/// class ([`RoadClass::is_minor`]) that is a road ([`road_class`]: not closed to cars): under
 /// [`CarRoads::Main`], where main roads meet it, cars drive it as the largest of them
 /// (`crate::import`), so that a roundabout tagged below its roads does not cut them.
 #[must_use]
 pub fn minor_roundabout(tags: &Tags, node_count: usize) -> bool {
     matches!(tag_of(tags, "junction"), Some("roundabout" | "circular"))
         && road_class(tags, node_count).is_some_and(RoadClass::is_minor)
-        && !closed_to_cars(tags)
 }
 
 /// A ferry crossing: `route=ferry` and no `highway`.

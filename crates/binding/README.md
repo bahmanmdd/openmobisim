@@ -12,13 +12,14 @@ release's wheels (Linux, macOS, Windows) and its source archive are built, teste
 
 ```python
 import openmobisim as oms
-network = oms.Network.from_osm(path, region=None, **network_parameters)
+network = oms.Network.from_osm(path, region=None, car_roads="all", **network_parameters)
 network = oms.Network.from_tables(nodes, links, **network_parameters)
 nodes, links = network.tables()
 transit = oms.Transit.from_gtfs(path, network, **transit_parameters)
 demand  = oms.Demand.from_table(trips, classes, network, transit=None, **demand_parameters)
 result  = oms.run(network, demand, transit=None, window=(start_s, end_s), out=folder, **parameters)
 result  = oms.run_file(folder=None, out=folder)
+folder  = oms.make_case(folder, osm, population, region=None, gtfs=None, car_roads="all", trips_per_person=0.1, seed=0)
 result  = oms.Run.open(folder, network=None, demand=None, transit=None)
 page    = result.map(path, title=None)
 page    = result.summary(path, title=None)

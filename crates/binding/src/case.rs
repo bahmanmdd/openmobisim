@@ -40,7 +40,8 @@ pub(crate) fn make_case(
     let trips = (population * trips_per_person).round();
     if !(1.0..=f64::from(u32::MAX)).contains(&trips) {
         return Err(PyValueError::new_err(format!(
-            "make_case: population x trips_per_person is {trips} trips; at least one is needed"
+            "make_case: population x trips_per_person is {trips} trips; from 1 to {} are drawn",
+            u32::MAX
         )));
     }
     let gtfs = gtfs.map(|g| canonical(&g)).transpose()?;

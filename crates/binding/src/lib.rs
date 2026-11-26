@@ -1,4 +1,4 @@
-//! The Python binding: the module `openmobisim`, with `Network`, `Transit`, `Demand`, `run`,
+//! The Python binding: the module `openmobisim`, with `Network` (and `Network.tables`), `Transit`, `Demand`, `run`,
 //! `run_file`, `make_case`, `Run` and its methods `Run.map`, `Run.summary` and `Run.open`, and nothing else.
 //!
 //! ```python
@@ -9,7 +9,8 @@
 //! demand  = oms.Demand.from_table(trips, classes, network, transit=None, **demand_parameters)
 //! result  = oms.run(network, demand, transit=None, window=(start_s, end_s), out=folder, **parameters)
 //! result  = oms.run_file(folder=None, out=folder)
-//! folder  = oms.make_case(folder, osm, population, region=None, gtfs=None, car_roads="all")
+//! folder  = oms.make_case(folder, osm, population, region=None, gtfs=None, car_roads="all",
+//!                         trips_per_person=0.1, seed=0)
 //! result  = oms.Run.open(folder, network=None, demand=None, transit=None)
 //! page    = result.map(path)
 //! page    = result.summary(path)
