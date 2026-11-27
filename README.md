@@ -9,10 +9,10 @@ Bikes are first-class in every module, test and output. Metric units throughout.
 ```bash
 pip install openmobisim
 ```
-Python 3.11 or newer, on Linux, macOS or Windows; no Python dependency. This page describes release 0.2. Until 0.2 is on PyPI, that command gives release 0.1, which has another interface; 0.2 is then built from this tree with a Rust toolchain: `pip install maturin`, then `maturin develop --release` in the repository.
+Python 3.11 or newer, on Linux, macOS or Windows; no Python dependency. This page describes release 0.2. Until 0.2 is on PyPI, that command gives release 0.1, which has another interface; 0.2 is then built from this tree with a Rust toolchain: in a virtual environment, `pip install maturin`, then `maturin develop --release` in the repository.
 
 ## A first run
-Five cases are ready to download, the morning of Delft, Amsterdam, Lyon and Paris and a small synthetic city ([doi:10.5281/zenodo.24585967](https://doi.org/10.5281/zenodo.24585967)): real networks and timetables, synthetic travellers. Each is a folder holding the network as two tables, the timetable as GTFS, one row per traveller and a settings file, `run.toml`.
+Five cases are ready to download, the morning of Delft, Amsterdam, Lyon and Paris and a small synthetic city ([doi:10.5281/zenodo.24585967](https://doi.org/10.5281/zenodo.24585967)): the cities' networks and timetables are real, the travellers synthetic. Each is a folder holding the network as two tables, the timetable as GTFS, one row per traveller and a settings file, `run.toml`.
 ```python
 import urllib.request, zipfile
 import openmobisim as oms

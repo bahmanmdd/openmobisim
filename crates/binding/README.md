@@ -94,13 +94,13 @@ page    = result.summary(path, title=None)
   |---|---|
   | `Network.from_osm`, `Network.from_tables` | `capacity_per_lane` (veh/h per lane), `bike_speed`, `walk_speed` (km/h) |
   | `Network.from_osm` alone | `osm_class_defaults`: only `None`, the reader's one table (`crates/io-osm/README.md`) |
+  | `Transit.from_gtfs` | `transfer_walk_max` (m) |
+  | `Demand.from_table` | `stop_walk_max` (m) |
+  | `run` | `boarding_slack` (s), `max_rides`, `nearby_stops`, `max_car_routes` (routes per origin-destination pair), `max_transit_journeys` (journeys per trip), `choice` (`"logit"` or `"deterministic"`), `coefficients` (a dict from every class id to its sixteen, in the order of the loop's choice row: cost per minute of car driving, bike riding, walking, transit in vehicle, access walk, egress walk, first wait, transfer wait, transfer walk; per transfer; per €; per unit of ln PS, kept as given in the run's record, read times `nest_scale` under `"logit"` and as 0 under `"deterministic"`; the car, bike, walk and transit constants), `nest_scale`, `step_exponent`, `iteration_cap`, `iteration_floor`, `link_bin` (s), `seed` (an integer from 0 to 2⁶³ − 1, the largest the run's record holds) |
 
   From an extract every car link has its class's capacity per lane × its lanes
   (`osm_class_defaults`), so `capacity_per_lane`, the graph's value for a car row without a
   capacity, changes nothing there; it is accepted and recorded at both entry points.
-  | `Transit.from_gtfs` | `transfer_walk_max` (m) |
-  | `Demand.from_table` | `stop_walk_max` (m) |
-  | `run` | `boarding_slack` (s), `max_rides`, `nearby_stops`, `max_car_routes` (routes per origin-destination pair), `max_transit_journeys` (journeys per trip), `choice` (`"logit"` or `"deterministic"`), `coefficients` (a dict from every class id to its sixteen, in the order of the loop's choice row: cost per minute of car driving, bike riding, walking, transit in vehicle, access walk, egress walk, first wait, transfer wait, transfer walk; per transfer; per €; per unit of ln PS, kept as given in the run's record, read times `nest_scale` under `"logit"` and as 0 under `"deterministic"`; the car, bike, walk and transit constants), `nest_scale`, `step_exponent`, `iteration_cap`, `iteration_floor`, `link_bin` (s), `seed` (an integer from 0 to 2⁶³ − 1, the largest the run's record holds) |
 - **`run`**: `window=(start_s, end_s)`, two seconds of the clock, required, never defaulted;
   `out`, the folder the files go to (created if missing). The demand must have been built on
   the network and the transit given to `run`.

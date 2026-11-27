@@ -20,7 +20,7 @@ amsterdam
 
 Five cases are published as one data record, *openmobisim example cases*, version 2
 ([doi:10.5281/zenodo.24585967](https://doi.org/10.5281/zenodo.24585967)): the morning of four European cities and a
-small synthetic city. They are convenient cases to start from. The networks and timetables are real; **the demand is
+small synthetic city. They are convenient cases to start from. The four cities' networks and timetables are real; **the demand is
 synthetic**: neither observed nor a forecast, and not calibrated. Use the cases to learn the tool, to compare methods
 and settings, and as a realistic load for a network; for a study of a city, bring that city's own trips.
 

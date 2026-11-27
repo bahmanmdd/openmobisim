@@ -9,7 +9,7 @@ code. A path written in a contract, such as `crates/loop/README.md`, names anoth
 |---|---|
 | [types](types.md) | the identifiers, the modes and the units shared by all modules |
 | [graph](graph.md) | the network: nodes, links per mode, free-flow times and capacities |
-| [loading](loading.md) | the point queue that carries the cars |
+| [loading](loading.md) | the loading: cars on the point queue, bikes and walkers at free flow |
 | [search](search.md) | the route search on the network |
 | [choice](choice.md) | the choice models: the least-cost choice and the logit family |
 | [transit](transit.md) | the timetable and the journey search on it |
