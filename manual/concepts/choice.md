@@ -6,7 +6,8 @@ Every traveller of a run makes one **choice**: which alternative of its set to t
 alternatives of every mode open to the trip, this one choice is the choice of mode and of route at once. A **choice
 model** turns the cost of each alternative into the alternative taken.
 
-This is the last of four concepts that build on one another. The [network](networks.md) gives the links and their
+This is the fourth of the seven concepts of this part in their reading order: the network, the demand, the routes,
+the choice, transit, the loading and the iteration. The [network](networks.md) gives the links and their
 times; the [demand](demand.md) gives the trips, their classes and their modes; the [search](search.md) gives each
 traveller a set of alternatives, each with the times of its parts and, for a car route, its path size. The choice
 model takes these sets and gives, per traveller, the alternative taken. What is taken is then loaded on the network
@@ -88,14 +89,15 @@ alternative it took (the column `cost` of `trips.parquet`), formed by the same s
 
 Both read the same cost. There is no third model, and none can be supplied from Python.
 
-### The least cost
+### The least-cost choice
 
 % src: crates/choice/README.md ("Meanings and assumptions": Deterministic); crates/loop/README.md ("Choose", "Assess")
 
 Under `choice="deterministic"` a traveller takes the alternative of least cost in its set, with probability 1; of
-several of equal least cost, the first in the set. At the equilibrium of this model no traveller can lower its cost by changing its alternative. The coefficient of the path size is read as 0, whatever is
-given: the path size corrects an error of the logit, and the least cost has no such error. The run's record keeps the
-coefficient as given.
+several of equal least cost, the first in the set. At the equilibrium of this model no traveller can lower its cost
+by changing its alternative. The coefficient of the path size is read as 0, whatever is given: the path size
+corrects an error of the logit, and the least-cost choice has no such error. The run's record keeps the coefficient
+as given.
 
 ### The logit family
 
@@ -205,7 +207,7 @@ taken. Three properties follow:
   at its end, so an alternative keeps its position and its draw. Between two iterations a traveller does not flip
   between alternatives by chance.
 - **Two runs with the same seed, inputs and program on the same platform give identical results**, at any number of
-  threads. As measured, the default run of the Delft case gives byte-identical trips on macOS (Apple silicon), Linux
+  threads. As measured, the default run of the Delft test (test 10) gives byte-identical trips on macOS (Apple silicon), Linux
   (x86_64) and Windows (x86_64). [Reproducibility](reproducibility.md) gives the whole account.
 - **The share of travellers who would change is a count, not an estimate.** After an iteration, the simulator asks
   for each traveller whether its fixed taste, at the costs just measured, still picks the alternative it holds. When

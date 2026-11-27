@@ -1,7 +1,7 @@
 # openmobisim-io-osm
 
 Reads one OpenStreetMap extract, or the part of it a region holds, into the one network of
-`openmobisim-graph`, as version 1's reader did: three layers of one mode each, the car links, the
+`openmobisim-graph`, as release 0.1's reader did: three layers of one mode each, the car links, the
 bike links and the walk links, each built from the ways its own rules admit, split at its own
 junctions, trimmed to its largest strongly connected component and contracted. A car link carries
 its lanes, free-flow speed and capacity, from its tags and its road class. Depends on
@@ -16,7 +16,7 @@ its lanes, free-flow speed and capacity, from its tags and its road class. Depen
 - `network(&osm, values, region)`: the same from an `Osm` held in memory (nodes: id, longitude and
   latitude in WGS84 degrees, tags; ways: id, node ids in order, tags). `read_pbf(path)` fills an
   `Osm` with the ways tagged `highway` or `route=ferry` and the nodes they name. No options: one
-  behaviour, version 1's Python default (`contract`, `connectivity="strong"`,
+  behaviour, release 0.1's Python default (`contract`, `connectivity="strong"`,
   `contract_drivable`, `layers`, `region_stubs`, `region_buffer_m=2000`).
 - **Experimental**, to be refined: `network_for(&osm, values, region, car_roads)`, the same with
   the roads cars drive chosen. `CarRoads::All` is `network` itself. `CarRoads::Main` gives cars
@@ -57,26 +57,26 @@ Metres (lengths), km/h (speeds; `mph` × 1.609 344, `knots` × 1.852), lanes as 
 vehicles per hour (capacities).
 
 ## Meanings and assumptions
-- **The road classes** (version 1's): the `highway` values `motorway`, `motorway_link`, `trunk`,
+- **The road classes** (release 0.1's): the `highway` values `motorway`, `motorway_link`, `trunk`,
   `trunk_link`, `primary`, `primary_link`, `secondary`, `secondary_link`, `tertiary`,
   `tertiary_link`, `unclassified` (and `road`), `residential`, `living_street`, `service`,
   `pedestrian`, `footway` (and `steps`, `path`, `track`, `corridor`; `bridleway` for bikes and
   walkers), `cycleway`, `busway` (and `bus_guideway`); and `ferry` (`route=ferry`). A link's road
   class is its way's. Other `highway` values (`construction`, `proposed`, `platform`, …) are not
   read. An `area=yes` way and a way of fewer than two nodes are no street.
-- **Car ways** (version 1's `classify`): a car class, not closed by `access=no|private`, nor by
+- **Car ways** (release 0.1's `classify`): a car class, not closed by `access=no|private`, nor by
   the most specific of `motorcar`, `motor_vehicle`, `vehicle` it carries being `no|private`
   (`motor_vehicle=yes` reopens `vehicle=no`), nor a `service` way tagged
   `service=parking_aisle|driveway|drive-through|emergency_access`. `access=destination`,
   `delivery`, `customers` stay drivable (a restriction on through traffic, not modelled).
-- **Bike ways** (version 1's `bike_way`): never motorways and their slip roads,
+- **Bike ways** (release 0.1's `bike_way`): never motorways and their slip roads,
   `bicycle=no|use_sidepath`, `motorroad=yes`, `access=no|private` without
   `bicycle=yes|designated|permissive`. Trunk roads, their slip roads and busways only with
   `bicycle=yes|designated|permissive`; footways (paths, tracks, steps, bridleways among them) and
   pedestrian streets only with `bicycle=yes|designated|permissive|dismount`; a ferry unless
   `bicycle=no`; every other class (cycleways, car streets, parking aisles). Only `bicycle` is
   read for bikes (not `vehicle`).
-- **Walk ways** (version 1's `walk_way`): every class but motorways and their slip roads, unless
+- **Walk ways** (release 0.1's `walk_way`): every class but motorways and their slip roads, unless
   `foot=no|use_sidepath`, `motorroad=yes`, or `access=no|private` without
   `foot=yes|designated|permissive`; a busway only with `foot=yes|designated|permissive`; a
   cycleway too (a walker may use it where no footway runs beside it); a ferry unless `foot=no`.
@@ -97,7 +97,7 @@ vehicles per hour (capacities).
   `lanes:both_ways` above the total (or equal to it: `lanes=0` on a two-way road), 1 each way; a
   direction cars drive given 0 lanes, 1.
 - **Free-flow speed** (wiki, `Key:maxspeed`): `maxspeed:forward` (or `:backward`), then
-  `maxspeed`, then the class's. A value is read as version 1 read it: a number, alone or with
+  `maxspeed`, then the class's. A value is read as release 0.1 read it: a number, alone or with
   `km/h`, `kmh`, `kph`, `mph` or `knots`; `walk` (7 km/h); an implicit code `XX:urban` (50),
   `rural` (80), `motorway` (130), `trunk` (100), `living_street` (15), `zone30` (30), `zone20`
   (20), the country ignored (the wiki's "Default speed limits"); of a `;` list, the first. `none`,
@@ -115,17 +115,17 @@ vehicles per hour (capacities).
 - **The strong component**, per layer (Tarjan 1972; most nodes, the first found on a tie): a link
   whose two ends are not both in it is dropped (`links_unreachable`). Each layer has its own: a
   street a car cannot leave stays for walkers.
-- **Contraction**, per layer (version 1's): a node is merged away when it splits no way and has
+- **Contraction**, per layer (release 0.1's): a node is merged away when it splits no way and has
   one link in and one out, or two in and two out that are one street's two directions, the links
   merged having the same road class and car fields (lanes, speed, capacity), and the merge making
   no link from a node to itself. Lengths add, shapes join, the link keeps its first piece's id.
-  The car layer is contracted as if no footway or cycleway were there. (Version 1 paired two links
+  The car layer is contracted as if no footway or cycleway were there. (Release 0.1 paired two links
   in and two out by the order it met them; where a one-way street met a two-way one it could merge
   the node away and lose the one-way street's continuation. Here such a node stays.)
 - **Signals.** A node tagged `highway=traffic_signals` (not `traffic_signals=emergency`) is
   signalised; a link whose downstream node is signalised has the downstream-end flag. Stored,
   applied nowhere.
-- **The region** (version 1's clip, its one behaviour): the nodes inside the box (edges included)
+- **The region** (release 0.1's clip, its one behaviour): the nodes inside the box (edges included)
   or polygon (even–odd rule on the plane of degrees); on every way but a main road, the first node
   outside either end of each run inside (a stub: the segment crossing the edge stays); on
   motorways, trunk roads and their slip roads, every node within 2 000 m of the region; a way
@@ -137,7 +137,7 @@ vehicles per hour (capacities).
   their last interchange (Delft's A13 and A4).
 
 ## The class table (a default: a row of `PARAMETERS.md`, `osm_class_defaults`)
-Free-flow speed and lanes per direction where no tag gives them: version 1's table ("common OSM
+Free-flow speed and lanes per direction where no tag gives them: release 0.1's table ("common OSM
 speed conventions"). Capacity of one lane, the flow a link's downstream end passes, **with the
 class's junctions counted in**, as the reader models no junction (no signal, no saturation band):
 
@@ -149,7 +149,7 @@ class's junctions counted in**, as the reader models no junction (no signal, no 
   *Évaluation de la capacité aux feux, retour d'observations en France*, October 2016), with Qs
   the saturation flow, 1 800 uvp/h per lane, and V / Ty the green time over the cycle. **The green
   share of each class is this project's assumption, not the guideline's** (the guideline gives the
-  formula, not a table by class); it is the owner's to approve.
+  formula, not a table by class).
 
 Read by `tests/tags.rs` (`the_class_table_reads_as_its_readme_states`).
 
@@ -195,14 +195,14 @@ piece (two nodes in a row held): a way outside the region, or the extract, is no
 and the graph builder's other kinds (`crates/graph/README.md`), none of which an extract read
 here should meet.
 
-## Trimmed from version 1
-Parkings; bus lanes (version 1 took them from the cars' lanes) and busways for buses (it
+## Trimmed from release 0.1
+Parkings; bus lanes (release 0.1 took them from the cars' lanes) and busways for buses (it
 contracted cars and buses together, and kept roads closed to cars but open to buses); signal
 timing, defaults and saturation bands (the class table's capacities count junctions in instead;
-version 1 capped a signalised approach's lane at 1 000,
+release 0.1 capped a signalised approach's lane at 1 000,
 1 200 or 1 500 veh/h up to 30, 50, 70 km/h); the bike layer's infrastructure levels, dismounting
 and speed limit (a bike rides at `bike_speed` on every bike link here); roundabout flags; ferries'
-durations; turn restrictions; every option and feature flag; version 1's diagnostics (this crate
+durations; turn restrictions; every option and feature flag; release 0.1's diagnostics (this crate
 counts its repairs).
 
 ## Bikes
@@ -226,7 +226,7 @@ by case), `tests/connectivity.rs` and `tests/delft_tables.rs`.
   deviations, the modes with and without a timetable, the same seed the same trips; no street
   of the classes, no trips).
 - The class table against its sources (the capacities as the table above states them, end to
-  end), tags by hand from the wiki pages named above and version 1's rules (`tests/tags.rs`, version 1's
+  end), tags by hand from the wiki pages named above and release 0.1's rules (`tests/tags.rs`, release 0.1's
   tag and bike and walk rule tests, those of kept rules): the road class and refusals, ways closed
   to cars, service roads, directions, lanes (the fixed bug: `lanes=4`, `lanes:forward=1` gives
   backward 3), speeds (the fixed bug: `maxspeed:forward=30`, `:backward=70` give 30 and 70 km/h;
@@ -237,7 +237,7 @@ by case), `tests/connectivity.rs` and `tests/delft_tables.rs`.
   lane and one-way values, contradicting lanes, a link of 0 m and a cut way, each counted; an
   island joined only by a piece of 0 m dropped on each layer; a segment whose geodesic does not
   converge cuts its way.
-- Splitting, signals, cut ways, closed ways, contraction (version 1's: two ways that are one street
+- Splitting, signals, cut ways, closed ways, contraction (release 0.1's: two ways that are one street
   merged, not across a change, a signal or into a loop; a chain collapsed, the length conserved; a
   footway crossing a street splits the walk layer only; a one-way street meeting a two-way one
   keeps its node), the same network whatever the input order (`tests/import.rs`); each layer's
@@ -247,21 +247,21 @@ by case), `tests/connectivity.rs` and `tests/delft_tables.rs`.
   unreadable `maxspeed` outside the region not counted, one inside counted).
 - Drawings (`tests/drawing.rs`): the zigzag of the length test gives its three inner nodes,
   projected, as the `f` link's shape and in reverse as the `b` link's, its length pyproj's; the
-  class by version 1's names, the fingerprint the same for two classes.
+  class by release 0.1's names, the fingerprint the same for two classes.
 - Length: a five-node zigzag against pyproj 3.8.0 (`Geod(ellps="WGS84").line_length`,
   542.861 119 846 913 m, within 1 µm) on each layer; single geodesics from 1.3 km to 5 853 km.
 - Delft (`tests/fixtures/delft/network.osm.pbf`, 17 976 211 bytes, © OpenStreetMap
   contributors, ODbL 1.0), release only (ignored by `cargo test`; CI runs both):
   - `tests/delft.rs`: read in full (under 3 s in release; 1.2 s measured); 20 ways' modes, lanes
     and speeds against `fixtures/delft/ways.csv` (libosmium and pyproj, `tests/delft_ways.py`,
-    its rules version 1's), the lengths where a way's links hold nothing else (18 of 40
+    its rules release 0.1's), the lengths where a way's links hold nothing else (18 of 40
     directions), a mode missing only where its layer dropped the whole neighbourhood.
-  - `tests/delft_tables.rs`: the region (4.315, 51.965, 4.410, 52.035) against version 1's own
+  - `tests/delft_tables.rs`: the region (4.315, 51.965, 4.410, 52.035) against release 0.1's own
     output, `crates/binding/tests/fixtures/delft-tables/`, link by link (by the OSM nodes each
-    link passes): lanes and speeds as they are, a capacity from version 1's class table scaled by
+    link passes): lanes and speeds as they are, a capacity from release 0.1's class table scaled by
     the ratio of the two tables' capacities per lane; every difference counted and traced to a
     trimmed feature or a fixed bug (its header lists them), none unexplained: a lane difference
-    only where version 1's rule for that cause, read from the way's tags, gives both counts
+    only where release 0.1's rule for that cause, read from the way's tags, gives both counts
     exactly; a capacity lowered at a signal only where the link's downstream node is tagged
     `highway=traffic_signals`.
   `cargo test --release -p openmobisim-io-osm --test delft --test delft_tables -- --ignored --nocapture`.

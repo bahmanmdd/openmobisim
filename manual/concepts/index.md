@@ -1,26 +1,27 @@
 # Concepts and methods
 
 How the model works: each method in plain words, then its equations, its defaults, what it means for bikes, its limits
-and its references. The pages follow the order in which the parts build on one another: the network and the
-travellers first, then the routes and journeys found on them, the choice among those, the loading of what was chosen,
-and the iteration that repeats the three until the run settles.
+and its references. The pages are in a reading order: the network, the demand, the routes, the choice, transit, the
+loading and the iteration. This reading order is not the order in which the modules depend on
+one another (the loading is below the search, and the search below the demand), which
+[How a run works](architecture.md#inside-the-simulator) gives.
 
 ## Figures
 
 The diagrams of the concepts, in one place; each is explained on the page named under it.
 
-### The two layers
+### The two parts: Python and Rust
 
-What you use, Python, and what computes, Rust, each module using only those below it. See
-[How a run works](architecture.md#the-two-layers).
+What you use, Python, and what computes, Rust, each module using only modules below it or beside it in its row. See
+[How a run works](architecture.md#the-two-parts-python-and-rust).
 
 ```{image} ../_static/figures/architecture_paper.svg
-:alt: The architecture: the Python module you use, the compiled bridge, and the Rust modules beneath, each using only those below it
+:alt: The architecture: the Python module you use, the compiled bridge, and the Rust modules beneath, each using only modules below it or beside it in its row
 :class: only-light
 :width: 100%
 ```
 ```{image} ../_static/figures/architecture_night.svg
-:alt: The architecture: the Python module you use, the compiled bridge, and the Rust modules beneath, each using only those below it
+:alt: The architecture: the Python module you use, the compiled bridge, and the Rust modules beneath, each using only modules below it or beside it in its row
 :class: only-dark
 :width: 100%
 ```

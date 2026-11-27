@@ -18,8 +18,8 @@ The window is two times of day in seconds after midnight. It is required and nev
 | `run` | the keyword `window=(start_s, end_s)`, for example `window=(27000, 34200)` for 07:30 to 09:30 |
 | a settings file | the keys `window_start_s` and `window_end_s` ([The settings file](settings.md)) |
 
-The window is half-open: it holds its start and not its end. An empty window, or one running past the clock, is
-refused.
+The window is half-open: it holds its start and not its end. An empty or reversed window is refused; a window
+may run past 24 h.
 
 ## What happens at its edges
 
@@ -27,7 +27,7 @@ refused.
 
 | What | What the run does | Where it is counted |
 |---|---|---|
-| A window that is not a whole number of link bins long | its end is moved up to the next whole bin | `window_end_moved` |
+| A window that is not a whole number of time bins long | its end is moved up to the next whole bin | `window_end_moved` |
 | A trip departing before the start, or at or after the end | dropped: not run, in no result | `trips_outside_window` |
 | A trip whose walk from its door to the network would end at or after the end, for a mode | that mode is taken out of its set | `modes_after_window` |
 | A trip left with no mode by that | dropped | `trips_after_window` |
@@ -105,8 +105,9 @@ print(unfinished.slice(0, 1).to_pylist()[0])
 | 07:30 to 09:30 (the published case) | 39 919 | 39 919 | 0 | 18.94 |
 
 A third of the travellers are unfinished in the short window, and the mean of the others is 3.3 min below the mean of
-all. The 26 982 trips that finish in the short window have a mean of 15.62 min in the long window too: the difference
-between the two rows comes from which trips are in the mean, not from other travel times.
+all. The 26 982 trips that finish in the short window have a mean of 15.62 min in the long window too, although the two
+runs are not identical trip by trip (they stop after 12 and 17 iterations): almost all of the difference between the
+two rows comes from which trips are in the mean.
 
 How to read results with this in mind:
 
@@ -122,12 +123,12 @@ How to read results with this in mind:
   trip **without an alternative** is another thing: no mode open to it can make the trip, its `mode` is null, and it
   is counted in `without_alternative` ([Troubleshooting](troubleshooting.md)).
 
-## The link bin
+## The time bin
 
 % src: crates/loop/README.md ("Inputs"); PARAMETERS.md (`link_bin`); crates/io-parquet/README.md ("Meanings and
 % assumptions": a crossing is filed under the bin of entry); crates/loading/README.md ("Meanings and assumptions")
 
-The window is cut into **link bins** of `link_bin` seconds (300 s by default), counted from the window's start. The
+The window is cut into **time bins** of `link_bin` seconds (300 s by default), counted from the window's start. The
 links table has one row per link and bin that someone entered: a window of 2 h gives up to 24 bins per link. A bin
 only groups the results. The loading itself has no time step: every car enters and leaves every link at its own
 instant.

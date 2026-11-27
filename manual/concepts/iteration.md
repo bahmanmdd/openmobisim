@@ -6,7 +6,7 @@ Travellers choose their mode and route by what a trip costs, and what a car trip
 chose: a road that many take is slow. The state the simulator looks for is one where the two agree, where nobody would
 choose otherwise at the travel times that the choices themselves produce. The simulator approaches that state by
 iterating: it lets travellers choose, loads the roads with what they chose, measures the
-times, lets a part of the travellers choose again at those times, and repeats.
+times, offers a part of the travellers a new choice at those times, and repeats.
 
 **The iteration** (the module `loop`) is the part of the simulator that does this, and the only part that connects the
 others. It calls them in turn, in five stages:
@@ -14,14 +14,14 @@ others. It calls them in turn, in five stages:
 | Stage | What it does | The part it calls | What it hands on |
 |---|---|---|---|
 | 1. Search | Finds for each traveller the best alternative of each mode at the current times and adds it to the traveller's set when it is new | [The route search](search.md); [the journey search](transit.md) | Each traveller's **set** of alternatives |
-| 2. Choose | Lets a part of the travellers choose again over their set | [The choice model](choice.md) | The alternative each traveller takes |
+| 2. Choose | Offers a part of the travellers a new choice over their set | [The choice model](choice.md) | The alternative each traveller takes |
 | 3. Load | Moves every chosen car, bike and walk route through the window | [The loading](loading.md) | Each trip's arrival; the link time reading |
 | 4. Measure | Prices again every car route of every set at the new times | The loading's link time reading | The cost of every alternative, taken or not |
 | 5. Assess | Computes what the iteration reports, and decides whether to stop | Itself | One row of the iterations table |
 
 When the iteration stops, the last iteration's state is the run's result ([What a run gives](outputs.md)). The loop is
-drawn in [How a run works](architecture.md#interactions-in-a-run); this page explains each stage, who chooses again,
-and when the run stops.
+drawn in [How a run works](architecture.md#interactions-in-a-run); this page explains each stage, who is offered a
+new choice, and when the run stops.
 
 ## Terms
 
@@ -31,7 +31,7 @@ and when the run stops.
   foot) or a journey on the timetable, then a walk to the door.
 - A traveller's **set** holds the alternatives the search has found for it so far. A set only grows: an alternative,
   once in, stays in its place for the whole run.
-- A **cost** is the choice model's sum of coefficient times quantity over the parts of an alternative (minutes of each
+- A **cost** is the choice model's sum of coefficient times attribute over the attributes of an alternative (minutes of each
   kind of time, transfers, euros, the mode's constant); lower is better.
 - Iterations are numbered from 0. The letter $k$ is the iteration's number.
 
@@ -52,8 +52,8 @@ is compared without the path-size term, which is explained on the [choice page](
 So a set holds, per mode, the fastest route at iteration 0; for cars also every route that was the fastest at some
 later iteration's times; and the transit journeys offered at iteration 0. It is not every route of the network: a car
 route that is never the fastest at any iteration is never offered. The number of distinct car routes that the trips
-between one pair of nodes may gather is limited by `max_car_routes` (6 by default); a route new to a pair at its limit
-is not added, and none is replaced ([Routes and route sets](search.md)).
+of one origin-destination pair (the same car origin node and the same car destination node) may gather is limited by
+`max_car_routes` (6 by default); a route new to an origin-destination pair at its limit is not added, and none is replaced ([Routes and route sets](search.md)).
 
 ### Choose
 
@@ -74,9 +74,10 @@ Two choice models exist, set by the parameter `choice` ([Choice](choice.md)):
 
 % src: crates/loop/README.md ("Load"); crates/loading/README.md
 
-Every chosen car, bike and walk route is given to [the loading](loading.md) as one vehicle, which enters its first
-link on the whole second at which its walk from the door ends. Cars queue; bikes and walkers travel at free flow. A
-transit journey, and a trip whose two ends join the network at the same node, load nothing.
+Every chosen car, bike and walk route is given to [the loading](loading.md) as one vehicle. Every vehicle
+enters the first link of its route at the instant its walk from the door to the network ends: the departure second
+plus the walking time, not rounded. Cars queue; bikes and walkers travel at free flow. A transit journey, and a trip
+whose two ends are linked to the network at the same node, load nothing.
 
 ### Measure
 
@@ -106,7 +107,7 @@ as if the roads were empty; the first loading then shows what that costs.
 
 % src: crates/loop/README.md ("Choose", "Who chooses again"); PARAMETERS.md (`step_exponent`)
 
-Travellers behind one queue read the same cost, and if all of them chose again at once they could all move together.
+Travellers behind one queue read the same cost, and if all of them were offered a new choice at once they could all move together.
 The classical remedy is the **method of successive
 averages** (Sheffi 1985): at iteration $k$ move only a share $1/(k+1)$ of the flow, a share that shrinks so that the
 moves die out. openmobisim applies it to individual travellers: at iteration $k \ge 1$ each traveller is offered a new
@@ -133,8 +134,8 @@ $$
 
 where $a$ is the **step exponent**, the parameter `step_exponent` (0.75 by default). At $a = 1$ this is the step of
 the plain method of successive averages. The averaging settles when the steps sum to infinity and their squares do not
-(Robbins and Monro 1951), which holds for $a$ in $(0.5, 1]$. A smaller $a$ asks more travellers at every iteration
-after the first, so a run comes nearer its settled state in fewer iterations.
+(Robbins and Monro 1951), which holds for $a$ in $(0.5, 1]$. A smaller $a$ offers a new choice to more travellers at every
+iteration after the first, so a run comes nearer its settled state in fewer iterations.
 
 | Iteration $k$ | Share offered at $a = 0.75$ (the default) | Share offered at $a = 1$ |
 |---|---|---|
@@ -158,7 +159,7 @@ last choice in the final ten iterations (20 % at $a = 1$).
 ### Under the least-cost choice
 
 Under the least-cost choice every traveller belongs on the cheapest alternative of its set, so a traveller far from it
-can be asked more often. Each traveller is offered with the probability
+can be offered a new choice more often. Each traveller is offered with the probability
 
 $$
 p_k = \max\left(\frac{1}{k+1},\; s\right), \qquad
@@ -168,9 +169,9 @@ $$
 
 where $c$ is the cost of the alternative the traveller holds and $b$ the least cost among the alternatives of the same
 mode in its own set, both at the times the last iteration measured ($s = 0$ when $c$ is not positive). In words: $r$
-is the share of its cost the traveller would save by moving to its best alternative of the same mode. Everyone is asked
-at least at the plain rate $1/(k+1)$; a traveller who would save more than 20 % is asked at the rate of the share it
-would save. This follows Smith's proportional switching (1984), in which flow moves between routes in proportion to
+is the share of its cost the traveller would save by moving to its best alternative of the same mode. Everyone is
+offered a new choice at least at the plain rate $1/(k+1)$; a traveller who would save more than 20 % is offered one
+at the rate of the share it would save. This is after Smith's proportional switching (1984), in which flow moves between routes in proportion to
 their cost difference, outside a band of indifference (Mahmassani and Chang 1987).
 
 An example where cost is proportional to time: a traveller whose car route reads 30 min where its best car route reads
@@ -191,7 +192,7 @@ Each iteration writes one row of the iterations table (`iterations.parquet`; eve
 | Reported | Column | Meaning |
 |---|---|---|
 | The mean trip time | `mean_trip_time_s` | The mean door-to-door time of the trips that finished within the window, in seconds |
-| The trip counts | `finished`, `unfinished`, `without_alternative` | Trips at their door before the window's end; trips still travelling then; trips that no mode open to them can make |
+| The trip counts | `finished`, `unfinished`, `without_alternative` | Trips at their door before the window's end; trips unfinished then; trips that no mode open to them can make |
 | Transit out of reach | `without_transit`, `without_stop` | Trips with transit open to them and no journey offered; of those, the trips with no stop in walking reach at one end |
 | The offered share | `offered_share` | The share of trips offered a new choice in this iteration (1 at iteration 0) |
 | The switch share | `switch_share` | The share of trips that changed alternative in this iteration's choice |
@@ -203,7 +204,7 @@ Each iteration writes one row of the iterations table (`iterations.parquet`; eve
 **One measure of the distance to equilibrium per choice model.** Each model has the one measure that can reach 0 under
 it. It is reported, never judged: no run is refused or flagged for its value.
 
-- Under the **least-cost choice** the measure is the **relative duality gap**,
+- Under the **least-cost choice** the measure is the **duality gap** (relative: over the sum of the least costs),
 
   $$
   \text{gap} = \frac{\sum_i \left(c_i^\text{taken} - c_i^\text{least}\right)}{\sum_i c_i^\text{least}},
@@ -214,7 +215,7 @@ it. It is reported, never judged: no run is refused or flagged for its value.
   cheapest alternative of its set. The share who would change is not the measure here: at the equilibrium the routes in
   use cost the same, so which of them a traveller holds does not settle.
 - Under the **logit** the measure is the **share who would change**. The model puts a share of travellers on an
-  alternative that is not their cheapest, so the gap does not reach zero. Because each traveller's taste is fixed for
+  alternative that is not their cheapest, so the duality gap does not reach zero. Because each traveller's taste is fixed for
   the run, its choice at given costs is fixed too, and the share is an exact count made with the choose stage's own
   choice, not an estimate. When it is 0, nobody would change, and the run is at the fixed point of its iterations for
   the sets it has found.
@@ -244,9 +245,9 @@ the cap runs a fixed number of iterations. `Run.stopped_by_rule`, and `stopped_b
 the rule or the cap ended the run.
 
 **What the rule does and does not say.** The rule reads the slope of the mean trip time. Because only a share of the
-travellers is asked at each iteration, that slope is about the remaining distance times the step, and the step shrinks.
+travellers is offered a new choice at each iteration, that slope is about the remaining distance times the step, and the step shrinks.
 A run that the rule stops can therefore still be short of equilibrium. How far is what the share who would change
-(logit) or the gap (least cost) of the last row reports.
+(logit) or the duality gap (least-cost choice) of the last row reports.
 
 ## Defaults
 
@@ -254,11 +255,11 @@ A run that the rule stops can therefore still be short of equilibrium. How far i
 
 | Parameter | Unit | Default | What the iteration does with it |
 |---|---|---|---|
-| `choice` | name | `"logit"` | The choice model: `"logit"` (nests by mode) or `"deterministic"` (the least cost) |
-| `step_exponent` | none | 0.75 | The exponent $a$ of the share offered a new choice under the logit; not read under the least cost |
+| `choice` | name | `"logit"` | The choice model: `"logit"` (nests by mode) or `"deterministic"` (the least-cost choice) |
+| `step_exponent` | none | 0.75 | The exponent $a$ of the share offered a new choice under the logit; not read under the least-cost choice |
 | `iteration_cap` | iterations | 50 | The most iterations |
 | `iteration_floor` | iterations | 0 | The iterations before which the stopping rule is not read |
-| `max_car_routes` | routes per pair of nodes | 6 | The distinct car routes the trips between one pair of nodes may gather |
+| `max_car_routes` | routes per origin-destination pair | 6 | The distinct car routes the trips of one origin-destination pair may gather |
 | `seed` | none | 0 | The tastes of the travellers and who is offered a new choice ([Reproducibility](reproducibility.md)) |
 
 All are keywords of `run`, or keys under `[parameters]` of a settings file. Their sources are on the
@@ -266,7 +267,7 @@ All are keywords of `run`, or keys under `[parameters]` of a settings file. Thei
 
 ## An example: the Delft case
 
-% src: a run of the Delft case (doi:10.5281/zenodo.24585967) with every parameter at its default; the rule above applied by hand
+% src: a run of the Delft case (doi:10.5281/zenodo.24585967) with every parameter at its default; the rule above applied by hand; the same case run with `iteration_cap = 1` (the 18 049 trips); crates/loop/src/assess.rs (the share who would change)
 
 The iterations table of the run of the Delft case made on [What a run gives](outputs.md):
 
@@ -313,6 +314,10 @@ How to read it:
 - **Iteration 0** is the choice on empty roads: 4 689 of the 37 649 trips do not finish within the window, and the mean
   of the others is 1 282 s. Its mean is over fewer trips than the later means, so it is not comparable with them
   ([The loading](loading.md#the-window-and-unfinished-trips)).
+- **The 0.83 % of iteration 0 does not mean the run is near its fixed point.** The share is counted over the sets
+  found so far, and after iteration 0 a set holds one car route, so a traveller can only change mode; 18 049 trips
+  with the car as their only alternative cannot change at all. From iteration 1 the sets hold second car routes and
+  the share shows what is left.
 - **The offered share follows the formula**: 59.2 % at iteration 1 and 16.6 % at iteration 10, against
   $1/2^{0.75} = 59.5\ \%$ and $1/11^{0.75} = 16.6\ \%$. Each traveller is drawn independently, so the share
   offered scatters around the formula's value.
@@ -320,7 +325,7 @@ How to read it:
   6 to 10 lie between 864.3 s and 866.3 s, a range of 2.0 s, which is at most 0.3 % of 865.2 s (2.6 s). After iteration
   9 the first condition failed: its found share was 0.55 %.
 - **The run is near, not at, its fixed point**: at the end 3.89 % of the travellers would still take another alternative
-  if asked.
+  if offered a new choice.
 
 ## For bikes
 
@@ -350,8 +355,8 @@ its walk there would end after the window loses the bike for the run.
   seeds.
 - **The mean trip time is over finished trips only**, and the stopping rule reads it. When the unfinished count differs
   between two iterations, their means are over different trips.
-- **The distance to equilibrium is reported, never judged.** No value of the gap or of the share who would change stops
-  or fails a run.
+- **The distance to equilibrium is reported, never judged.** No value of the duality gap or of the share who would change
+  stops or fails a run.
 - **The least-cost rule has its own limits.** The saving $r$ is the same in any unit of cost but shrinks when a constant
   is added to every cost (a long shared leg, a mode constant); it favours short trips (5 min lost beside a 10 min best
   is $r = 0.33$, beside a 60 min best 0.077); above the band the rate does not fall with $k$, so travellers behind one

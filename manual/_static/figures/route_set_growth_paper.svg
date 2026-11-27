@@ -46,5 +46,5 @@
 <rect x="660" y="254" width="240" height="28" rx="7" fill="#e3f4f3" stroke="#7cc8c4" stroke-width="1.2"/>
 <text x="780.0" y="272.0" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="12" font-weight="600" text-anchor="middle" fill="#0a1626">car route C</text>
 <text x="480" y="300" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="middle" fill="#55657a">Teal: new at this iteration, added at the end of the set. A bike or walk route and the transit journeys do not depend on road traffic,</text>
-<text x="480" y="316" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="middle" fill="#55657a">so later searches find only car routes. A car route is added only while its origin-destination pair holds fewer than max_car_routes.</text>
+<text x="480" y="316" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="middle" fill="#55657a">so later searches find only car routes. A traveller's first car route is always added; a later one only while its origin-destination pair holds fewer than max_car_routes.</text>
 </svg>

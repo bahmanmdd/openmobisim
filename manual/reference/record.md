@@ -132,7 +132,7 @@ this table. How the costs enter the choice is in [Choice](../concepts/choice.md)
 | `transit_transfer_wait_min` | cost per minute | 0.145 | The minutes waited at the later boardings. |
 | `transit_transfer_walk_min` | cost per minute | 0.165 | The minutes walked between two rides. |
 | `transit_transfers` | cost per transfer | 0.5 | The number of transfers. |
-| `money_eur` | cost per euro | 0.6 | The money paid, in euros. |
+| `money_eur` | cost per euro | 0.6 | The money paid, in euros (money is 0 for every alternative in this release). |
 | `car_ln_path_size` | cost per unit of the logarithm of the path size | −1 | The logarithm of a car route's path size. Recorded as given; the logit reads it times `nest_scale`, the least-cost choice reads it as 0. |
 | `is_car` | cost per car alternative | 0 | 1 for a car alternative: the constant of the mode. |
 | `is_bike` | cost per bike alternative | 0 | 1 for a bike alternative. |
@@ -163,7 +163,7 @@ Either an OpenStreetMap extract or the two tables; a settings file with both is 
 | Key | Type | Unit | In `run.toml` | Meaning |
 |---|---|---|---|---|
 | `trips_file` | string | none | required | The path of the [trips table](inputs.md#the-trips-table), a Parquet file. |
-| `classes` | array of strings | none | required | The ids of the user classes. In a record they are in id order. |
+| `classes` | array of strings | none | required | The ids of the traveller classes. In a record they are in id order. |
 
 ### `[transit]`
 

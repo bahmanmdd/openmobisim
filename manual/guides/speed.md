@@ -67,7 +67,8 @@ reading the inputs and writing the files included.
 | `paris` | 243 203 | 520 684 | 6 | 77.2 | 58.8 | 4.1 | 3.6 | 0.9 | 8.39 |
 
 Lyon and Paris were run a second time: 41.1 s and 76.9 s, with peak memory of 4.92 GB and 9.34 GB. Two runs of one
-case differ by a few seconds and by about half a gigabyte.
+case differ by a few seconds (4.2 s for Lyon, 0.3 s for Paris) and, in peak memory, by 0.55 GB for Lyon and 0.95 GB
+for Paris.
 
 What these five rows show, and no more:
 
@@ -98,23 +99,22 @@ capped at 5 iterations, [The iteration](../concepts/iteration.md) the rule).
 ## Threads
 
 % src: crates/binding/README.md ("Meanings and assumptions": `RAYON_NUM_THREADS`); crates/loop/README.md
-% ("Determinism"); measured by the writer on Delft, one run per row, while other work ran on the machine
+% ("Determinism"); measured on Delft, the median of three runs per row
 
 A run uses the machine's processor threads; the environment variable `RAYON_NUM_THREADS`, set before Python starts,
-sets how many ([Running a run again](reproducibility.md)). The results are the same at any number. Delft, one run per
-row:
+sets how many ([Running a run again](reproducibility.md)). The results are the same at any number. Delft, the
+median of three runs per row:
 
 | Threads | Run time (s) | Search, all iterations (s) | Load, all iterations (s) | Measure, all iterations (s) |
 |---|---|---|---|---|
-| 1 | 18.6 | 13.7 | 1.1 | 2.5 |
-| 2 | 11.1 | 7.6 | 1.1 | 1.4 |
-| 4 | 6.7 | 4.0 | 1.2 | 0.8 |
-| 8 | 4.7 | 2.3 | 1.2 | 0.4 |
-| 12 | 4.5 | 2.2 | 1.2 | 0.4 |
+| 1 | 18.2 | 13.5 | 1.1 | 2.4 |
+| 2 | 10.5 | 7.2 | 1.1 | 1.3 |
+| 4 | 6.5 | 3.9 | 1.1 | 0.7 |
+| 8 | 4.5 | 2.2 | 1.1 | 0.4 |
+| 12 | 4.1 | 2.0 | 1.1 | 0.3 |
 
 The search and the measure take less time with more threads; the loading takes the same time at every count. From 8
-to 12 threads little changes on this machine. These rows were measured once each, while other programs ran, so they
-are less exact than the table of cases, which has 4.1 s for the same run at the default number of threads.
+to 12 threads little changes on this machine, which has 8 fast and 4 slower cores.
 
 ## For bikes
 

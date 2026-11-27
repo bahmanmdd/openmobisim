@@ -7,7 +7,8 @@ alternatives come from. For the car, the bike and walking, an alternative is a *
 a search for the fastest route. The alternatives found for a traveller are kept in that traveller's **set**, which
 grows over the iterations of a run as the car traffic changes the fastest car route.
 
-This is the third of four concepts that build on one another. It takes the [network](networks.md) (the links, the
+This is the third of the seven concepts of this part in their reading order: the network, the demand, the routes,
+the choice, transit, the loading and the iteration. It takes the [network](networks.md) (the links, the
 modes allowed on each, the free-flow times) and the [demand](demand.md) (for every trip and mode, the node at each
 end; for transit, the stops in walking reach). It gives the [choice](choice.md) one set of alternatives per
 traveller, each alternative with its travel time and, for a car route, its path size. The choice model takes one
@@ -36,7 +37,7 @@ An **alternative** is a mode and three legs:
 
 | Leg | What it is | Where its time comes from |
 |---|---|---|
-| a walk | the gap between the origin door and its node, or the walk to a stop | the demand ([Demand](demand.md)) |
+| a walk | the walk gap between the origin door and its node, or the walk to a stop | the demand ([Demand](demand.md)) |
 | a route or a journey | a route on the network by car, by bike or on foot, or a journey on the timetable | the search (this page), or the transit search ([Transit](transit.md)) |
 | a walk | the gap between the last node and the destination door, or the walk from a stop | the demand |
 
@@ -59,7 +60,8 @@ t_{k+1} = \operatorname{exit}_{a_k}(t_k), \qquad t_0 = \text{the departure}, \qq
 $$
 
 for a route of $n$ links. Nothing else costs time: no turn, no delay at a node, no waiting at a node. The **link
-times** are those of the last loading of the network; before any loading they are the free-flow times:
+times** are what the link time reading of the last loading gives
+([The loading](loading.md#the-link-time-reading)); before any loading they are the free-flow times:
 
 | Mode | Time to cross a link entered at instant $t$ | Does it depend on $t$? |
 |---|---|---|
@@ -259,7 +261,7 @@ True
 
 At iteration 0 every trip finds its first alternatives. From then on only car routes are new, and fewer at each
 iteration; the run stopped by its rule after the iteration at which 0.36 % of the trips found a cheaper alternative.
-The run took about 4 s on the laptop that built this page.
+The run took about 4 s on an Apple M2 Pro laptop (12 cores).
 
 ## For bikes
 

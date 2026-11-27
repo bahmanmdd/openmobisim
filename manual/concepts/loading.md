@@ -3,8 +3,8 @@
 % src: crates/loading/README.md; crates/loop/README.md ("Load", "Measure", "The window and the mean"); README.md ("The ten tests", "Known limits")
 
 The **loading** (dynamic network loading, in the literature) takes the route every traveller has chosen and works out
-when each one passes each link of it: where queues form, how long each car waits, who is at the door before the study
-period ends. It never chooses. Every car, bike and walker arrives with its route and its departure, chosen beforehand,
+when each one passes each link of it: where queues form, how long each car waits, who is at the door before the window
+ends. It never chooses. Every car, bike and walker arrives with its route and its departure, chosen beforehand,
 and the loading moves each of them as an individual vehicle, in continuous time, with no time step.
 
 Each mode is loaded by its own rule:
@@ -26,7 +26,7 @@ The loading sits between the choice and the next search:
 
 | It gives | To |
 |---|---|
-| Per trip, the arrival, or that it is still travelling at the window's end | The iteration's measure and assess stages; the trips table ([What a run gives](outputs.md)) |
+| Per trip, the arrival, or that it is unfinished at the window's end | The iteration's measure and assess stages; the trips table ([What a run gives](outputs.md)) |
 | Per link and time bin, the cars, bikes and walkers that entered, and the cars' crossing times | The links table, the map and the summary |
 | The **link time reading**: the time a traveller entering a link at an instant takes to cross it | The [route search](search.md) of the next iteration, and the pricing of every car route in every traveller's set |
 
@@ -87,8 +87,8 @@ What follows from the rule:
   reaching the downstream end of a link, in the order of the instant and then of the trip's identifier, so two cars at
   the very same instant are always taken in the same order.
 
-Every vehicle, a car, a bike or a walker, enters the first link of its route on the whole second at which its walk
-from the door to the network ends.
+Every vehicle enters the first link of its route at the instant its walk from the door to the network ends: the
+departure second plus the walking time, not rounded.
 
 ## Bikes, walkers and transit
 
@@ -107,7 +107,7 @@ are not on links either, so the loading does not count them.
 
 % src: crates/loading/README.md ("The window is half-open …"); crates/loop/README.md ("The window and the mean"); README.md ("Known limits", first item)
 
-The loading covers the run's **window**, the study period, from its start up to but not including its end.
+The loading covers the run's **window**, from its start up to but not including its end.
 
 - A trip that is at its door before the window's end is **finished** and has a travel time.
 - A trip that is not is **unfinished**: the loading records the link it is on and when it entered that link, and the

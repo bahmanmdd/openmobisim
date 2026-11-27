@@ -112,7 +112,7 @@ their door within the window. What these columns measure is in [The iteration](.
 - `osm_file` together with `nodes_file` or `links_file` is refused: a network comes from one source.
 - No value is a boolean. TOML's `true` is never read as the number 1; it is refused, naming the key.
 - `stop_walk_max` and `transfer_walk_max` without `[transit]` are ignored, with a warning: nothing reads them.
-- A window end that is not a whole number of link bins after the start is moved up to one, and the record counts it
+- A window end that is not a whole number of time bins after the start is moved up to one, and the record counts it
   ([The window](window.md)).
 - A file that is not TOML raises `tomllib.TOMLDecodeError`. The file is read with Python's standard `tomllib`.
 
@@ -120,10 +120,9 @@ their door within the window. What these columns measure is in [The iteration](.
 
 % src: crates/io-parquet/README.md (`run_record.toml`); crates/binding/README.md (`run_file`: "A record's part one")
 
-Every run writes its record, `run_record.toml`, beside its tables. Part one of the record, every line before
-`[result]`, is the settings the run ran with, every default filled in. Copied into a `run.toml`, it runs the same run
-again ([Running a run again](reproducibility.md)). The `run.toml` of each published case was written this way, with
-every parameter written out.
+Part one of a run's record, `run_record.toml`, is the settings the run ran with, every default filled in; how to run
+it again from there is in [Running a run again](reproducibility.md). The `run.toml` of each published case was written
+this way, with every parameter written out.
 
 Since the two files never share a name, settings and results may share a folder: `run_file("my-case", out="my-case")`
 writes the record and the tables beside `run.toml` and leaves it as it is.

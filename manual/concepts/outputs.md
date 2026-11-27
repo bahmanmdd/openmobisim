@@ -59,7 +59,7 @@ all of them.
 | `trips.parquet` | trip | What became of each trip: the mode it took, when it arrived, how long it took, what it cost, how many alternatives it had | The last iteration: its choice (the mode), its loading (the arrival) and its measure (the cost) |
 | `routes.parquet` | trip and leg | The way each trip went, leg by leg: the walks, the links driven, ridden or walked, the transit rides | The alternative each trip held at the last iteration, found by the search and taken in the choice |
 | `links.parquet` | link and time bin | The traffic: how many cars, bikes and walkers entered each link in each time bin, and how long the cars took | The last iteration's loading |
-| `iterations.parquet` | iteration | How the run went: the mean trip time, the unfinished trips, how many travellers chose again, switched and would still change, and the seconds each stage took | The assess stage of every iteration |
+| `iterations.parquet` | iteration | How the run went: the mean trip time, the unfinished trips, how many travellers were offered a new choice, switched and would still change, and the seconds each stage took | The assess stage of every iteration |
 | `run_record.toml` | (one file) | What was run and what it found: every setting at the value used, the input files, the fingerprints and counts of the inputs, how the run ended, every repair | The inputs and settings as given, and the run's end |
 
 In Python, `run`, `run_file` and `Run.open` return a `Run` whose attributes `trips`, `links`, `iterations`, `routes`
@@ -79,7 +79,7 @@ One row per trip that was run. Every trip ends in exactly one of three states:
 | State | In the table | Meaning |
 |---|---|---|
 | Finished | `finished` is true; `arrival_s` and `travel_time_s` hold values | The trip was at its door before the window's end |
-| Still travelling | `finished` is false, `mode` holds a value, `arrival_s` and `travel_time_s` are empty | The trip took an alternative and was not at its door when the window ended; its arrival is unknown |
+| Unfinished | `finished` is false, `mode` holds a value, `arrival_s` and `travel_time_s` are empty | The trip took an alternative and was not at its door when the window ended; its arrival is unknown |
 | Without an alternative | `mode` is empty | No mode open to the trip can make it (no route on the network, no journey); it is counted, not simulated |
 
 The travel time is door to door: the walk from the door to the network or the stop, the time on the network or on
@@ -143,7 +143,7 @@ to the next ([Reproducibility](reproducibility.md)).
   ([Reproducibility](reproducibility.md)).
 - **Part two, `[result]`, what the run found and did**: the version of openmobisim, the end of the window the run
   used, the number of iterations, whether the stopping rule or the cap ended it, the counts and fingerprints of the
-  network, the travellers and the timetable, the readers' reports, and every repair by kind with its count.
+  network, the demand and the timetable, the readers' reports, and every repair by kind with its count.
 
 ```python
 import tomllib
@@ -179,13 +179,13 @@ new: each reads the run's files and inputs again and shows them.
 
 | Page | What it shows | It reads |
 |---|---|---|
-| The map (`Run.map`) | An interactive map of the network: road traffic by time bin, coloured by volume over capacity, by delay over free flow or by volume; the cyclists, the walkers and transit as layers; the journeys between the busiest pairs of places; the pairs that use a link | The trips, routes and links tables; the network, the travellers and the timetable; the record |
+| The map (`Run.map`) | An interactive map of the network: road traffic by time bin, coloured by volume over capacity, by delay over free flow or by volume; the cyclists, the walkers and transit as map layers; the routes and journeys between the busiest pairs of places; the pairs of places that use a link | The trips, routes and links tables; the network, the demand and the timetable; the record |
 | The summary (`Run.summary`) | The run's numbers on one page: trips completed and not, the modes' shares and mean trip times, departures by quarter hour, vehicle-kilometres by delay band, the busiest links, boardings, kilometres cycled and walked, the convergence by iteration, the computation time, the record, and a static map per mode | The same, and the iterations table |
 
 Two definitions are shared by both pages. A link's **delay over free flow** is its cars' mean crossing time over the
 car free-flow time, less 1, never below 0; it is shown in four bands (0–15 %, 15–50 %, 50–100 %, above 100 %), and a
-link whose cars lose under 2 s each is put in the first band whatever its percentage. A **pair** is the trips with the
-same origin and destination doors; the map holds the 2 000 busiest pairs and says in its footer how many of the trips
+link whose cars lose under 2 s each is put in the first band whatever its percentage. A **pair of places** is the trips with
+the same origin and destination doors; the map holds the 2 000 busiest pairs of places and says in its footer how many of the trips
 they hold.
 
 How to read the two pages is in [The map and the summary](../guides/pages.md).
@@ -243,7 +243,7 @@ Bikes are in every output beside the other modes.
 | Routes table | A leg of kind `bike` with the links ridden, between its two walks |
 | Links table | The column `bikes`: the bikes that entered the link in the bin. There is no bike time, since a bike crosses a link at its free-flow time |
 | Record | `bike_speed` under `[parameters]`; a link's bike permission and a trip's bike are in the fingerprints |
-| Map | The cyclists are a layer of their own, summed over the window; a bike journey is listed in its pair beside the car's |
+| Map | The cyclists are a map layer of their own, summed over the window; a bike route is listed in its pair of places beside the car's |
 | Summary | Bikes are a row of every table by mode, the kilometres cycled a number of their own, and the cyclists a map of their own |
 
 ## Limits

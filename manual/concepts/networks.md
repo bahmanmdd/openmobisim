@@ -7,7 +7,8 @@ two nodes). openmobisim holds one network for the three modes that travel on lin
 Scheduled public transport does not travel on links; it runs on its timetable (see [Transit](transit.md)) and is
 reached on foot over the walk links.
 
-The network is the first of four concepts that build on one another:
+The network is the first of the seven concepts of this part in their reading order: the network, the demand, the
+routes, the choice, transit, the loading and the iteration. The table follows the first four:
 
 | Page | What it takes | What it gives to the next |
 |---|---|---|
@@ -16,8 +17,9 @@ The network is the first of four concepts that build on one another:
 | [Routes and route sets](search.md) | the network, the demand, the current link times | per traveller: a set of alternatives (routes and transit journeys) |
 | [Choice](choice.md) | the sets and their costs | per traveller: the alternative taken |
 
-The alternatives taken are then loaded on the network ([The loading](loading.md)), which gives new link times, and
-the search and the choice are repeated ([The iteration](iteration.md)).
+Journeys on the timetable are found beside the routes ([Transit](transit.md)). The alternatives taken are then loaded
+on the network ([The loading](loading.md)), which gives new link times, and the search and the choice are repeated
+([The iteration](iteration.md)).
 
 ```{image} ../_static/figures/network_modes_paper.svg
 :alt: One network, modes per link: a street as a car link, a bike link and a walk link between the same two nodes, and a cycle path with a bike link and a walk link only
@@ -193,10 +195,10 @@ a region: a box `(west, south, east, north)` or a polygon of `(lon, lat)` points
 one behaviour and no options. It builds three **layers** of links, one per mode, and puts them in the one network:
 
 1. **Which ways each mode may use.** A way is read when its `highway` value is one of the road classes of the table
-   below (or it is a ferry route). The car layer takes the ways of a car class that are not closed to cars by their
-   access tags. The bike layer takes every class except motorways and their slip roads, unless the tags close the way
+   below (or it is a ferry route). The car layer takes the ways of a road class open to cars that are not closed to cars
+   by their access tags. The bike layer takes every road class except motorways and their slip roads, unless the tags close the way
    to bikes; trunk roads, busways, footways and pedestrian streets only where a `bicycle` tag opens them. The walk
-   layer takes every class except motorways and their slip roads, unless the tags close the way to walkers.
+   layer takes every road class except motorways and their slip roads, unless the tags close the way to walkers.
 2. **Directions.** Cars follow `oneway` and are one-way on roundabouts and motorways. Bikes follow `oneway:bicycle`
    and the cycleway tags that open a one-way street against its direction, and otherwise the street's direction.
    Walkers go both ways.
@@ -221,13 +223,13 @@ a short turnaround link, so that the motorway stays connected in both directions
 
 **The car fields of a link** come from the way's tags and, where a tag is missing or unreadable, from its road class:
 the lanes per direction from `lanes` and its variants, the free-flow speed from `maxspeed` and its variants, and the
-capacity always from the class, as lanes × the class's capacity per lane.
+capacity always from the road class, as lanes × the road class's capacity per lane.
 
-### The class defaults
+### The road class defaults
 
 % src: crates/io-osm/README.md ("The class table"); PARAMETERS.md (osm_class_defaults, capacity_per_lane)
 
-| `highway` class | Car free-flow speed (km/h) | Car lanes per direction (lanes) | Junctions | Green share (share of the signal cycle) | Capacity (veh/h per lane) |
+| Road class (`highway` value) | Car free-flow speed (km/h) | Car lanes per direction (lanes) | Junctions | Green share (share of the signal cycle) | Capacity (veh/h per lane) |
 |---|---|---|---|---|---|
 | motorway | 110 | 2 | none at grade | — | 2 000 |
 | motorway_link | 60 | 1 | ramp | — | 1 550 |
@@ -245,7 +247,7 @@ capacity always from the class, as lanes × the class's capacity per lane.
 | service | 20 | 1 | at grade | 0.25 | 450 |
 | pedestrian, footway, cycleway, busway, ferry | no cars | no cars | — | — | no cars |
 
-The reader models no junction, so the capacity of a lane **counts the class's junctions in**. For roads without
+The reader models no junction, so the capacity of a lane **counts the road class's junctions in**. For roads without
 at-grade junctions it is a carriageway lane's capacity: 2 000 veh/h on a motorway (ICTAVRU), 1 800 veh/h on a trunk
 road, 1 550 veh/h on a ramp (Cerema, *Fondamentaux de la conception routière*). For roads with at-grade junctions it
 is the capacity of a signalised approach lane,
@@ -255,14 +257,14 @@ C = Q_s \cdot g
 $$
 
 with $Q_s$ the saturation flow, 1 800 veh/h per lane, and $g$ the green share, the green time over the cycle time
-(Cerema 2016). The formula is the guideline's; **the green share given to each class is an assumption of this
-project**, not a value of the guideline. The speeds and lanes are common conventions for OpenStreetMap data, not a
+(Cerema 2016). The formula is the guideline's; **the green share given to each road class is an assumption of
+this project**, not a value of the guideline. The speeds and lanes are common conventions for OpenStreetMap data, not a
 sourced national table. The table is one parameter, `osm_class_defaults`, with one value; it cannot be changed
 through `from_osm`. To use other values, read the network back with `Network.tables()`, change the columns and build
 it again with `from_tables`.
 
 The parameter `capacity_per_lane` applies to a car row of a link table that gives no capacity. A network read from an
-extract gives every car link its class's capacity, so `capacity_per_lane` changes nothing there.
+extract gives every car link its road class's capacity, so `capacity_per_lane` changes nothing there.
 
 ### A lighter car network (experimental)
 
@@ -270,7 +272,7 @@ extract gives every car link its class's capacity, so `capacity_per_lane` change
 
 `Network.from_osm(path, region=None, car_roads="main")` is an **experimental** helper that may change. It gives cars
 the main roads alone, from motorways down to `unclassified`, and no `residential`, `living_street` or `service`
-road; a roundabout tagged as one of those three classes is driven as the largest main class that meets it. Bikes and
+road; a roundabout tagged as one of those three road classes is driven as the largest main road class that meets it. Bikes and
 walkers are read as before. The default, `car_roads="all"`, is the reader described above.
 
 ## Signals: read and stored, applied nowhere
@@ -279,8 +281,8 @@ walkers are read as before. The default, `car_roads="all"`, is the reader descri
 
 The OpenStreetMap reader marks a node tagged `highway=traffic_signals` as signalised, and marks every link whose
 downstream node is signalised. The network stores both marks. **Nothing reads them**: no free-flow time, capacity,
-route or delay depends on a signal. The effect of junctions on a road's throughput is in the class table's capacities
-instead. A network built from tables has no signal marks, and `Network.tables()` does not write them.
+route or delay depends on a signal. The effect of junctions on a road's throughput is in the road class table's
+capacities instead. A network built from tables has no signal marks, and `Network.tables()` does not write them.
 
 ## Shapes and road classes: for drawing only
 
@@ -349,7 +351,7 @@ walk 55400 2253.2
 % src: crates/graph/README.md ("Meanings and assumptions"); crates/io-osm/README.md ("Meanings and assumptions", "The class table"); README.md ("Known limits")
 
 - **No junction is modelled.** Signals are stored and not applied; turn restrictions are not read, and a turn or a
-  node costs no time. The class capacities stand in for junctions, and their green shares are assumptions.
+  node costs no time. The road class capacities stand in for junctions, and their green shares are assumptions.
 - **One bike speed and one walk speed** for the whole network: no level of cycling infrastructure and no speed
   limit changes them, and bikes and walkers never slow one another down.
 - **A link has no storage.** A queue does not spill back onto the links upstream (see [The loading](loading.md)).
@@ -357,7 +359,7 @@ walk 55400 2253.2
   `customers` is driven like any other.
 - **Transit does not use links.** No bus is delayed by road traffic, and a bus lane is not read.
 - **Parkings, ferry durations and roundabout rules are not read** from OpenStreetMap.
-- **The class table is one fixed default**, not a calibrated or national table.
+- **The road class table is one fixed default**, not a calibrated or national table.
 
 ## References
 

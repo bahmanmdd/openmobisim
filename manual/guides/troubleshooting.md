@@ -123,7 +123,8 @@ alternative at all is in `without_alternative`.
 | `ValueError: links: missing column lanes; the columns are link_id, upstream, …` | a required column is absent; names are fixed, with no aliases | rename or add the column ([Inputs](../reference/inputs.md)) |
 | `ValueError: trip …: a position of another kind than the network's` | trips in longitude and latitude on a network in metres, or the reverse | one kind of position for the network and the trips |
 | a Parquet column of a type not read, or a codec other than snappy | a boolean or date column; a file compressed with zstd or gzip | text and numbers only; write with snappy (pyarrow's default) or no compression |
-| `FileNotFoundError: …: run_file reads a settings file named run.toml, or the folder holding it` | a wrong path, or a settings file under another name | the file must be named `run.toml` |
+| `FileNotFoundError: …: run_file reads a settings file named run.toml, or the folder holding it` | nothing is at the path given | give the folder that holds `run.toml`, or the file's path |
+| `ValueError: …: run_file reads a settings file named run.toml, or the folder holding it` | the path is an existing file of another name | the file must be named `run.toml` |
 | `ValueError: …: the folder holds a run's record, run_record.toml, and no settings file, run.toml` | `run_file` given the folder of a finished run | write a `run.toml` from the record ([Running a run again](reproducibility.md)), or open the run with `Run.open` |
 | `FileNotFoundError: …: no run_record.toml there` | `Run.open` given a folder that holds no finished run | give the folder that was the run's `out` |
 | `ValueError: run_record.toml: the network was given in memory when the run was made …; pass it: network=` | `Run.open` on a run whose tables were not files | `Run.open(folder, network=network, demand=demand)` |

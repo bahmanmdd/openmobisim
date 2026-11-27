@@ -89,21 +89,8 @@ Rules to know:
 
 % src: crates/binding/README.md (`Run.open`)
 
-`Run.open(folder)` opens a finished run without running anything: it reads the record, rebuilds each input from the
-file the record names, and returns a `Run` like the fresh one, from which the map and the summary can be written
-([The map and the summary](pages.md)).
-
-```python
-opened = oms.Run.open("dotnet-run")
-print(opened.trips, opened.stopped_by_rule)
-```
-
-```text
-dotnet-run/trips.parquet True
-```
-
-An input whose fingerprint differs from the record's is named in a warning with both fingerprints: the input file
-changed after the run.
+`Run.open(folder)` opens a finished run without running anything, and names in a warning an input whose fingerprint
+differs from the record's: see [The map and the summary](pages.md#opening-a-finished-run).
 
 ## The seed
 
@@ -120,7 +107,7 @@ same run; another seed gives another run of the same model. For `dotnet`:
 | 0 | 16 688 | 12 344 | 210 | 10 677 | 18.94 | 17 |
 | 1 | 16 781 | 12 228 | 206 | 10 704 | 18.89 | 18 |
 
-The two runs differ by up to 1 % of a mode's trips. A difference of this size between two scenarios could be the
+The two runs differ by up to 1 % of the car, bike or transit trips, and by 4 of about 210 walk trips. A difference of this size between two scenarios could be the
 seed's: compare scenarios over several seeds.
 
 ## Threads

@@ -20,39 +20,9 @@ table lists the limits that most often decide whether the model fits a question;
 | Money | The cost of every alternative has 0 euros | Fares, tolls or parking charges matter |
 | More than one day, or less than a whole trip | One service day; a trip not at its door when the window ends has no travel time | The window is short for the trips in it |
 
-## The loading
-
-% src: crates/loading/README.md ("Meanings and assumptions", "Bikes"); crates/graph/README.md ("Meanings and assumptions"); README.md ("Known limits")
-
-Explained on [The loading](loading.md).
-
-- **No spillback.** The point queue stores any number of cars on a link. A queue never reaches the links upstream, so it
-  never blocks them.
-- **No junction model.** No rule at a node, no merge rule and no signal holds a car; nothing costs time at a turn. Where
-  links meet, cars queue on the next link's end in the order they reach it.
-- **Signals are stored and applied nowhere.** A signal never changes a link's free-flow time or its capacity. On a
-  network read from OpenStreetMap, a link's capacity stands in for the junctions of its road class
-  ([below](#the-network)).
-- **No storage, jam density or wave speed**, and **no passenger-car unit**: every vehicle counts as one.
-- **Bikes and walkers travel at free flow**: one bike speed and one walk speed, on every link, for everyone. There is
-  no bike congestion, and bikes, walkers and cars do not delay one another.
-- **Transit is not loaded.** No bus is on a road; a vehicle has no capacity.
-- **The window cuts trips off.** A trip not at its door when the window ends is unfinished and has no travel time. The
-  mean trip time is over the finished trips only: read it together with the unfinished count beside it.
-- **Near the window's end, costs read too low.** A link that a traveller would enter after the window's end is read
-  without the cars that would have entered it after the end. Where every trip finishes, this does not arise.
-- **The time of a route not taken is an estimate.** The link time reading holds every other car where the loading
-  recorded it. Where moving the traveller would move other cars, the reading is off by one headway of the link for each
-  car held on the wrong side, and queues further on can add to that; along a route the error is not bounded by one
-  headway.
-- **A car trip while a bottleneck's queue builds up is slightly above theory**: about 1.5 s on a trip of about 692 s
-  (0.2 %) in the test of cars against bikes behind a bottleneck with the step exponent at 1, of which about 0.4 s comes
-  from departures on whole seconds and the rest is not explained. At the default step exponent the difference is
-  +0.9 ± 0.8 s over 20 seeds.
-
 ## The network
 
-% src: crates/graph/README.md ("Meanings and assumptions", "Repairs", "Bikes"); crates/io-osm/README.md ("Meanings and assumptions": signals, the region; "The class table"; "Trimmed"; the experimental `CarRoads::Main`); PARAMETERS.md (`osm_class_defaults`, `bike_speed`, `walk_speed`); crates/binding/README.md ("No signals from tables"; "Experimental")
+% src: crates/graph/README.md ("Meanings and assumptions", "Repairs", "Bikes"); crates/io-osm/README.md ("Meanings and assumptions": signals, the region; "The class table"; "Trimmed from release 0.1"; the experimental `CarRoads::Main`); PARAMETERS.md (`osm_class_defaults`, `bike_speed`, `walk_speed`); crates/binding/README.md ("No signals from tables"; "Experimental")
 
 Explained on [Networks](networks.md).
 
@@ -62,32 +32,33 @@ Explained on [Networks](networks.md).
   a street are ridden at the same speed.
 - **Turn restrictions are not read**, and no movement at a node is forbidden or delayed.
 - **Capacities read from OpenStreetMap are defaults by road class.** Each car link
-  takes its class's capacity per lane times its lanes, and for roads with junctions at grade that capacity is a
-  saturation flow of 1 800 vehicles per hour per lane times a share of green time. **The green share of each class is
-  an assumption of this project**, not a value of a guideline, and none is calibrated.
+  takes its road class's capacity per lane times its lanes, and for roads with junctions at grade that capacity is a
+  saturation flow of 1 800 vehicles per hour per lane times a share of green time. **The green share of each road class
+  is an assumption of this project**, not a value of a guideline, and none is calibrated.
 - **Speeds and lanes where OpenStreetMap gives none are one table for every country.**
 - **Signal timings, bus lanes, parkings, the duration of ferries and the levels of cycling infrastructure are not
   read** from OpenStreetMap.
-- **Each mode's network is trimmed to its largest strongly connected part.** Links outside it are dropped and counted.
-- **A region cuts the network.** Ways are cut at the region's edge; only motorways and trunk roads are kept a further
-  2 000 m beyond it.
+- **A network read from OpenStreetMap is trimmed, per mode, to its largest strongly connected part; a network from
+  tables is used as given.** Links outside that part are dropped and counted.
+- **A region cuts the network.** Ordinary streets are cut one node beyond the region's edge; motorways, trunk roads
+  and their slip roads are kept up to 2 000 m outside it.
 - **Distances are on a plane.** Positions in longitude and latitude are projected to the UTM zone of the network's
   centre, within 0.1 % of the ground distance inside the zone. A link's length, when not given, is the straight line
   between its two nodes, not the length along its shape.
 - **`car_roads="main"` is an experimental helper**: it gives cars the main roads alone, which lightens the car network
   and removes the routes through side streets.
 
-## The travellers
+## The demand
 
 % src: crates/demand/README.md ("Inputs", "Meanings and assumptions", "Repairs", "Bikes"); crates/loop/README.md ("Money is 0 …"; "Repairs"); crates/io-osm/README.md (the experimental `trips::draw`); crates/binding/README.md (`make_case`)
 
 Explained on [Demand](demand.md).
 
-- **A trip is one traveller making one journey from door to door**: an origin, a destination, a departure second, a
+- **A trip is one traveller making one movement from door to door**: an origin, a destination, a departure second, a
   class and the modes open to it. The model does not link the trips of one person through the day.
 - **The departure time is an input.** Nobody leaves earlier or later because of a queue or a timetable.
 - **The modes open to a trip are an input.** Whether a traveller owns a car or a bike is expressed by the modes given.
-- **A door is joined to the network by a straight line** to the nearest node the mode can use, walked at the walk speed
+- **A door is linked to the network by a straight line** to the nearest node the mode can use, walked at the walk speed
   by every mode, the driver included. There is no parking and no search for a parking place.
 - **Money is 0 for every alternative.** The cost has a column for euros and no source that fills it: no fare, toll,
   fuel or parking charge.
@@ -109,9 +80,9 @@ Explained on [Routes and route sets](search.md).
 - **The search can miss the earliest arrival at a tie.** When two routes reach a node at exactly the same instant in
   different places of a queue, the route kept can arrive later than the one dropped, by a headway or more.
 - **A bike and a walker have one route each**: the shortest by length, found once.
-- **The car routes of a pair of nodes are limited** by `max_car_routes` (6 by default). A faster route found by a pair
-  at its limit is lost and replaces none. On Delft this was measured to make the mean car trip 1.3 % longer than without
-  a limit. A pair can also hold more than the limit, when its travellers' first routes differ.
+- **The car routes of an origin-destination pair are limited** by `max_car_routes` (6 by default). A faster route
+  found by an origin-destination pair at its limit is lost and replaces none. On Delft this was measured to make the
+  mean car trip 1.3 % longer than without a limit. Such a pair can also hold more than the limit, when its travellers' first routes differ.
 
 ## Choice
 
@@ -119,8 +90,8 @@ Explained on [Routes and route sets](search.md).
 
 Explained on [Choice](choice.md).
 
-- **Two models**: the least cost, and one nested logit whose nests are the modes, with one nest scale for all nests.
-- **The cost is linear** in the parts of an alternative: minutes of each kind of time, transfers, euros, a constant per
+- **Two models**: the least-cost choice, and one nested logit whose nests are the modes, with one nest scale for all nests.
+- **The cost is linear** in the attributes of an alternative: minutes of each kind of time, transfers, euros, a constant per
   mode. There is no reliability, comfort or crowding term.
 - **The default coefficients are starting values**, to be calibrated for each study; they are not estimates for any
   city.
@@ -150,6 +121,36 @@ Explained on [Transit](transit.md).
 - **The part of a run of the day before that lies before midnight is not in the day.**
 - **Transit is searched once**, at iteration 0: a journey's time and cost are the same at every iteration.
 
+## The loading
+
+% src: crates/loading/README.md ("Meanings and assumptions", "Bikes"); crates/graph/README.md ("Meanings and assumptions"); README.md ("Known limits")
+
+Explained on [The loading](loading.md).
+
+- **No spillback.** The point queue stores any number of cars on a link. A queue never reaches the links upstream, so it
+  never blocks them.
+- **No junction model.** No rule at a node, no merge rule and no signal holds a car; nothing costs time at a turn. Where
+  links meet, cars queue on the next link's end in the order they reach it.
+- **Signals are stored and applied nowhere.** A signal never changes a link's free-flow time or its capacity. On a
+  network read from OpenStreetMap, a link's capacity stands in for the junctions of its road class
+  ([above](#the-network)).
+- **No storage, jam density or wave speed**, and **no passenger-car unit**: every vehicle counts as one.
+- **Bikes and walkers travel at free flow**: one bike speed and one walk speed, on every link, for everyone. There is
+  no bike congestion, and bikes, walkers and cars do not delay one another.
+- **Transit is not loaded.** No bus is on a road; a vehicle has no capacity.
+- **The window cuts trips off.** A trip not at its door when the window ends is unfinished and has no travel time. The
+  mean trip time is over the finished trips only: read it together with the unfinished count beside it.
+- **Near the window's end, costs read too low.** A link that a traveller would enter after the window's end is read
+  without the cars that would have entered it after the end. Where every trip finishes, this does not arise.
+- **The time of a route not taken is an estimate.** The link time reading holds every other car where the loading
+  recorded it. Where moving the traveller would move other cars, the reading is off by one headway of the link for each
+  car held on the wrong side, and queues further on can add to that; along a route the error is not bounded by one
+  headway.
+- **A car trip while a bottleneck's queue builds up is slightly above theory**: about 1.5 s on a trip of about 692 s
+  (0.2 %) in the test of cars against bikes behind a bottleneck with the step exponent at 1, of which about 0.4 s comes
+  from departures on whole seconds and the rest is not explained. At the default step exponent the difference is
+  +0.9 ± 0.8 s over 20 seeds.
+
 ## The iteration and the stopping rule
 
 % src: README.md ("Known limits"); crates/loop/README.md ("Stop", "Assess", "The window and the mean", "Who chooses again"); PARAMETERS.md (`step_exponent`, `iteration_cap`)
@@ -161,7 +162,7 @@ Explained on [The iteration](iteration.md).
   the default 50 iterations under the default model is within 2.3 ± 1.0 s of theory on the trip by the bottleneck
   route, in the group of departures farthest from it, over 20 seeds; with the step exponent at 1 it is 9.5 ± 1.9 s.
 - **The distance to equilibrium is reported, never judged.** The share who would change (logit) and the duality gap
-  (least cost) are in every row of the iterations table; no value of either stops or fails a run.
+  (least-cost choice) are in every row of the iterations table; no value of either stops or fails a run.
 - **The distance is over the sets found.** A share who would change of 0 means that nobody would change among the
   alternatives the search found, not among all routes of the network.
 - **The settled state depends on the step exponent**, because the sets grow by the search at the costs each iteration
@@ -169,10 +170,12 @@ Explained on [The iteration](iteration.md).
   every seed.
 - **The mean trip time the rule reads is over finished trips**; with unfinished trips, two iterations' means are over
   different trips.
-- **Under the least-cost choice the rule that asks travellers far from their best more often has limits of its own**:
+- **Under the least-cost choice the rule that offers a new choice more often to travellers far from their best has
+  limits of its own**:
   it depends on constants added to every cost, favours short trips, and above its band can move travellers behind one
   queue together.
-- **Results are a sample.** Under the logit another seed gives other tastes and other travellers asked; a single run's
+- **Results are a sample.** Under the logit another seed gives other tastes and other travellers offered a new choice; a single
+  run's
   numbers scatter around the model's.
 
 ## What a run gives
@@ -221,7 +224,7 @@ Explained on [Validation](validation.md).
 
 ## For bikes
 
-% src: README.md ("Known limits", last item); crates/graph/README.md ("Bikes"); crates/loading/README.md ("Bikes"); crates/transit/README.md ("Bikes"); crates/io-osm/README.md ("Trimmed": the bike layer's infrastructure levels)
+% src: README.md ("Known limits", last item); crates/graph/README.md ("Bikes"); crates/loading/README.md ("Bikes"); crates/transit/README.md ("Bikes"); crates/io-osm/README.md ("Trimmed from release 0.1": the bike layer's infrastructure levels)
 
 Bikes are a mode of every part of the model, and these are the limits that concern them, gathered from above:
 

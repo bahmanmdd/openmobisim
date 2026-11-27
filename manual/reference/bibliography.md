@@ -2,10 +2,14 @@
 
 % src: PARAMETERS.md (the Source column); README.md ("The ten tests", "Cite"); the contracts crates/choice, crates/io-gtfs, crates/io-osm, crates/loading, crates/loop, crates/search and crates/transit (README.md of each)
 
-Every work that the modules' contracts, the table of parameters and the list of the ten tests cite, once, in
-alphabetical order. Under each work: the pages of the manual it supports, and the parameters whose default or meaning
+Every work that the modules' contracts, the table of parameters, the list of the ten tests and the README of the
+published cases cite, once, in alphabetical order. Under each work: the pages of the manual it supports, and the parameters whose default or meaning
 it is the source of ([Parameters](parameters.md)). A reference marked *as cited* is given as far as the project's own
 documents give it.
+
+Bar-Gera. The link flows of Sioux Falls under the BPR travel-time function. *As cited: the list of the ten tests names "Bar-Gera's BPR flows" and no work.*
+: Named in test 6 as flows that exceed capacity on 60 of 76 links and are not the answer of a queue model. Supports
+  [Validation](../concepts/validation.md).
 
 Ben-Akiva, M. and Bierlaire, M. (1999). Discrete choice methods and their applications to short term travel decisions. In R. W. Hall (ed.), *Handbook of Transportation Science*, pp. 5–33. Kluwer Academic Publishers.
 : The path-size logit. Supports [Choice](../concepts/choice.md) and [The iteration](../concepts/iteration.md); the
@@ -34,7 +38,7 @@ Daganzo, C. F. (1995). The cell transmission model, part II: network traffic. *T
 : The merge rule of test 2. The sources name "Daganzo's merge rule" without a work; this is the paper that states it.
   Supports [Validation](../concepts/validation.md) and [The loading](../concepts/loading.md).
 
-de Hartog, J. J., Boogaard, H., Nijland, H. and Hoek, G. (2011). *Environmental Health Perspectives*. *As cited: the sources give the authors, the journal and the year.*
+de Hartog, J. J., Boogaard, H., Nijland, H. and Hoek, G. (2010). Do the health benefits of cycling outweigh the risks? *Environmental Health Perspectives* 118(8), 1109–1116.
 : The urban cycling speed in the Netherlands, stops included. Supports the parameter `bike_speed`.
 
 Delling, D., Pajor, T. and Werneck, R. F. (2015). Round-based public transit routing. *Transportation Science* 49(3), 591–604.
@@ -51,6 +55,10 @@ General Transit Feed Specification. *GTFS Schedule Reference*. <https://gtfs.org
 
 Guerra, E., Cervero, R. and Tischler, D. (2012). Half-mile circle: does it best represent transit station catchments? *Transportation Research Record* 2276, 101–109.
 : The quarter-mile walking standard of transit. Supports the parameter `transfer_walk_max`.
+
+HCIA v3 (Rijkswaterstaat 2011), Table 3.1. *As cited: the README of the published cases gives this short name, the publisher, the year and the table.*
+: The capacity per lane of the motorways and motorway ramps of the published cases, 2 100 vehicles per hour. Supports
+  [The published cases](cases.md).
 
 Hart, P. E., Nilsson, N. J. and Raphael, B. (1968). A formal basis for the heuristic determination of minimum cost paths. *IEEE Transactions on Systems Science and Cybernetics* 4(2), 100–107.
 : The goal-directed search A\*. Supports [Search](../concepts/search.md).

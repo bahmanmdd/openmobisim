@@ -122,12 +122,19 @@ car_only {'car': 84.3, 'transit': 15.4, 'walk': 0.3} {'car': 85.4, 'transit': 14
 | `car_and_bike` | bike | 27.8 | 34.0 |
 | `car_and_bike` | car | 62.3 | 57.6 |
 | `car_and_bike` | transit | 9.9 | 8.3 |
+| `car_and_bike` | walk | 0.1 | 0.1 |
 | `car_only` | car | 84.3 | 85.4 |
 | `car_only` | transit | 15.4 | 14.4 |
+| `car_only` | walk | 0.3 | 0.2 |
+
+The second column of shares is a changed run, made here to show the effect of one coefficient; it is not the published
+case. Each share is rounded to 0.1 %, so a class's shares may add to 100.1 %.
 
 The class whose coefficient changed cycles more. The class `car_only`, whose coefficients did not change, drives a
 little more: the classes share the roads, and the travel time of a car on a link is the one thing a traveller's choice
-changes for the others ([The loading](../concepts/loading.md)).
+changes for the others ([The loading](../concepts/loading.md)). Checked on the two runs' trips tables: the 6 731
+travellers of `car_only` who drive in both runs take 15.2 min on average with the defaults and 14.3 min in the changed
+run.
 
 In a settings file the same change is one table per class, each coefficient by its name, all sixteen written:
 

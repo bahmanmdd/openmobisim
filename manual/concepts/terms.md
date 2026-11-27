@@ -17,7 +17,7 @@ not a timetable's.
 | capacity | The largest flow of cars the downstream end of a car link passes, in vehicles per hour. | [Networks](networks.md#capacity) |
 | case | A folder of input files with a settings file, ready to run; five are published beside the package. | [The cases](../reference/cases.md) |
 | choice | The one decision each traveller makes in a run: which alternative of its set to take, which settles its mode and its route at once. | [Choice](choice.md) |
-| choice model | The rule that turns the costs of the alternatives of a set into the alternative taken: the least cost, or the logit. | [Choice](choice.md#the-two-models) |
+| choice model | The rule that turns the costs of the alternatives of a set into the alternative taken: the least-cost choice, or the logit. | [Choice](choice.md#the-two-models) |
 | class (of travellers) | A group of travellers who weigh their alternatives in the same way, that is, who share one coefficient per attribute; it is nothing more than that. | [Demand](demand.md#traveller-classes) |
 | coefficient | The weight a traveller class gives to one attribute in the cost of an alternative, in cost per unit of the attribute; positive is worse. | [Choice](choice.md#the-cost-of-an-alternative) |
 | contract | The README of a module of the simulator, which states its inputs, outputs, units, assumptions and what it means for bikes. | [How a run works](architecture.md#inside-the-simulator) |
@@ -46,7 +46,7 @@ not a timetable's.
 | headway (of a frequency) | In a GTFS feed, the time between two successive runs of a trip listed in `frequencies.txt`. | [Transit](transit.md#one-service-day-from-a-gtfs-feed) |
 | headway (of a link) | The least time between two cars leaving the downstream end of a car link: 3 600 s over the link's capacity in vehicles per hour. | [The loading](loading.md#cars-on-a-point-queue) |
 | inclusive value | In the nested logit, the logarithm of the sum over the alternatives of a nest of the exponential of minus cost over nest scale; also called the logsum. | [Choice](choice.md#the-logit-family) |
-| iteration | One pass of the five stages search, choose, load, measure and assess, numbered from 0; also the module of the simulator that repeats them. | [The iteration and the stopping rule](iteration.md#the-five-stages) |
+| iteration | One pass of the five stages search, choose, load, measure and assess, numbered from 0. The word has a second meaning: the iteration is also the module of the simulator (`loop`) that repeats these passes. | [The iteration and the stopping rule](iteration.md#the-five-stages) |
 | iteration cap | The number of iterations after which a run always stops, whatever the stopping rule says (`iteration_cap`, 50 by default). | [The iteration and the stopping rule](iteration.md#the-stopping-rule) |
 | iteration floor | The number of iterations before which the stopping rule is not read (`iteration_floor`, 0 by default). | [The iteration and the stopping rule](iteration.md#the-stopping-rule) |
 | iterations table | The file `iterations.parquet`, one row per iteration: the mean trip time, the trip counts, the shares, the measure of the distance to equilibrium and the seconds each stage took. | [What a run gives](outputs.md#the-iterations-table) |
@@ -54,21 +54,21 @@ not a timetable's.
 | kind of service | What a run of the timetable is (rail, metro, tram, bus, ferry or other), read from the feed's `route_type` and used by the map and the summary only. | [Transit](transit.md#the-kind-of-service) |
 | largest strongly connected part | Of the links of one mode read from OpenStreetMap, those whose two ends lie in the largest set of nodes that all reach one another by that mode; the other links are left out. | [Networks](networks.md#from-an-openstreetmap-extract) |
 | layer (of a network) | The links of one mode that the OpenStreetMap reader builds: a car layer, a bike layer and a walk layer, put together in the one network. | [Networks](networks.md#from-an-openstreetmap-extract) |
-| least-cost choice | The choice model `"deterministic"`, under which a traveller takes the alternative of least cost in its set. | [Choice](choice.md#the-least-cost) |
+| least-cost choice | The choice model `"deterministic"`, under which a traveller takes the alternative of least cost in its set. | [Choice](choice.md#the-least-cost-choice) |
 | leg | One part of the way a trip went, a row of the routes table: a walk off the network, a route on the links by car, by bike or on foot, a ride, or a transfer walk. | [Output files](../reference/outputs.md#the-kinds-of-leg) |
 | link | A directed connection from one node to another, with a length, the modes allowed on it and, for cars, lanes, a free-flow speed and a capacity; a street open in both directions is two links. | [Networks](networks.md#nodes-and-links) |
-| link bin | One of the periods of `link_bin` seconds (300 s by default) into which the window is cut for the links table, also called a time bin; a vehicle is counted in the bin in which it entered the link. | [The loading](loading.md#what-the-loading-records) |
 | link time reading | The time a traveller entering a link at a given instant takes to cross it, obtained by applying the point queue's rule to the car crossings the last loading recorded; for a bike and a walker it is the free-flow time. | [The loading](loading.md#the-link-time-reading) |
-| links table | As an input, the table of the network's links; as a result, the file `links.parquet`, one row per link and link bin that someone entered. | [What a run gives](outputs.md#the-links-table) |
+| links table | As an input, the table of the network's links; as a result, the file `links.parquet`, one row per link and time bin that someone entered. | [What a run gives](outputs.md#the-links-table) |
 | loading | The part of the simulator that takes the route each traveller has chosen and works out when each car, bike and walker passes each link of it; it never chooses. | [The loading](loading.md) |
 | logit | The choice model `"logit"`: a nested logit with one nest per mode and one nest scale, under which a traveller takes an alternative with a probability that falls as its cost rises. | [Choice](choice.md#the-logit-family) |
-| map | A page of a finished run, one HTML file that shows the traffic per link and link bin, the cyclists, the walkers, transit and the journeys between the busiest pairs of places. | [What a run gives](outputs.md#the-map-and-the-summary) |
+| map | A page of a finished run, one HTML file that shows the traffic per link and time bin, the cyclists, the walkers, transit and the routes and journeys between the busiest pairs of places. | [What a run gives](outputs.md#the-map-and-the-summary) |
+| map layer | On the map, one of the four things drawn that a reader switches on or off: the road traffic, transit, the cyclists, the walkers. | [What a run gives](outputs.md#the-map-and-the-summary) |
 | mean trip time | The mean door-to-door time of the trips that finished within the window, in seconds. | [The iteration and the stopping rule](iteration.md#what-each-iteration-reports) |
 | method of successive averages | The classical remedy against all travellers moving at once: at iteration *k* only a share 1/(*k*+1) is moved, a share that shrinks so that the moves die out. | [The iteration and the stopping rule](iteration.md#who-is-offered-a-new-choice) |
 | mode | One of the four ways of travelling, car, bike, walk and transit, none ranked above another. | [Networks](networks.md#one-network-for-car-bike-and-walk) |
 | mode constant | An attribute that is 1 for the alternatives of one mode and 0 for the others, so that its coefficient is a cost of taking that mode at all. | [Choice](choice.md#the-cost-of-an-alternative) |
 | mode set | The modes among car, bike, walk and transit that are open to a trip, or allowed on a link (car, bike and walk only), written as names joined by `;`. | [Demand](demand.md#the-modes-open-to-a-trip) |
-| module | One part of the simulator with its own contract (a Rust crate), which uses only the modules below it. | [How a run works](architecture.md#inside-the-simulator) |
+| module | One part of the simulator with its own contract (a Rust crate), which uses only modules below it or beside it in its row of the architecture figure. | [How a run works](architecture.md#inside-the-simulator) |
 | nest | Under the logit, the alternatives of one mode in a traveller's set, treated as more alike than alternatives of different modes. | [Choice](choice.md#the-logit-family) |
 | nest scale | The number μ, above 0 and at most 1, that says how much alike the alternatives of one nest are (`nest_scale`, 0.5 by default); at 1 the model is the plain logit. | [Choice](choice.md#the-logit-family) |
 | network | What cars, bikes and walkers move on: a set of nodes and links, one network for the three modes. | [Networks](networks.md) |
@@ -109,6 +109,7 @@ not a timetable's.
 | summary | A page of a finished run, one HTML file that shows the run's numbers: trips completed and not, the modes' shares and mean trip times, the busiest links, the iterations and the record. | [What a run gives](outputs.md#the-map-and-the-summary) |
 | switch share | The share of the trips with an alternative that changed alternative in the choice of an iteration. | [The iteration and the stopping rule](iteration.md#what-each-iteration-reports) |
 | taste | Under the logit, the random part of a traveller's utility, one draw per alternative and per mode, drawn once from the seed and kept for the whole run. | [Choice](choice.md#how-each-traveller-takes-one-alternative) |
+| time bin | One of the periods of `link_bin` seconds (300 s by default, `link_bin` being the parameter's name) into which the window is cut for the links table; a vehicle is counted in the bin in which it entered the link. | [The loading](loading.md#what-the-loading-records) |
 | time-only run | A run whose coefficients are 1 on each of the nine times and 0 on the rest, so that the cost of an alternative is its door-to-door time in minutes. | [Choice](choice.md#the-cost-of-an-alternative) |
 | timetable | The stops, runs and footpaths of one service day, on which transit journeys are found. | [Transit](transit.md#stops-runs-patterns-and-footpaths) |
 | transfer | A change from one ride of a journey to the next; a journey has one transfer fewer than it has rides. | [Transit](transit.md#the-journey-search) |

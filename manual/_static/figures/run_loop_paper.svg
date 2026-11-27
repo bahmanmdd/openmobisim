@@ -33,8 +33,8 @@
 <text x="697.5" y="131.5" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="middle" fill="#3d4c5f">transit as scheduled</text>
 <rect x="615" y="200" width="165" height="90" rx="7" fill="#f1f4f8" stroke="#c5cfda" stroke-width="1.2"/>
 <text x="697.5" y="226.5" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="12" font-weight="600" text-anchor="middle" fill="#0a1626">4  Measure</text>
-<text x="697.5" y="241.5" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="middle" fill="#3d4c5f">every taken alternative re-costed</text>
-<text x="697.5" y="256.5" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="middle" fill="#3d4c5f">at the loaded times;</text>
+<text x="697.5" y="241.5" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="middle" fill="#3d4c5f">every alternative with a car route</text>
+<text x="697.5" y="256.5" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="middle" fill="#3d4c5f">re-costed at the loaded times;</text>
 <text x="697.5" y="271.5" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="middle" fill="#3d4c5f">link times rewritten</text>
 <rect x="420" y="200" width="165" height="90" rx="7" fill="#f1f4f8" stroke="#c5cfda" stroke-width="1.2"/>
 <text x="502.5" y="226.5" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="12" font-weight="600" text-anchor="middle" fill="#0a1626">5  Assess</text>

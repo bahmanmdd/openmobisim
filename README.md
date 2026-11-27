@@ -55,8 +55,9 @@ Built for research on multimodal urban mobility and the infrastructure that carr
   car leaves it after its free-flow time, and no sooner than one headway after the car ahead, the headway being
   3 600 s divided by the link's capacity in vehicles per hour.
 - **Choice.** Mode and route by the logit family (logit, nested logit with nests by mode, path-size logit over car
-  routes) or the least-cost choice, on each alternative's times by part and its money; traveller classes with their
-  own modes and coefficients.
+  routes) or the least-cost choice, on each alternative's times by part and its money (money is 0 for every
+  alternative in this release); traveller classes with their own coefficients; each traveller has the modes open to
+  it.
 - **Dynamic traffic assignment.** Five stages per iteration (search, choose, load, measure, assess), repeated until
   a stopping rule holds; each iteration reports how many travellers switched and how many would still change.
 - **Checked against outside answers.** Ten tests, each against theory, a hand derivation, a published result or
@@ -136,7 +137,7 @@ Release 0.2 is done when these ten tests pass, each against an answer from outsi
 - **The mean trip time is over finished trips only.** A trip not at its door when the window ends is unfinished and has no travel time, so it is not in the mean. Unfinished trips are always recorded: each trip's row in `trips.parquet` has `finished`, and each row of `iterations.parquet` has the `finished` and `unfinished` counts beside its mean. Read the mean together with the unfinished count; a window long enough for every trip to finish makes means comparable (`crates/loop/README.md`).
 - **Of two routes of exactly equal time, one is offered.** The search's tie rule finds one of them, and a traveller chooses only among what the search found (`crates/loop/README.md`).
 - **A car trip while a bottleneck's queue builds up is slightly above theory.** In the test of cars against bikes behind a bottleneck, the mean car trip in the build-up period was measured about 1.5 s above the theoretical value on a trip of about 692 s (0.2 %) with `step_exponent` 1, of which about 0.4 s comes from whole-second departures, the rest not explained; at the default 0.75 it is +0.9 ± 0.8 s over 20 seeds, which tells neither apart.
-- **A run stopped at the default 50 iterations is near, not exactly at, the equilibrium.** In the test of two car routes, one behind a bottleneck, under the default model the 300 s departure group farthest from theory has its trip by the bottleneck route 2.3 ± 1.0 s from it over 20 seeds; with `step_exponent` 1, the plain method of successive averages, it is 9.5 ± 1.9 s, the queue delay rippling by about ± 7 s along departure time, the same in every seed, and halving when the iterations double (`crates/loop/tests/bottleneck_route_choice.rs`; the groups measured 2026-11-21 with a probe that prints them).
+- **A run stopped at the default 50 iterations is near, not exactly at, the equilibrium.** In the test of two car routes, one behind a bottleneck, under the default model the 300 s departure group farthest from theory has its trip by the bottleneck route 2.3 ± 1.0 s from it over 20 seeds; with `step_exponent` 1, the plain method of successive averages, it is 9.5 ± 1.9 s, the queue delay rippling by about ± 7 s along departure time, the same in every seed, and halving when the iterations double (`crates/loop/tests/bottleneck_route_choice.rs`; the groups measured with a probe that prints them).
 - **A single link's queue delay on Sioux Falls is reported, never judged** (test 6): the sum over links agrees with the outside solver, single links differ.
 - **Bikes and walkers travel at free flow**: one bike speed and one walk speed, no bike congestion.
 

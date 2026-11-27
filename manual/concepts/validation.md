@@ -44,7 +44,7 @@ cargo test -p openmobisim-search
 cargo test -p openmobisim-loop
 ```
 
-| Command | Tests of the ten it holds | Time of the command on a laptop, without optimisation, its own tests compiled in that time (s) |
+| Command | Tests of the ten it holds | Time of the command on an Apple M2 Pro laptop (12 cores), debug build, its own tests compiled in that time (s) |
 |---|---|---|
 | `cargo test -p openmobisim-loading` | 1, 2, and the trip times of 9 | 6 |
 | `cargo test -p openmobisim-choice` | 7 | 4 |
@@ -120,7 +120,7 @@ over the hour is 452.5 s.
 | The mean trip against 452.5 s | the mean over seeds 0 to 4 | 3 % |
 | Equal times on the two routes after $t^*$ | the mean over seeds 0 to 4 | 3 % of the long route's time |
 
-The quantities that depend on who was asked to choose again are judged on the mean over five seeds, because one seed
+The quantities that depend on who was offered a new choice are judged on the mean over five seeds, because one seed
 scatters about as much as the tolerances.
 
 ## Test 4: the Braess network with capacities
@@ -151,8 +151,9 @@ through it, 3 min.
 | At 900 vehicles per hour, the mean over seeds 0 to 4 | The mean trip against 180 s | 2 % |
 | | The share on the route through the added link | At least 0.97 |
 
-The two tiers show that the distance to theory vanishes with the number of travellers, not with the number of
-iterations: a finite population leaves a residual, which the larger case shrinks. The test's own notes record that the
+The test's own notes state why there are two tiers: the residual vanishes with the population, not with iterations
+(they record 18 000 travellers staying 0.5 % below theory on the mean trip from 1 000 to 10 000 iterations), so the
+larger case has 72 000 travellers and a fixed 1 000 iterations. The notes also record that the
 larger case, judged on seed 0, depends on its seed: over seeds 0 to 5, two seeds exceed the 1 % limit on a queue's
 delay.
 
@@ -241,7 +242,7 @@ arrive at random, and its journeys one by one.
 - *Common lines.* Two lines from A to B, every 600 s and every 870 s, with travellers arriving every 10 s. Under
   uniform and independent phases the mean wait for the first vehicle is $H_1/2 - H_1^2/(6H_2) = 231.0$ s and the first
   line's share is $1 - H_1/(2H_2) = 0.655$. A fast and a slow line are compared with the same expectation integrated
-  numerically in the test. One line at regular and at irregular headways is compared with the mean wait of Osuna and
+  numerically in the test. One line at regular and at irregular intervals between its runs is compared with the mean wait of Osuna and
   Newell (1972), $E[H^2]/(2E[H])$.
 - *Brute force.* On 300 random timetables, with five questions each, a program in the test enumerates every journey by
   the definition and keeps the earliest arrival, then the fewest rides, then the lowest last run. The search must give
@@ -254,7 +255,7 @@ arrive at random, and its journeys one by one.
 | The mean wait for the first of two lines against 231.0 s | 10 s |
 | The first line's share against 0.655 | 0.02 |
 | A fast and a slow line: the mean time to the door, and the fast line's share | 10 s; 0.02 |
-| One line, regular and irregular headways: the mean wait | 10 s |
+| One line, regular and irregular intervals between its runs: the mean wait | 10 s |
 | The search against the brute force, on the random timetables and on the network of Spiess and Florian | Exact: the same arrival, rides and last run |
 
 The mean time on the network of Spiess and Florian is reported beside the paper's 27.75 min and is not judged: the
@@ -287,13 +288,14 @@ another tool: the shortest paths by length of networkx (Hagberg, Schult and Swar
 
 **What is tested.** A whole run of a real city through the Python interface, with every parameter at its default:
 Delft's network as tables (21 566 nodes; 12 460 car links, 20 652 bike links and 55 400 walk links; no signals), 65 959
-trips leaving between 07:30 and 08:30 in four classes, the city's transit feed, and a window from 07:30 to 09:30.
+trips leaving between 07:30 and 08:30 in four classes, the city's transit feed, and a window from 07:30 to 09:30. The test's trips are its own, not those of the published
+case `delft`; the network is the same.
 
 | Part | Outside answer or property | Tolerance |
 |---|---|---|
 | 1. Free-flow routes of 1 000 pairs of nodes per mode (car, bike and walk), with car capacities unlimited | The shortest times of networkx on the same tables | A relative 10⁻⁶ on each trip's time |
 | 2. Every trip has an alternative and finishes by 09:30 | A property | None: every trip |
-| 3. The run alone takes under 15 s | A budget | Judged on the developer's machine only; in the automated checks the time is printed and not judged |
+| 3. The run alone takes under 15 s | A budget | Judged on one machine only, an Apple M2 Pro laptop (12 cores); in the automated checks the time is printed and not judged |
 | 4. The trips and links files over two runs and at 1 and 8 threads | Determinism, the self-comparison | Identical bytes |
 | 5. The state at which the stopping rule stops the run | A run of 60 iterations | 1 %, relative, on each mode's mean trip time and on each mode's share |
 

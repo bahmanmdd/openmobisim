@@ -127,8 +127,8 @@ formed by the choice crate's `cost_of`, so the cost a run reports is the one the
   `Stream::MsaReselection` at (trip, k). A traveller that
   is offered takes the model's choice over its whole set, its mode included, whatever it held;
   the others keep their alternative.
-- **Load:** the chosen route legs as vehicles on the point queue, each entered on the whole
-  second its walk ends; an empty route and a journey load nothing.
+- **Load:** the chosen route legs as vehicles on the point queue, each entered at the exact
+  instant its walk ends; an empty route and a journey load nothing.
 - **Measure:** every alternative with a car route, taken or not, priced again by walking its
   legs on the new reading as its traveller (a route leg entered at the instant it is reached),
   so the alternative taken costs the time its trip took (`tests/taken_is_the_trip.rs`). A
@@ -235,7 +235,7 @@ formed by the choice crate's `cost_of`, so the cost a run reports is the one the
   of iteration 0 (2 % at 1), and 45 % made their last choice in the final ten iterations (20 % at
   1). The share that would
   change (under the logit) or the gap (under the least-cost choice) reports what is left.
-- Money is 0 for every alternative until a source of money comes through the door; gaps are
+- Money is 0 for every alternative until an input gives a source of money; gaps are
   walked at the walking speed by every mode. Transit's walking legs are not on links: the
   links table counts the walkers of walk alternatives only.
 - Determinism: every parallel stage files its result by trip, every sum is in fixed order and

@@ -107,7 +107,7 @@ only when the costs change. Under the least-cost choice nothing of the choice is
 who is offered a new choice at each iteration.
 
 **What another seed means.** Two runs that differ only in their seed are two samples of the same model: other tastes,
-and other travellers asked at each iteration. Their difference shows how much of a result is chance. The tests judge
+and other travellers offered a new choice at each iteration. Their difference shows how much of a result is chance. The tests judge
 several of their cases on the mean over five or twenty seeds for this reason ([Validation](validation.md)).
 
 ## Across platforms
@@ -149,7 +149,7 @@ transit b78ffca832c14a3c
 | Fingerprint of | What it covers | What it does not cover |
 |---|---|---|
 | The network | The projection; the bike and walk speeds; every node (identifier, position, signal mark); every link (identifier, its two nodes, length, lanes, modes, car free-flow speed, capacity, signal mark) | A link's drawing (its shape and road class), which no run reads |
-| The travellers | The classes; every trip (identifier, class, departure, modes, origin and destination) | The links to nodes and stops, which follow from the network, the timetable and `stop_walk_max`, each recorded beside it |
+| The demand | The classes; every trip (identifier, class, departure, modes, origin and destination) | The links to nodes and stops, which follow from the network, the timetable and `stop_walk_max`, each recorded beside it |
 | The timetable | Every stop (identifier, position); every run with each call (stop, arrival, departure); every footpath (the two stops, the seconds) | The names of stops and lines, which only the pages read |
 
 The same rows in any order give the same fingerprint, and a change to any value covered changes it. The hash is the
@@ -206,10 +206,10 @@ The practical steps are in the guide [Reproducing a run](../guides/reproducibili
 % src: crates/types/README.md ("Bikes"); crates/graph/README.md ("Bikes": the fingerprint); crates/demand/README.md ("Bikes": the fingerprint); crates/binding/README.md ("Bikes")
 
 Bikes are covered like every other mode. A link opened to or closed to bikes, another `bike_speed`, or a trip that
-gains or loses the bike changes the fingerprint of the network or of the travellers. The record holds the `bike_speed`
+gains or loses the bike changes the fingerprint of the network or of the demand. The record holds the `bike_speed`
 the network was built with, and a rerun from part one gives it to the network again; a rerun of a run with bike trips
-repeats it byte for byte. Bikes use no random number of their own: a bike traveller's taste and its turn to choose again
-come from the same two streams as everyone's.
+repeats it byte for byte. Bikes use no random number of their own: a bike traveller's taste and its turn to be offered a new
+choice come from the same two streams as everyone's.
 
 ## Limits
 

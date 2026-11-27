@@ -121,7 +121,7 @@ Builds a network from a nodes table and a links table.
 | A column missing from a table | `ValueError` naming the table and the column |
 | A Parquet file with a column of a type that is not read, a column name held twice, a compression other than none or snappy, or a file that is not Parquet | `ValueError` naming the table, the file and the column or the codec |
 | A Parquet file that cannot be opened or read, or a directory | `OSError` |
-| No node left; nodes of both kinds of position (degrees and metres); a build value that is not a finite number above zero | `ValueError` |
+| No node left; a build value that is not a finite number above zero | `ValueError` |
 
 ## `Network.tables`
 
@@ -188,7 +188,7 @@ a timetable, to the stops within walking reach ([Demand](../concepts/demand.md))
 | Argument | Type | Meaning |
 |---|---|---|
 | `trips` | table | The [trips table](inputs.md#the-trips-table). |
-| `classes` | list of `str` | The ids of the user classes. A trip names one of them in `class_id`. |
+| `classes` | list of `str` | The ids of the traveller classes. A trip names one of them in `class_id`. |
 | `network` | `Network` | The network the trips travel on. The trips' positions are of its kind, degrees or metres. |
 | `transit` | `Transit` or `None` | The timetable, read on the same network. `None`: no trip has a transit alternative. |
 | `stop_walk_max` | number, m | A parameter: the longest walk between a door and a stop. |
@@ -247,7 +247,7 @@ The parameters `run` reads, each a keyword:
 |---|---|
 | `window` or `out` missing | `TypeError` |
 | A demand built on another network or on another transit than the ones given | `ValueError` |
-| An empty window, or one running past the clock | `ValueError` |
+| An empty or reversed window: `ValueError`. A second below 0 or above 2³² − 1: `OverflowError`. A window past 24 h is accepted, up to an end that, moved up to a whole number of `link_bin`, stays below 2³² − 1 s; beyond that: `ValueError`. | `ValueError` or `OverflowError`, as said |
 | `choice` that is not one of the two names; a class without coefficients; a coefficient row for no class; a nest scale outside (0, 1]; a seed outside 0 to 2⁶³ − 1 | `ValueError` naming it |
 | `link_bin`, `iteration_cap`, `max_rides`, `nearby_stops`, `max_car_routes` or `max_transit_journeys` zero | `ValueError` |
 | With a timetable, a class whose coefficient of a transit time or of the transfers is negative or not finite | `ValueError` |
@@ -271,7 +271,7 @@ of the file is in [The settings file and the run record](record.md).
 | Argument | Type | Meaning |
 |---|---|---|
 | `folder` | path or `None` | The folder holding `run.toml`, or the path of a file of that name. `None`: the current folder. The input files the settings name are joined to this folder. |
-| `out` | path, required | The folder the run is written into, as for `run`. It may be the settings' own folder: no run writes `run.toml`. |
+| `out` | path, required | The folder the run is written into, as for `run`. It may be the settings' own folder, since no run writes `run.toml`, unless an input there has one of the five output names (as in the published cases, whose inputs are `trips.parquet` and `links.parquet`). |
 
 **Returns** a [`Run`](#run-the-result).
 
@@ -319,19 +319,19 @@ numbers given.
 | `region` | as for `Network.from_osm` | The part of the extract to read. |
 | `gtfs` | path or `None` | A GTFS feed, named in `run.toml`, not copied. `None`: a case without transit. |
 | `car_roads` | `"all"` or `"main"` | As for `Network.from_osm`; `"main"` is experimental. |
-| `trips_per_person` | number | The share of the people who travel in the hour. The number of trips is `population × trips_per_person`. |
+| `trips_per_person` | number | The share of the people who travel in the hour. The number of trips is `population × trips_per_person`, rounded to the nearest whole number (a product of 0.5 gives one trip). |
 | `seed` | `int` | The seed of the draw. The same arguments give the same files. |
 
 The trips leave evenly over one hour from 07:30, and the window written is 07:30 to 09:30. There are four classes,
 `car_and_bike`, `car_only`, `bike_only` and `no_vehicle`, at 40, 20, 20 and 20 % of the travellers, so 60 % of the
-travellers own a bike; 5 % of the trips are cars of the class `through` between two cut ends of motorways or trunk
-roads.
+travellers own a bike. Through traffic is drawn only where the region cuts a motorway or trunk road: 5 % of the trips
+are then cars between two such cut ends, and `through` is then a fifth class.
 
-**Returns** `folder`.
+**Returns** `folder`, as a `pathlib.Path`.
 
 | Refused | Exception |
 |---|---|
-| Fewer than one trip (`population × trips_per_person` below 1) | `ValueError` |
+| No trip (`population × trips_per_person` rounds to 0) | `ValueError` |
 | Every refusal of `Network.from_osm` | as there |
 
 ## `Run`: the result
@@ -432,7 +432,7 @@ True
 | A path where nothing is; a folder without `run_record.toml` | `FileNotFoundError`, saying what to give |
 | The path of a file of another name, `run.toml` included | `ValueError`, saying what to give |
 | A record that is not TOML | `tomllib.TOMLDecodeError` (a `ValueError`) |
-| A key under `[parameters]` the record should not hold; `window_start_s`, `[result] window_end_used_s`, `[network]`, `[demand]` or `[demand] classes` missing | `ValueError` naming it |
+| A key under `[parameters]` the record should not hold; `window_start_s`, `[result] window_end_used_s`, `[network]`, `[demand]` or `[demand] classes` missing; a `format` other than 1 | `ValueError` naming it |
 | An input that was given in memory when the run was made (the record names no file for it) and is not passed | `ValueError`: `pass it: network=` (or `demand=`) |
 | `[result] stopped_by_rule` that is not a boolean | `ValueError` naming what it is |
 | A demand passed that was not built on the network and transit used | `ValueError` |

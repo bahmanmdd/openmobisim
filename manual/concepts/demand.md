@@ -6,18 +6,19 @@ The **demand** is who travels: a table of **trips**, each from one place to anot
 does not generate trips. It reads them, links each one to the network and to the transit stops, and then lets each
 traveller choose a mode and a route in the run.
 
-The demand is the second of four concepts that build on one another. It takes the [network](networks.md): the nodes,
+The demand is the second of the seven concepts of this part in their reading order: the network, the demand, the
+routes, the choice, transit, the loading and the iteration. It takes the [network](networks.md): the nodes,
 the modes allowed on each link and the walking speed. It gives the [search](search.md) what it needs to look for
 routes and journeys: for every trip and every mode open to it, the node at each end, and the stops within walking
 reach of each end. The search turns these into a set of alternatives, and the [choice](choice.md) takes one of them.
 
 ```{image} ../_static/figures/trip_ends_paper.svg
-:alt: A trip end: the door joined by a straight walk to its nearest node of each mode, and to the stops within walking reach
+:alt: A trip end: the door linked by a straight walk to its nearest node of each mode, and to the stops within walking reach
 :class: only-light
 :width: 100%
 ```
 ```{image} ../_static/figures/trip_ends_night.svg
-:alt: A trip end: the door joined by a straight walk to its nearest node of each mode, and to the stops within walking reach
+:alt: A trip end: the door linked by a straight walk to its nearest node of each mode, and to the stops within walking reach
 :class: only-dark
 :width: 100%
 ```
@@ -26,7 +27,8 @@ reach of each end. The search turns these into a set of alternatives, and the [c
 
 % src: crates/demand/README.md ("Inputs"); crates/binding/README.md ("Inputs": trips); crates/choice/README.md ("Inputs")
 
-A **trip** is one movement of one traveller from an **origin** to a **destination**, door to door. In this manual
+A **trip** is one movement of one traveller from an **origin** to a **destination**, door to door. The **door**
+of a trip end is its position as given in the trips table, usually not on a node. In this manual
 "the traveller" of a trip is the person making it; every trip is its own traveller, chooses on its own and is counted
 once. A trip holds:
 
@@ -90,7 +92,7 @@ because the modes do not use the same links:
 For transit the ends are linked through the walk links, as for walking. So the car end of a trip can be a node on
 the nearest street, its bike end a node on a cycle path, and its walk end a node on a footway.
 
-The straight line between an end and its node is the **gap**. It is walked, by every mode, in a straight line at
+The straight line between an end and its node is the **gap of the trip end**, the gap for short. It is walked, by every mode, in a straight line at
 the walking speed:
 
 $$
@@ -168,7 +170,7 @@ are those of a hand calculation:
 
 ## Linking a trip end to stops
 
-% src: crates/demand/README.md ("Outputs", "Meanings and assumptions": reach, lists); PARAMETERS.md (stop_walk_max); crates/loop/README.md ("Outputs": iterations)
+% src: crates/demand/README.md ("Depends on"; "Outputs"; "Meanings and assumptions": reach, lists); crates/io-gtfs/README.md ("Footpaths"); PARAMETERS.md (stop_walk_max); crates/loop/README.md ("Outputs": iterations)
 
 A trip with `transit` in its set, in a run with a timetable, gets two lists:
 
@@ -176,7 +178,7 @@ A trip with `transit` in its set, in a run with a timetable, gets two lists:
 - the **egress list**: every stop from which the traveller can walk to the destination, with the walking time.
 
 Each stop is linked to its nearest node of the walk links. The walk between a door and a stop goes over the walk
-links, plus the two gaps:
+links, plus two walk gaps, the gap of the trip end and the stop's:
 
 $$
 t_{\text{access}} = \frac{g_{\text{door}}}{v_{\text{walk}}} + t_{\text{links}} + \frac{g_{\text{stop}}}{v_{\text{walk}}}
@@ -189,6 +191,10 @@ between the stop and its node. A stop is in the list when the whole walk is at m
 | Parameter | Default | Unit | What it sets |
 |---|---|---|---|
 | `stop_walk_max` | 1 500 | m | the longest walk between a door and a stop, at either end of a trip |
+
+These walking times come from the route search's bounded search over the walk links at free-flow times, once per
+stop in both directions; this is why the module `demand` uses `search` and `loading`. The GTFS reader finds its
+footpaths with the same search.
 
 By hand: a door 30 m from its node, 1 000 m of walk links and a stop 40 m from its node make a walk of 1 070 m, 802.5 s
 at 4.8 km/h. At the default, a walk of 1 500 m is in the list and one of 1 501 m is not.
@@ -301,7 +307,7 @@ and the modes open to a trip are those written on its row.
 - A bike's end is its own: the nearest node with a link that a bike may use. It can differ from the car's and the
   walker's end of the same trip. Next to a cycle path the bike and the walker are linked to the path's node while
   the car is linked to the nearest street; next to a motorway the car may be linked to it and the bike is not.
-- The gap between the door and the bike's node is walked at the walking speed, not ridden.
+- The walk gap between the door and the bike's node is walked at the walking speed, not ridden.
 - A bike is never used to reach a stop: the access and egress walks are on foot.
 
 ## Limits
@@ -314,7 +320,7 @@ and the modes open to a trip are those written on its row.
   for one trip does not bind the next.
 - **One row is one traveller.** A row has no weight; a car trip is one vehicle.
 - **A trip end is linked to the nearest node by straight line**, whatever lies between the door and the node, and
-  the gap is walked at the walking speed by every mode. The linking does not check that the origin's node and the
+  the gap of the trip end is walked at the walking speed by every mode. The linking does not check that the origin's node and the
   destination's node are connected.
 - **Stops are reached on foot only**: no bike-and-ride and no park-and-ride.
 - **A class changes the coefficients only.** A class has no vehicle fleet, income or other attribute.

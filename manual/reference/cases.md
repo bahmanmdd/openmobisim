@@ -153,13 +153,14 @@ The capacity per lane of the cities' car links, by road class:
 | living street, service | 450 |
 
 The record gives the source of the motorway value as HCIA v3 (Rijkswaterstaat 2011, Table 3.1). These capacities are
-the cases' own: they are in the cases' `links.parquet`, and they differ on motorways from the values openmobisim 0.2
-gives a network it reads from an OpenStreetMap extract
+the cases' own: they are in the cases' `links.parquet`, and they differ on motorways (2 100 against 2 000 vehicles per hour per lane) and on
+motorway ramps (2 100 against 1 550 vehicles per hour per lane) from the values openmobisim 0.2 gives a network it reads
+from an OpenStreetMap extract
 ([Input tables and files](inputs.md#an-openstreetmap-extract)).
 
 What was changed per city, for the three cities the record lists changes for:
 
-| City | Travellers of the recipe, times | Other changes |
+| City | Factor on the recipe's travellers (none) | Other changes |
 |---|---|---|
 | Amsterdam | 1.2 | Two blocks count at a tenth of their residents and built volume: Westpoort's port and industrial area, and Weesp's western business park. 9 of the 39 gateways where cars enter or leave were moved 10 to 760 m onto the carriageway of their own direction. |
 | Lyon | 0.7 | 15 of the 66 gateways moved. Each trip end at a 500 m block's point goes to that point or one of six around it at 200 m, drawn evenly. |

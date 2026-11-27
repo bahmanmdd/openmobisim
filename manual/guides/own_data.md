@@ -113,6 +113,9 @@ reached from every other. A car link takes its lanes and free-flow speed from th
 road class, and its capacity from that table, which counts the class's junctions in
 ([The network](../concepts/networks.md)).
 
+The example needs an OpenStreetMap extract in the format `.osm.pbf`, which is not part of the published cases:
+download one that covers your area and give its path. The counts shown are those of the extract of Delft used here.
+
 ```python
 delft = (4.315, 51.965, 4.410, 52.035)                     # west, south, east, north, in degrees
 network = oms.Network.from_osm("delft.osm.pbf", region=delft)
@@ -177,8 +180,10 @@ Two helpers to get started are **experimental**: they may change, and neither is
 - `make_case(folder, osm, population, region=None, gtfs=None, car_roads="all", trips_per_person=0.1, seed=0)` writes
   a `trips.parquet` and a `run.toml` into `folder`. The trips number `population × trips_per_person` and are drawn
   from the streets of the extract by fixed, uncalibrated rules (homes along residential streets, activities along the
-  other streets, four classes, 5 % through traffic by car, departures evenly over one hour from 07:30, the window
+  other streets, four classes, and 5 % through traffic by car where the region cuts a motorway or a trunk road, departures evenly over one hour from 07:30, the window
   07:30 to 09:30).
+
+This example needs the same extract, `delft.osm.pbf`, which is not part of the published cases.
 
 ```python
 folder = oms.make_case("made-case", "delft.osm.pbf", population=100_000, region=delft,
@@ -194,18 +199,14 @@ given. Read the unfinished count of the last row of the iterations table before 
 
 % src: crates/binding/README.md ("Bikes"); crates/io-osm/README.md ("Bikes"); crates/demand/README.md ("Bikes")
 
-In a links table, `bike` in a link's `modes` lets bikes ride it; a cycle path is a link `bike;walk` with no car field,
-as `path_ac` above. From an extract, a bike link runs wherever the reader's bike rules let a bike ride, in the
-directions they give, and a cycleway is a bike link and a walk link and no car link. `bike` in a trip's `modes` opens
-the bike to that traveller. A bike's end of a trip is joined to the nearest node with a link a bike may use, which may
-differ from the car's. `make_case` gives 60 % of its travellers a bike. Everything on bikes is gathered in
-[Cycling](cycling.md).
+`bike` in a link's `modes` lets bikes ride it (`path_ac` above is a cycle path, `bike;walk` with no car field), and
+`bike` in a trip's `modes` opens the bike to that traveller. From an extract, a cycleway is a bike link and a walk link
+and no car link. `make_case` gives 60 % of its travellers a bike. Bike links
+in a table and from an extract, and where a bike's trip joins the network, are in [Cycling](cycling.md).
 
 ## What can go wrong
 
 % src: crates/binding/README.md ("Repairs", "Errors")
 
-A row that cannot be used (a link naming a node that is not there, a trip of an unknown class, a mode name that is not
-one) is set right or left out, counted, and told in one warning per kind; only what no run can be made of is refused.
-[Troubleshooting](troubleshooting.md) shows the common ones and what to do, and [Warnings](../reference/warnings.md)
-lists them all.
+The repairs and refusals of a table are in [Troubleshooting](troubleshooting.md) (the common ones and what to do) and
+in [Warnings](../reference/warnings.md) (all of them).

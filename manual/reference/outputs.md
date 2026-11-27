@@ -32,7 +32,7 @@ names it), **Unit**, **Null when** (never, or the condition) and **Meaning**.
 The same run written twice gives the same bytes in `trips.parquet`, `links.parquet` and `routes.parquet`;
 `iterations.parquet` differs in its five wall-clock columns ([Reproducibility](../concepts/reproducibility.md)).
 
-The four files of a run of the case `delft` (a run of 5 s on a laptop):
+The four files of a run of the case `delft` (a run of about 4 s on a laptop):
 
 ```python
 import openmobisim as oms
@@ -71,7 +71,7 @@ hold it, has no row ([Repairs](warnings.md#repairs)).
 | Column | Parquet type | Unit | Null when | Meaning |
 |---|---|---|---|---|
 | `trip_id` | `string` | none | never | The trip's id. |
-| `class_id` | `string` | none | never | The id of its user class. |
+| `class_id` | `string` | none | never | The id of its traveller class. |
 | `departure_s` | `uint32` | s of the clock | never | Its departure. |
 | `mode` | `string` | none | the trip has no alternative | The mode taken: `car`, `bike`, `walk` or `transit`. |
 | `arrival_s` | `double` | s of the clock | the trip is unfinished or has no alternative | The arrival at the door. For a finished trip it is `departure_s + travel_time_s`. |
@@ -168,7 +168,7 @@ the day before that continues past midnight `<name>@previous-day`. A stop is nam
 
 | `kind` | What it is | Columns filled |
 |---|---|---|
-| `walk_gap` | A walk between a door and the network or a stop, in a straight line, on no link. | `seconds` (0 where the door is at the node or stop) |
+| `walk_gap` | A walk between a door and the network, in a straight line; or between a door and a stop: the straight lines at both ends and the walk links between them. The links are not listed, and the walker is counted on no link. | `seconds` (0 where the door is at the node or stop) |
 | `car` | A route on the network's links by car. | `links` |
 | `bike` | A route on the network's links by bike. | `links` |
 | `walk` | A route on the network's links on foot. | `links` |

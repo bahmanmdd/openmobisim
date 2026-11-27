@@ -26,7 +26,7 @@
 <text x="880.0" y="156" font-family="'JetBrains Mono', Menlo, Consolas, monospace" font-size="10.5" font-weight="400" text-anchor="middle" fill="#cdd6e1">0.165 / min</text>
 <text x="30" y="76" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="start" fill="#93a2b6">departure: the traveller leaves the door (an input)</text>
 <text x="945" y="76" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="end" fill="#93a2b6">arrival at the door</text>
-<text x="535" y="178" font-family="'JetBrains Mono', Menlo, Consolas, monospace" font-size="10.5" font-weight="400" text-anchor="middle" fill="#cdd6e1">each transfer: + 0.5</text>
+<text x="480" y="178" font-family="'JetBrains Mono', Menlo, Consolas, monospace" font-size="10.5" font-weight="400" text-anchor="middle" fill="#cdd6e1">each transfer: + 0.5        the transit constant: + 0.25</text>
 <text x="480" y="212" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="middle" fill="#93a2b6">Travel time is the sum of all parts. The wait at the first stop is charged in full: the traveller walks to the stop at once</text>
 <text x="480" y="228" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="middle" fill="#93a2b6">and waits for the run of the journey. The coefficients shown are the defaults; a class may have its own.</text>
 </svg>

@@ -104,7 +104,7 @@ kinds of leg are:
 
 | `kind` | What it is | Columns that describe it |
 |---|---|---|
-| `walk_gap` | a walk between a door and the network or a stop, on no link | `seconds` |
+| `walk_gap` | a walk between a door and the network, in a straight line; or between a door and a stop: the straight lines at both ends and the walk links between them. The links are not listed, and the walker is counted on no link. | `seconds` |
 | `car`, `bike`, `walk` | a route on the network | `links`, the link ids in the order travelled |
 | `ride` | one transit run from stop to stop | `run_id`, `board_stop`, `board_s`, `alight_stop`, `alight_s` |
 | `transfer_walk` | a walk between two stops, between two rides | `from_stop`, `to_stop`, `seconds` |

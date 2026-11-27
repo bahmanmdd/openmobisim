@@ -120,7 +120,8 @@ when it has an alternative and is not, and **without an alternative** when no mo
 three add up to the trips. The mean trip and the travel time are over the completed trips
 ([The window and unfinished trips](window.md)).
 
-For the Delft run the page reads 37 649 trips, 100.00 % completed, a mean trip of 14.4 min and 12 612.2 km cycled.
+For the Delft run the page reads 37,649 trips, 100.00 % completed, a mean trip of 14.4 min and 12,612.2 km cycled (the
+page writes a comma between the thousands).
 
 ## For bikes
 

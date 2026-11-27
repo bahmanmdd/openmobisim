@@ -58,6 +58,10 @@ and what the model does not do is listed in [Limitations](concepts/limitations.m
 pip install openmobisim pyarrow
 ```
 
+Until release 0.2 is on PyPI, `pip install openmobisim` gives release 0.1, which has another interface; 0.2 is then
+built from the repository with a Rust toolchain: in a virtual environment, `pip install maturin pyarrow`, then
+`maturin develop --release` in the repository.
+
 Python 3.11 or newer, on macOS, Linux or Windows. `pyarrow` reads the Parquet tables a run writes; the package itself
 needs nothing else. Then download a case and run it:
 

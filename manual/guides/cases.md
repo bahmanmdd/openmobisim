@@ -148,7 +148,8 @@ of a city, bring that city's own trips ([A case from your own data](own_data.md)
 Bike links are rows of `links.parquet` with `modes` equal to `bike`, 20 652 of them in Delft. Who may cycle is written
 per traveller in the `modes` column of `trips.parquet`. In the four cities the classes `car_and_bike` and `bike_only`
 may cycle, and so may the transit riders of `from_outside_transit` who were given a station bike; `car_only`,
-`no_vehicle`, `from_outside_car` and `goods` may not. `dotnet` has the first four of these classes.
+`no_vehicle`, `from_outside_car` and `goods` may not. `dotnet` has the four resident classes alone: `car_and_bike`, `car_only`,
+`bike_only` and `no_vehicle`.
 
 ## Licences and citing
 

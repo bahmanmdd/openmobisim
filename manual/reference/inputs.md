@@ -87,7 +87,9 @@ One row per node. Read by [`Network.from_tables`](api.md#networkfrom_tables).
 | `y_m` | real number | m | yes, for a network in metres | no | The position on a plane, north. |
 
 **One kind of position per network.** The kind is told by the column names: longitude and latitude when either
-`lon_deg` or `lat_deg` is a column, else metres. Positions in longitude and latitude are projected to metres in the
+`lon_deg` or `lat_deg` is a column, else metres. A nodes table that holds `lon_deg`, `lat_deg`, `x_m` and `y_m` is not
+refused: it is read as longitude and latitude, and `x_m` and `y_m` are ignored and counted (`columns_ignored: 2`).
+Positions in longitude and latitude are projected to metres in the
 UTM zone of the centre of the nodes' bounding box ([Networks](../concepts/networks.md)). A GTFS feed needs a network
 of longitude and latitude.
 
@@ -132,7 +134,7 @@ One row per trip. Read by [`Demand.from_table`](api.md#demandfrom_table), with t
 | Column | Type | Unit | Required | Null | Meaning |
 |---|---|---|---|---|---|
 | `trip_id` | text | none | yes | no | The trip's id. Of two rows with one id the first given is kept (`trips_repeated`). |
-| `class_id` | text | none | yes | no | The id of the trip's user class, one of the list `classes`. A trip naming a class not given is dropped (`trips_of_unknown_class`). |
+| `class_id` | text | none | yes | no | The id of the trip's traveller class, one of the list `classes`. A trip naming a class not given is dropped (`trips_of_unknown_class`). |
 | `departure_s` | whole number | s after midnight | yes | no | The departure, a second of the clock. A trip departing before the run's window starts, or at or after its end, is dropped by the run (`trips_outside_window`). |
 | `modes` | text | none | yes | no | The [mode set](#mode-sets) open to the trip. A mode that no link of the network allows is taken out of the set. |
 | `origin_lon_deg`, `origin_lat_deg` | real number | degree (WGS84) | yes, on a network of longitude and latitude | no | Where the trip starts. |

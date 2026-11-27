@@ -13,7 +13,7 @@ Three parts of the simulator make a transit trip, and one reads the result:
 | Part | What it does for transit | It takes | It gives |
 |---|---|---|---|
 | The GTFS reader (module `io-gtfs`) | Reads one service day of a feed | A GTFS `.zip`, the [network](networks.md) (its projection, its walk links and walk speed), `transfer_walk_max` | The timetable: stops, runs and footpaths; a report of what was read |
-| The travellers (module `demand`, [Demand](demand.md)) | Finds the stops each trip can walk to and from | The trips, the network, the timetable's stops, `stop_walk_max` | Per trip an access list and an egress list: stops with their walking seconds |
+| The demand (module `demand`, [Demand](demand.md)) | Finds the stops each trip can walk to and from | The trips, the network, the timetable's stops, `stop_walk_max` | Per trip an access list and an egress list: stops with their walking seconds |
 | The journey search (module `transit`) | Finds journeys on the timetable | The timetable, the two lists, the instant the traveller is at each access stop, `boarding_slack`, `max_rides` | Journeys: the rides, the walks between them, the arrival at the door |
 | The iteration (module `loop`, [The iteration](iteration.md)) | Asks for each trip's journeys once, prices them and offers them to the [choice](choice.md) beside the car, the bike and the walk | The journeys, the class's coefficients | The transit alternatives in each traveller's set; the journey taken, in the [results](outputs.md) |
 
@@ -40,7 +40,7 @@ the names shown on the run's pages.
   same call, or interpolated between the timed calls around it. A trip whose first or last call has no time, or that
   has a single call, is dropped and counted.
 - **Frequencies.** A trip listed in `frequencies.txt` is a template: one run leaves at each row's start time and every
-  headway after it until the row's end time.
+  `headway_secs` after it until the row's end time.
 - **Runs past midnight.** Times after 24:00:00 are kept (25:10:00 is 90 600 s). The runs of the day before that are
   still on the road after midnight enter the day with the calls that depart after midnight, shifted back by 86 400 s.
 - **Boarding and alighting flags** (`pickup_type` and `drop_off_type` 1) are counted and ignored: every call is open to
@@ -101,7 +101,7 @@ The timetable holds three things.
 % src: crates/demand/README.md ("Outputs", "Meanings and assumptions": linking, reach, lists); PARAMETERS.md (`stop_walk_max`)
 
 The walk from the door to the first stop is the **access walk**, the walk from the last stop to the door the **egress
-walk**. Which stops a trip can use is settled before the run, when the travellers are built:
+walk**. Which stops a trip can use is settled before the run, when the demand is built:
 
 - The **access list** of a trip holds every stop that can be reached on foot from its origin within `stop_walk_max`
   (1 500 m by default), each with its walking seconds: the straight line from the door to its walk node, the walk on
@@ -168,7 +168,7 @@ catches the one at 1 401 s.
 % src: crates/loop/README.md ("An alternative", "Search", the paragraph on `nearby_stops`, `Cheapest::by_rides` and `max_transit_journeys`); PARAMETERS.md (`nearby_stops`, `max_transit_journeys`)
 
 A **transit alternative** is one journey with its two walks: the access walk, the rides with the walks between them,
-and the egress walk. It stands in the traveller's choice set beside the car route, the bike route and the walk, and the
+and the egress walk. It stands in the traveller's set beside the car route, the bike route and the walk, and the
 [choice](choice.md) treats all the journeys of a traveller as one nest, the transit mode.
 
 The iteration searches transit once, at iteration 0, because a journey's time never changes during a run
@@ -225,7 +225,7 @@ in the vehicle. The defaults, which are starting values to be calibrated per stu
 | Each transfer | `transit_transfers` | 0.5 |
 | Taking transit at all | `is_transit` | 0.25 |
 
-A cost is a sum of coefficient times quantity, positive is worse. Money is 0 for every alternative in release 0.2:
+A cost is a sum of coefficient times attribute, positive is worse. Money is 0 for every alternative in release 0.2:
 fares are not read.
 
 **An example.** The routes table of a run lists the legs of every journey taken. For one trip of the Delft case:

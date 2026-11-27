@@ -203,7 +203,7 @@ warning given by `Run.open` is given again by each page, which reads the tables 
 | A `walk_gap` or `transfer_walk` without its seconds | Warned; the journey shows its door-to-door time and no split by leg |
 | An `iterations.parquet` without the column `would_change_share` | Warned, naming the column; the summary shows the share as unknown |
 
-Two things cannot be detected: a value changed in place in a table (a time, a count, a stop), and a link bin replaced
+Two things cannot be detected: a value changed in place in a table (a time, a count, a stop), and a `link_bin` replaced
 by a divisor of it.
 
 ## Refusals
@@ -231,16 +231,15 @@ module's message unchanged.
 | `Network.from_osm` | `car_roads` other than `"all"` or `"main"`; `osm_class_defaults` other than `None` | `ValueError` |
 | `Network.from_osm` | An extract that cannot be decoded; an extract with no street of any mode | `ValueError` |
 | `Network.from_osm`, `Network.from_tables` | No node left; a build value (`capacity_per_lane`, `bike_speed`, `walk_speed`) that is not a finite number above zero | `ValueError` |
-| `Network.from_tables` | Nodes of both kinds of position, longitude and latitude and metres | `ValueError` |
 | `Network.from_tables`, `Demand.from_table` | A required column missing from a table | `ValueError` naming the table and the column |
-| `Network.from_tables`, `Demand.from_table` | A Parquet file with a column of a type not read (not text or a number), a column name held twice, a codec other than snappy, or a file that is not Parquet | `ValueError` naming the table, the file and the column or the codec |
+| `Network.from_tables`, `Demand.from_table` | A Parquet file with a column of a type not read (not text or a number), a column name held twice, a codec other than none or snappy, or a file that is not Parquet | `ValueError` naming the table, the file and the column or the codec |
 | `Transit.from_gtfs` | A network built in metres | `ValueError` |
 | `Transit.from_gtfs` | `transfer_walk_max` not a finite number at or above zero | `ValueError` |
 | `Transit.from_gtfs` | A file that is no zip; a required file missing (`stops.txt`, `trips.txt`, `stop_times.txt`); a required column missing; no day of the feed's dates has a trip | `ValueError` |
 | `Demand.from_table` | `stop_walk_max` not a finite number at or above zero | `ValueError` |
 | `Demand.from_table` | A trip's position of another kind than the network's, or trips of both kinds | `ValueError` naming the trip |
 | `run` | A demand built on another network or another transit than those given | `ValueError` |
-| `run` | An empty window, or one running past the clock | `ValueError` |
+| `run` | An empty or reversed window: `ValueError`. A second below 0 or above 2³² − 1: `OverflowError`. A window past 24 h is accepted, up to an end that, moved up to a whole number of `link_bin`, stays below 2³² − 1 s; beyond that: `ValueError`. | `ValueError` or `OverflowError`, as said |
 | `run` | `link_bin`, `iteration_cap`, `max_rides`, `nearby_stops`, `max_car_routes` or `max_transit_journeys` zero | `ValueError` |
 | `run` | A `choice` that is not `"logit"` or `"deterministic"`; a nest scale outside (0, 1]; a seed outside 0 to 2⁶³ − 1; a class without coefficients, or a coefficient row for no class; a coefficient that is not finite | `ValueError` |
 | `run` | With a timetable, a class whose coefficient of a transit time or of the transfers is negative or not finite | `ValueError` |
@@ -249,7 +248,7 @@ module's message unchanged.
 | `run_file` | The path of a file of another name; a folder that holds a run's record and no `run.toml`, or the record's own path | `ValueError`, saying what to give |
 | `run_file` | A settings file that is not TOML | `tomllib.TOMLDecodeError` (a `ValueError`) |
 | `run_file` | A key or table under `[parameters]` a settings file never holds; a missing required key; a value of the wrong type; a boolean for any key read; a `format` other than 1; both `osm_file` and table files | `ValueError` naming it, before any input is built |
-| `make_case` | Fewer than one trip (`population × trips_per_person` below 1) | `ValueError` |
+| `make_case` | No trip (`population × trips_per_person` rounds to 0) | `ValueError` |
 | `Run.open` | A path where nothing is; a folder without `run_record.toml` | `FileNotFoundError` |
 | `Run.open` | The path of a file of another name, `run.toml` included | `ValueError`, saying what to give |
 | `Run.open` | A record that is not TOML | `tomllib.TOMLDecodeError` (a `ValueError`) |
