@@ -1,6 +1,6 @@
 # Reference
 
-Every public name, parameter, file and column, and the contract of every module.
+Every public name, parameter, file and column, the published cases and the modules of the simulator.
 
 ```{toctree}
 :maxdepth: 1

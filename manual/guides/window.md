@@ -38,7 +38,8 @@ Each of the first four is told in one warning and counted in `Run.repairs["run"]
 and `[result] window_end_used_s` as used.
 
 The example runs the synthetic city `dotnet`, whose 39 919 travellers leave between 07:30 and 08:30, on a window from
-07:45 to 08:28:20, which is not a whole number of 300 s bins:
+07:45 to 08:28:20, which is not a whole number of 300 s bins. The tables are Parquet files; reading them in Python needs a Parquet reader, for instance pandas with pyarrow
+(`pip install pandas pyarrow`): see [Reading the results](results.md).
 
 ```python
 import pathlib, tomllib

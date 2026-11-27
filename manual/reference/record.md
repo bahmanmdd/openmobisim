@@ -132,7 +132,7 @@ this table. How the costs enter the choice is in [Choice](../concepts/choice.md)
 | `transit_transfer_wait_min` | cost per minute | 0.145 | The minutes waited at the later boardings. |
 | `transit_transfer_walk_min` | cost per minute | 0.165 | The minutes walked between two rides. |
 | `transit_transfers` | cost per transfer | 0.5 | The number of transfers. |
-| `money_eur` | cost per euro | 0.6 | The money paid, in euros (money is 0 for every alternative in this release). |
+| `money_eur` | cost per euro | 0.6 | The money paid, in euros (money is 0 for every alternative). |
 | `car_ln_path_size` | cost per unit of the logarithm of the path size | −1 | The logarithm of a car route's path size. Recorded as given; the logit reads it times `nest_scale`, the least-cost choice reads it as 0. |
 | `is_car` | cost per car alternative | 0 | 1 for a car alternative: the constant of the mode. |
 | `is_bike` | cost per bike alternative | 0 | 1 for a bike alternative. |
@@ -198,7 +198,7 @@ Part two starts with a comment line, `# Part two: what the run found and did.`
 
 | Key | Type | Unit | Meaning |
 |---|---|---|---|
-| `openmobisim_version` | string | none | The version of the package that ran. A development version, ending `-dev`, does not identify the commit it was built from. |
+| `openmobisim_version` | string | none | The version of the package that ran. |
 | `window_end_used_s` | integer | s after midnight | The end of the window the run used: `window_end_s`, moved up to a whole `link_bin` when it was not one. Always written. |
 | `iterations` | integer | iterations | The number of iterations run: the rows of `iterations.parquet`. |
 | `stopped_by_rule` | boolean | none | `true`: the stopping rule ended the run. `false`: the iteration cap did. |

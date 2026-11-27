@@ -28,7 +28,7 @@ from its upstream end to its downstream end, so a path ridden both ways is two l
 ([A case from your own data](own_data.md)).
 
 A network read from OpenStreetMap has bike links of their own, one mode per link, built where the reader's bike rules
-let a bike ride. The main rules (all of them are in [the reader's contract](../reference/contracts/io-osm.md)):
+let a bike ride. The main rules:
 
 - never on motorways and their slip roads, nor where `bicycle=no` or `bicycle=use_sidepath`;
 - on trunk roads, busways, footways and pedestrian streets only where a `bicycle` tag allows it;
@@ -99,7 +99,8 @@ congestion, because the cost of the car it is compared with does.
 | the summary | bikes as a row of every table by mode; the kilometres cycled; a map of the cyclists |
 
 The example reads the bike trips of the Delft run ([The cases](cases.md)), the kilometres cycled, and the five bike
-links most cyclists entered. The lengths and road classes come from the case's own links table.
+links most cyclists entered. The lengths and road classes come from the case's own links table. The tables are Parquet files; reading them in Python needs a Parquet reader, for instance pandas with pyarrow
+(`pip install pandas pyarrow`): see [Reading the results](results.md).
 
 ```python
 import pyarrow.compute as pc

@@ -8,18 +8,17 @@ Short answers, each with the page that holds the full one.
 % rights")
 
 **Which Python does it need?**
-Python 3.11 or newer. The package is one compiled extension built for Python's stable interface from 3.11 on.
+Python 3.11 or newer.
 
 **Which operating systems?**
-macOS, Linux and Windows: the release publishes a wheel for each. The tests run on Windows, on Linux and on macOS with
-Apple silicon, on Windows also as a standard user without administrator rights. Not measured: Windows on ARM, a
-domain account, a path longer than 260 characters.
+macOS, Linux and Windows: a wheel is published for each. On Windows it runs as a standard user, without administrator
+rights.
 
 **Does it need other Python packages?**
-No. The simulator has no Python dependency, not even `numpy`. To read the Parquet tables a run writes you need a
-Parquet reader; this manual uses `pyarrow` ([Reading the results](results.md)). Input tables may be dicts of lists,
-pyarrow tables, pandas or polars frames, or Parquet files; the tests give dicts of lists, pyarrow tables and files
-([A case from your own data](own_data.md)).
+None to run: `pip install openmobisim` installs the simulator and nothing else. To read the tables a run writes you
+need a Parquet reader, for instance pandas with pyarrow, `pip install pandas pyarrow`
+([Reading the results](results.md)). Input tables may be dicts of lists, pyarrow tables, pandas or polars frames, or
+Parquet files ([A case from your own data](own_data.md)).
 
 **Is there a command line, or a progress bar?**
 No. openmobisim is a Python module of a few functions ([The Python interface](../reference/api.md)), and a run prints
@@ -27,13 +26,8 @@ nothing while it runs: no log and no progress output. A run described in a setti
 ([The settings file](settings.md)).
 
 **How long does a run take, and how much memory?**
-From under a second for the synthetic city to 77 s and 8 to 9 GB for Paris with 243 203 travellers, on a laptop
+From under a second for the synthetic city to 77 s and 8.4 GB of memory for Paris with 243 203 travellers, on a laptop
 ([Run time](speed.md)).
-
-**I used release 0.1. Does my code still work?**
-No. Release 0.2 has another interface, and version 2 of the published cases is read by release 0.2 and later, not by
-0.1. Start from
-[the first tutorial](../tutorials/delft.ipynb).
 
 ## Results
 
@@ -60,7 +54,7 @@ equilibrium ([The iteration](../concepts/iteration.md)).
 **Are the default choice coefficients estimated for my city?**
 No. They are starting values, to be calibrated for a study ([Traveller classes](classes.md)).
 
-## What release 0.2 does not do
+## What openmobisim does not do
 
 % src: crates/graph/README.md ("Meanings and assumptions"); crates/loading/README.md ("Meanings and assumptions",
 % "Bikes"); crates/transit/README.md ("Meanings and assumptions", "Bikes"); crates/loop/README.md ("An alternative",
@@ -87,7 +81,7 @@ No. An alternative is one mode from door to door: a car route, a bike route, a w
 left on foot. Car and transit, or bike and transit, are not combined in one trip, and parking is not modelled.
 
 **Fares, tolls, fuel costs?**
-Not yet. The choice has a coefficient per euro, but no input carries a price, so the money of every alternative is 0.
+No. The choice has a coefficient per euro, but no input carries a price, so the money of every alternative is 0.
 
 **Bike or pedestrian congestion?**
 No. Bikes and walkers travel at one speed each, whatever the traffic ([Cycling](cycling.md)).
@@ -111,14 +105,13 @@ No. Metres, seconds, km/h and vehicles per hour throughout.
 
 ## Help
 
-% src: README.md (the status note, "Cite")
+% src: README.md ("Cite")
 
 **Something is refused, or a warning appears.**
 See [Troubleshooting](troubleshooting.md).
 
 **A result looks wrong.**
-Please report it, with the run's record, at <https://github.com/bahmanmdd/openmobisim/issues>. Release 0.2 is an early
-release for testing, and the interface may still change before 1.0.
+Please report it, with the run's record, at <https://github.com/bahmanmdd/openmobisim/issues>.
 
 **How do I cite it?**
 See [Citing](../reference/citing.md).

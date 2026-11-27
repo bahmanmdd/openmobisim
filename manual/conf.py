@@ -2,8 +2,7 @@
 
 The site's workflow (in openmobisim/openmobisim.github.io) builds this folder from the code repository:
 ``sphinx-build -b html manual _site`` from the repository's root, with ``manual/requirements.txt`` installed. The
-tutorials are notebooks shown from their saved outputs, and the modules' contracts are the crates' own README files,
-so a build needs neither the compiled core nor the cases.
+tutorials are notebooks shown from their saved outputs, so a build needs neither the compiled core nor the cases.
 """
 
 import os
@@ -24,6 +23,8 @@ html_theme = "pydata_sphinx_theme"
 html_title = f"openmobisim {release}"
 html_baseurl = "https://openmobisim.github.io/"
 html_static_path = ["_static"]
+html_show_sourcelink = False  # the pages' Markdown sources are in the repository, not on the site
+html_copy_source = False
 html_css_files = ["custom.css"]  # the headings' sizes, the page's width
 html_js_files = ["custom.js"]  # a figure opens at full size when clicked
 html_logo = "_static/openmobisim_mark_paper.svg"

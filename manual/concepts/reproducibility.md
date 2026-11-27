@@ -10,7 +10,7 @@ record holds what is needed to run it again, and a fingerprint of each input, so
 |---|---|
 | Does the number of threads change a result? | No. The tables are the same at any thread count |
 | Do two runs of the same inputs and settings differ? | Only in the five columns of the iterations table that hold the seconds each stage took |
-| Do two machines give the same result? | Measured, not guaranteed: the Delft test gives byte-identical trips on the three platforms tested ([below](#across-platforms)) |
+| Do two machines give the same result? | Measured, not guaranteed: a run of Delft's network gives byte-identical trips on the three platforms tested ([below](#across-platforms)) |
 | What makes two runs differ on purpose? | The `seed`, under the logit |
 | How do I run a run again? | Copy part one of its record into a `run.toml` and run it ([below](#the-record-runs-a-run-again)) |
 
@@ -68,7 +68,8 @@ run_record.toml 27e9e2ad7efa 27e9e2ad7efa True
 ```
 
 The iterations tables differ in the seconds each stage took, which no two runs share (here the whole script took
-about 21 s at 1 thread and about 5 s at 8, the reading of the inputs included).
+about 21 s at 1 thread and about 5 s at 8, the reading of the inputs included, on a laptop;
+[Run time](../guides/speed.md)).
 
 ## How it is achieved
 
@@ -99,16 +100,12 @@ in two places of a run, each from a stream of its own:
 | Choice | Under the logit, each traveller's taste: a random term (a standard Gumbel draw) per alternative and per mode | The trip, and the alternative's place in the traveller's set or the mode |
 | Reselection | Whether a traveller is offered a new choice at an iteration | The trip and the iteration |
 
-A third stream draws the trips when the experimental helper `make_case` makes a case, before any run, from that
-helper's own `seed` argument.
-
 The taste draws do not depend on the iteration: a traveller keeps its taste for the whole run, so its choice changes
 only when the costs change. Under the least-cost choice nothing of the choice is random; the seed then only decides
 who is offered a new choice at each iteration.
 
 **What another seed means.** Two runs that differ only in their seed are two samples of the same model: other tastes,
-and other travellers offered a new choice at each iteration. Their difference shows how much of a result is chance. The tests judge
-several of their cases on the mean over five or twenty seeds for this reason ([Validation](validation.md)).
+and other travellers offered a new choice at each iteration. Their difference shows how much of a result is chance.
 
 ## Across platforms
 
@@ -120,9 +117,9 @@ the last bit from one system to another. openmobisim therefore takes every such 
 Rust (`libm`), not from the system: the logarithms of the Gumbel draws, of the logit's sum and of the path size, the
 exponential, the power in the step, and the distances and the map projection.
 
-As measured, the default run of the Delft test (test 10) gives byte-identical trips on macOS (Apple silicon), Linux
-(x86_64) and Windows (x86_64); the test job of each published package prints the fingerprint of its trips file. This is
-a measurement on three platforms, not a guarantee for every platform.
+As measured, a run of Delft's network with every parameter at its default (test 10 of [Validation](validation.md))
+gives byte-identical trips on macOS (Apple silicon), Linux (x86_64) and Windows (x86_64). This is a measurement on
+three platforms, not a guarantee for every platform.
 
 ## The fingerprints of the inputs
 
@@ -217,8 +214,6 @@ choice come from the same two streams as everyone's.
 
 - **Identical results are promised on one platform with one program.** Across platforms they were measured on three
   (above), not proven. The promise is for the same program: the record holds the version that made it.
-- **A development version does not identify its source.** A version ending in `-dev` in a record does not say which
-  state of the code built it.
 - **The seconds each stage took differ from run to run**, and with them `iterations.parquet` as a file.
 - **A record made from tables in memory does not run again by itself** (above).
 - **The fingerprints cover the inputs, not the results.** A value changed by hand inside a results table is not

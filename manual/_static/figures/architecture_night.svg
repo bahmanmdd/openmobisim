@@ -93,8 +93,7 @@
 <text x="767.5" y="497.0" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="12" font-weight="600" text-anchor="middle" fill="#f2f6fa">types</text>
 <text x="767.5" y="512.0" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="middle" fill="#cdd6e1">identifiers, the clock, units,</text>
 <text x="767.5" y="527.0" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="middle" fill="#cdd6e1">modes, random streams</text>
-<path d="M 590 322 L 590 333" fill="none" stroke="#5f7897" stroke-width="1.6" marker-end="url(#m5f7897)"/>
-<path d="M 590 394 L 590 405" fill="none" stroke="#5f7897" stroke-width="1.6" marker-end="url(#m5f7897)"/>
-<path d="M 590 466 L 590 477" fill="none" stroke="#5f7897" stroke-width="1.6" marker-end="url(#m5f7897)"/>
+<path d="M 30 276 L 30 524" fill="none" stroke="#5f7897" stroke-width="2" marker-end="url(#m5f7897)"/>
+<text x="44" y="404" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="600" text-anchor="start" fill="#93a2b6">uses</text>
 <text x="480" y="552" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="middle" fill="#93a2b6">A module uses only modules in the rows below it or beside it in its own row; none uses a module above it.</text>
 </svg>

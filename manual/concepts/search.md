@@ -135,8 +135,7 @@ gives the method.
 
 An **origin-destination pair** is here the trips with the same car origin node and the same car destination node. The
 pair *holds* the distinct car routes in the sets of its travellers. Without a limit, a pair on a large network
-gathers many near copies of one route (the [parameters table](../reference/parameters.md) reports up to 22 on a
-city case, differing only on parallel motorway carriageways). The parameter `max_car_routes` limits them:
+gathers many near copies of one route, which differ for instance only on parallel motorway carriageways. The parameter `max_car_routes` limits them:
 
 - A car route that is new to its traveller's set and new to the pair is added only while the pair holds fewer than
   `max_car_routes` routes. The trips are taken in the order of their identifiers, so the result does not depend on
@@ -148,10 +147,10 @@ city case, differing only on parallel motorway carriageways). The parameter `max
   first routes differ can therefore hold more routes than the limit.
 - A limit at least as large as the number of routes any pair finds changes nothing.
 
-| Parameter | Default | Unit | What it limits | Measured effect reported in the parameters table |
-|---|---|---|---|---|
-| `max_car_routes` | 6 | routes per origin-destination pair | the distinct car routes of a pair | on the Delft case at 6, the mean car trip is 1.3 % longer than without a limit (8.31 min against 8.21 min) |
-| `max_transit_journeys` | 10 | journeys per trip | the transit journeys offered to a traveller | 10 is the smallest limit that left no trip unfinished on three example cases |
+| Parameter | Default | Unit | What it limits |
+|---|---|---|---|
+| `max_car_routes` | 6 | routes per origin-destination pair | the distinct car routes of a pair |
+| `max_transit_journeys` | 10 | journeys per trip | the transit journeys offered to a traveller |
 
 ## The path size of overlapping car routes
 
@@ -187,14 +186,15 @@ part is used by three routes, the rest of each route by one:
 | 2 | 1 000 | 0.2 | 0.4 | 0.6 |
 | 3 | 1 200 | 0.1667 | 0.5 | 0.6667 |
 
-A test of the simulator checks these three values in a run (`crates/loop/tests/path_size_in_a_run.rs`).
+These three values are checked in a run by test 7 of [Validation](validation.md).
 
 ## The sets of the Delft case
 
 % src: a run of the published case `delft` (doi:10.5281/zenodo.24585967) with its own settings, read with pyarrow
 
 The run of the published case `delft` shows how the sets grow. The trips of the classes `from_outside_car` and
-`goods` have the car as their only mode, so the size of their set is their number of car routes:
+`goods` have the car as their only mode, so the size of their set is their number of car routes. The tables are Parquet files; reading them in Python needs a Parquet reader, for instance pandas with pyarrow
+(`pip install pandas pyarrow`); the guide [Reading the results](../guides/results.md) explains it in full.
 
 ```python
 import collections
@@ -261,7 +261,7 @@ True
 
 At iteration 0 every trip finds its first alternatives. From then on only car routes are new, and fewer at each
 iteration; the run stopped by its rule after the iteration at which 0.36 % of the trips found a cheaper alternative.
-The run took about 4 s on an Apple M2 Pro laptop (12 cores).
+The run took about 4 s on a laptop ([Run time](../guides/speed.md)).
 
 ## For bikes
 
@@ -289,7 +289,7 @@ The run took about 4 s on an Apple M2 Pro laptop (12 cores).
 - **A known limit of the search at a tie.** The link time a car reads depends on the instant of entry and, besides,
   on which recorded car's place the traveller takes on the link before. The tie rule does not look at that place.
   When two routes reach a node at exactly the same instant having taken different places, the route kept can arrive
-  later than the route dropped; in the hand case of the test, 152 s against 148 s.
+  later than the route dropped; in a case worked by hand, 152 s against 148 s.
 - **No turn or node costs time**, and turn restrictions are not known to the network.
 - **Fastest means least time.** The route search reads times alone: the coefficients of a traveller's class do not
   change which car, bike or walk route is found for it.

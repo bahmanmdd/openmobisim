@@ -44,8 +44,6 @@ delft-map.html
 delft-summary.html
 ```
 
-openmobisim 0.2 and later read the cases; openmobisim 0.1 does not.
-
 ## The files of the record
 
 % src: the record's README.md (the paragraph under the table of files, "Remaking the cities", "Licences")
@@ -117,8 +115,8 @@ mode: a street open to cars, bikes and walkers is a car link, a bike link and a 
 | `from_outside_transit` | transit riders arriving at a rail station of the area | `transit`, or `transit;bike` for those given a station bike | the four cities |
 | `goods` | goods vehicles | `car` | the four cities |
 
-The classes differ in the modes each may use. Every class of every case takes the default choice coefficients of
-openmobisim 0.2, written out in each `run.toml` ([the coefficients of a class](record.md#the-coefficients-of-a-class)).
+The classes differ in the modes each may use. Every class of every case takes the default choice coefficients,
+written out in each `run.toml` ([the coefficients of a class](record.md#the-coefficients-of-a-class)).
 
 **For bikes.** Two of the four resident classes own a bike, and bike links are a layer of every network. Some
 travellers were given a bike so that they arrive within the window (below).
@@ -127,51 +125,21 @@ travellers were given a bike so that they arrive within the window (below).
 
 % src: the record's README.md ("How the cities' cases were made", "Remaking the cities")
 
-The four cities' cases were made from version 1 of the record (doi:10.5281/zenodo.23472146) by the scripts in
-`make.zip`, which remake the four folders byte for byte.
-
 | Part | How it was made |
 |---|---|
-| Networks | The road, bike and walk networks that openmobisim 0.1 read from the OpenStreetMap extracts of version 1 of the record, written as tables. |
-| Car capacities | A car link's capacity is its lanes times a value per lane by its road class, in the table below. |
-| Timetables | Those of version 1 of the record, unchanged. |
-| Trips | The morning recipe of version 1 of the record: zones with their residents and built volume from the Global Human Settlement Layer, a gravity model fitted to the surveys' trip lengths, the cars and transit riders that enter from outside, goods vehicles, and seven traveller classes. The trips were drawn by openmobisim 0.1.0 with one change: each traveller's departure is drawn evenly over 06:30 to 09:30, and the travellers leaving between 07:30 and 08:30, about a third of the morning, are kept. |
-| Choice | The default choice coefficients of openmobisim 0.2. The mode constants of version 1 of the record, fitted to the surveys' shares, are not carried over. |
+| Networks | The road, bike and walk networks read from OpenStreetMap, written as tables. |
+| Timetables | The feed of each city, on the service day the table of the cases names. |
+| Trips | A synthetic morning: zones with their residents and built volume from the Global Human Settlement Layer, a gravity model fitted to the trip lengths of travel surveys, the cars and transit riders that enter from outside, and goods vehicles. Each traveller's departure is drawn evenly over 06:30 to 09:30, and the travellers leaving between 07:30 and 08:30 are kept. |
+| Choice | The default choice coefficients ([Parameters](parameters.md#the-sixteen-coefficients)). They are not fitted to the mode shares of any survey. |
 
-The capacity per lane of the cities' car links, by road class:
+The capacity of every car link is given in the case's `links.parquet`: it is the link's lanes times a value per lane
+by road class, from 2 100 vehicles per hour on motorways down to 450 on living streets and service roads.
 
-| Road class | Capacity per lane (vehicles per hour) |
-|---|---|
-| motorway, motorway ramp | 2 100 |
-| trunk | 1 800 |
-| trunk ramp; a motorway ramp ending where another kind of road begins | 1 550 |
-| primary | 1 080 |
-| primary ramp, secondary, secondary ramp | 900 |
-| tertiary | 810 |
-| tertiary ramp, unclassified, road | 720 |
-| residential | 600 |
-| living street, service | 450 |
+The number of travellers that this gives is multiplied by 1.2 for Amsterdam, by 0.7 for Lyon and by 0.5 for Paris.
+The scripts and inputs that remake the four folders are in `make.zip`.
 
-The record gives the source of the motorway value as HCIA v3 (Rijkswaterstaat 2011, Table 3.1). These capacities are
-the cases' own: they are in the cases' `links.parquet`, and they differ on motorways (2 100 against 2 000 vehicles per hour per lane) and on
-motorway ramps (2 100 against 1 550 vehicles per hour per lane) from the values openmobisim 0.2 gives a network it reads
-from an OpenStreetMap extract
-([Input tables and files](inputs.md#an-openstreetmap-extract)).
-
-What was changed per city, for the three cities the record lists changes for:
-
-| City | Factor on the recipe's travellers (none) | Other changes |
-|---|---|---|
-| Amsterdam | 1.2 | Two blocks count at a tenth of their residents and built volume: Westpoort's port and industrial area, and Weesp's western business park. 9 of the 39 gateways where cars enter or leave were moved 10 to 760 m onto the carriageway of their own direction. |
-| Lyon | 0.7 | 15 of the 66 gateways moved. Each trip end at a 500 m block's point goes to that point or one of six around it at 200 m, drawn evenly. |
-| Paris | 0.5 | 23 of the 86 gateways moved. Trip ends spread as for Lyon. |
-
-The factors of Lyon and Paris were chosen for low congestion and short runs. A gateway is a road on the edge of the
-study area where cars enter or leave.
-
-**Every traveller arrives by 09:30.** A traveller who could not arrive by 09:30 was given a bike (a resident without a
-vehicle, or a train passenger a station bike); one who still could not had the destination moved to the nearest place
-a bike reaches in time; two leave earlier.
+**Every traveller arrives by 09:30.** A traveller who could not arrive by 09:30 was given a bike, had the
+destination moved to the nearest place a bike reaches in time, or leaves earlier.
 
 | Case | Travellers changed so |
 |---|---|
@@ -194,11 +162,10 @@ DOTNET is a synthetic city of 8 km by 8 km on round numbers, made for teaching n
 | Timetable | 7 transit lines: two metro lines, a tram and four buses. |
 | Travellers | 4 traveller classes and an origin-destination matrix of the morning peak. |
 
-Car capacities (each direction) and the matrix's cells are varied at random by up to 15 % and 30 % (seeded), so that
-routes of equal cost are rare once the roads load; lengths and speeds stay round. Travellers without a vehicle whose
+Car capacities (each direction) and the matrix's cells are varied at random by up to 15 % and 30 %; lengths and
+speeds stay round. Travellers without a vehicle whose
 only alternative was a walk of over an hour were given a bike (the four corner nodes have no stop within 1 500 m).
-Unlike the cities' roads, DOTNET's roads are congested at the peak. Its generator is not part of the record: the
-files are its source.
+Unlike the cities' roads, DOTNET's roads are congested at the peak.
 
 ## Licences
 
@@ -208,7 +175,7 @@ Each part keeps its own licence.
 
 | What | Source | Licence |
 |---|---|---|
-| Networks of the four cities | OpenStreetMap, as read by openmobisim 0.1 | ODbL 1.0, © OpenStreetMap contributors |
+| Networks of the four cities | OpenStreetMap | ODbL 1.0, © OpenStreetMap contributors |
 | Timetables of Delft and Amsterdam | the Dutch national GTFS feed, published by OVapi from the NDOV data of the Dutch transit agencies, which do not endorse this use | CC0 1.0 |
 | Timetable of Paris | Île-de-France Mobilités' GTFS Datahub | Licence Mobilités, February 2021 |
 | Timetable of Lyon | SYTRAL Mobilités' TCL timetable, via data.gouv.fr | Licence Mobilités, February 2021 |
@@ -234,15 +201,6 @@ cases' archives.
 
 % src: the record's README.md ("Versions and citation"); each case's LICENCE.md (the DOI of every version)
 
-This page describes **version 2** of the record, doi:10.5281/zenodo.24585967, read by openmobisim 0.2. The DOI
-10.5281/zenodo.23472145 names every version of the record. Version 2 changes from version 1
-(doi:10.5281/zenodo.23472146):
-
-- The cases are ready-to-run folders for `run_file`, not OpenStreetMap extracts and a recipe; the networks, timetables
-  and recipe are those of version 1, with the changes above.
-- New: `dotnet`.
-- Not carried over: the Sioux Falls and Nguyen–Dupuis benchmarks, the OpenStreetMap extracts, the networks as GMNS
-  and GeoParquet tables, and the notebook comparing the mornings with the surveys. They stay in version 1, which
-  openmobisim 0.1 keeps reading.
-
-A version of the record is never edited; a correction is a new version. Cite the version you used.
+This page describes **version 2** of the record, doi:10.5281/zenodo.24585967. The DOI 10.5281/zenodo.23472145 names
+every version of the record. A version of the record is never edited; a correction is a new version. Cite the version
+you used.

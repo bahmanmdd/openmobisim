@@ -93,6 +93,9 @@ by_car   car     144.0 s
 on_foot  walk   1060.7 s
 ```
 
+The tables are Parquet files; reading them in Python needs a Parquet reader, for instance pandas with pyarrow
+(`pip install pandas pyarrow`): see [Reading the results](results.md).
+
 Each time can be checked by hand. The car drives the two streets, 2 000 m at 50 km/h, in 144 s. The bike and the
 walker take the path, 1 414.2 m: 339.4 s at 15 km/h and 1 060.7 s at 4.8 km/h, the default speeds.
 
@@ -114,7 +117,7 @@ road class, and its capacity from that table, which counts the class's junctions
 ([The network](../concepts/networks.md)).
 
 The example needs an OpenStreetMap extract in the format `.osm.pbf`, which is not part of the published cases:
-download one that covers your area and give its path. The counts shown are those of the extract of Delft used here.
+download one that covers your area and give its path. The counts shown are those of an extract of Delft.
 
 ```python
 delft = (4.315, 51.965, 4.410, 52.035)                     # west, south, east, north, in degrees
@@ -168,32 +171,11 @@ no file to name, and a run cannot be made again from its record then: for a case
 files, or write a settings file that names them ([The settings file](settings.md),
 [Running a run again](reproducibility.md)).
 
-## Experimental helpers
-
 % src: crates/binding/README.md ("Experimental: a lighter car network, and a case in one call");
-% crates/io-osm/README.md ("Inputs": experimental); run by the writer
+% crates/io-osm/README.md ("Inputs": experimental)
 
-Two helpers to get started are **experimental**: they may change, and neither is a model of a city.
-
-- `Network.from_osm(path, region=None, car_roads="main")` gives cars the main roads alone (motorways down to
-  unclassified roads), and bikes and walkers every street as before.
-- `make_case(folder, osm, population, region=None, gtfs=None, car_roads="all", trips_per_person=0.1, seed=0)` writes
-  a `trips.parquet` and a `run.toml` into `folder`. The trips number `population × trips_per_person` and are drawn
-  from the streets of the extract by fixed, uncalibrated rules (homes along residential streets, activities along the
-  other streets, four classes, and 5 % through traffic by car where the region cuts a motorway or a trunk road, departures evenly over one hour from 07:30, the window
-  07:30 to 09:30).
-
-This example needs the same extract, `delft.osm.pbf`, which is not part of the published cases.
-
-```python
-folder = oms.make_case("made-case", "delft.osm.pbf", population=100_000, region=delft,
-                       gtfs="delft/gtfs.zip", car_roads="main")
-run = oms.run_file(folder, out="made-run")
-```
-
-Nothing is tuned or removed: how congested such a case is, and whether every trip finishes, follows from the numbers
-given. Read the unfinished count of the last row of the iterations table before using such a case
-([The window and unfinished trips](window.md)).
+- Experimental: `Network.from_osm(path, region=None, car_roads="main")` gives cars the main roads alone, and bikes and walkers every street.
+- Experimental: `make_case(folder, osm, population)` writes a `trips.parquet` of synthetic, uncalibrated trips and a `run.toml` into `folder`.
 
 ## For bikes
 
@@ -201,7 +183,7 @@ given. Read the unfinished count of the last row of the iterations table before 
 
 `bike` in a link's `modes` lets bikes ride it (`path_ac` above is a cycle path, `bike;walk` with no car field), and
 `bike` in a trip's `modes` opens the bike to that traveller. From an extract, a cycleway is a bike link and a walk link
-and no car link. `make_case` gives 60 % of its travellers a bike. Bike links
+and no car link. Bike links
 in a table and from an extract, and where a bike's trip joins the network, are in [Cycling](cycling.md).
 
 ## What can go wrong

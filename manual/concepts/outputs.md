@@ -4,7 +4,8 @@
 
 A run writes **five files** into one folder: four tables, as Parquet files, and a record of what was run. From a
 finished run two **pages** can be written, a map and a summary, each one HTML file that opens from disk. The folder
-alone tells what was run, and its tables are read by any reader of Parquet (the examples here use `pyarrow`).
+alone tells what was run. The tables are Parquet files; reading them in Python needs a Parquet reader, for instance pandas with pyarrow
+(`pip install pandas pyarrow`); the guide [Reading the results](../guides/results.md) explains it in full.
 
 This page says in plain words what each of them holds, which stage of [the iteration](iteration.md) it comes from, and
 how they relate. Every column is listed in [Output files](../reference/outputs.md), and every key of the record in
@@ -32,7 +33,7 @@ ended by the stopping rule: True
 ```
 
 (`"delft"` is the folder of the Delft case, one of the [published cases](../reference/cases.md), unpacked from
-`https://zenodo.org/records/24585967/files/delft.zip`. The run takes about 4 s. The other pages of this part read the
+`https://zenodo.org/records/24585967/files/delft.zip`. The run takes about 4 s on a laptop ([Run time](../guides/speed.md)). The other pages of this part read the
 folder `delft-run` that this example makes.)
 
 ## The files and where they come from
@@ -263,7 +264,6 @@ Bikes are in every output beside the other modes.
   count them per stop and per pair of stops.
 - **The map holds the 2 000 busiest pairs of places**, not all of them.
 - **A value changed by hand in a table is not detected** when the run is opened again.
-- **The pages' behaviour in a browser is not tested automatically**; the numbers they hold are.
 - There are no figure functions, no log and no progress output.
 
 All limits of the model are gathered in [Limitations](limitations.md).

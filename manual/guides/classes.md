@@ -70,8 +70,8 @@ alternative add up to its door-to-door time.
 
 The defaults are starting values to be calibrated for a study, not estimates for any city; their sources are in
 [Parameters](../reference/parameters.md). With the defaults a cost reads as tenths of a car minute: a minute of
-walking costs as much as 1.65 minutes of driving, and a transfer as much as 5. Money is 0 for every alternative in
-release 0.2, since no input carries a price, so `money_eur` has no effect yet.
+walking costs as much as 1.65 minutes of driving, and a transfer as much as 5. Money is 0 for every alternative,
+since no input carries a price, so `money_eur` has no effect.
 
 ## Giving the coefficients
 
@@ -79,7 +79,8 @@ release 0.2, since no input carries a price, so `money_eur` has no effect yet.
 
 Left out, every class takes the defaults. Given, the keyword `coefficients` of `run` is a dict from **every** class id
 to its sixteen numbers in the order of the table. The example lowers the cost of a minute on the bike for one class of
-the synthetic city `dotnet` and compares that class's mode shares:
+the synthetic city `dotnet` and compares that class's mode shares. The tables are Parquet files; reading them in Python needs a Parquet reader, for instance pandas with pyarrow
+(`pip install pandas pyarrow`): see [Reading the results](results.md).
 
 ```python
 import openmobisim as oms
@@ -132,7 +133,7 @@ case. Each share is rounded to 0.1 %, so a class's shares may add to 100.1 %.
 
 The class whose coefficient changed cycles more. The class `car_only`, whose coefficients did not change, drives a
 little more: the classes share the roads, and the travel time of a car on a link is the one thing a traveller's choice
-changes for the others ([The loading](../concepts/loading.md)). Checked on the two runs' trips tables: the 6 731
+changes for the others ([The loading](../concepts/loading.md)). In the two runs' trips tables, the 6 731
 travellers of `car_only` who drive in both runs take 15.2 min on average with the defaults and 14.3 min in the changed
 run.
 

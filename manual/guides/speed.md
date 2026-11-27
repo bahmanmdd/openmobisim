@@ -4,12 +4,12 @@
 % measurements of the five published cases
 
 How long a run takes depends on the size of the network, the number of travellers and the number of iterations. This
-page says what the time is made of, gives the measured times of the five published cases, and shows what the number of
+page says what the time is made of, gives the run times of the five published cases, and shows what the number of
 threads changes.
 
-**The machine behind every time on this page**: a laptop with an Apple M2 Pro processor (12 cores) and 32 GB of
-memory. The times are wall-clock times of single runs; the same run takes another time on another machine or another
-day. Times are in no result but the stage seconds of the iterations table, and never in a fingerprint.
+**The machine behind every time on this page**: a 2023 laptop with an Apple M2 Pro processor (12 cores) and 32 GB of
+memory. The times are wall-clock times; the same run takes another time on another machine. Times are in no result
+but the stage seconds of the iterations table, and never in a fingerprint.
 
 ## What a run's time is made of
 
@@ -26,6 +26,9 @@ iterations table gives the seconds of each, per iteration:
 | `load_s` | load | moves every car, bike and walker along its route, link by link |
 | `measure_s` | measure | prices every car route of every set again on the new travel times |
 | `assess_s` | assess | computes the iteration's row: the mean, the counts, the shares |
+
+The tables are Parquet files; reading them in Python needs a Parquet reader, for instance pandas with pyarrow
+(`pip install pandas pyarrow`): see [Reading the results](results.md).
 
 ```python
 import pyarrow.compute as pc
@@ -66,14 +69,12 @@ reading the inputs and writing the files included.
 | `amsterdam` | 198 252 | 489 167 | 9 | 53.6 | 22.8 | 15.9 | 7.5 | 2.8 | 5.01 |
 | `paris` | 243 203 | 520 684 | 6 | 77.2 | 58.8 | 4.1 | 3.6 | 0.9 | 8.39 |
 
-Lyon and Paris were run a second time: 41.1 s and 76.9 s, with peak memory of 4.92 GB and 9.34 GB. Two runs of one
-case differ by a few seconds (4.2 s for Lyon, 0.3 s for Paris) and, in peak memory, by 0.55 GB for Lyon and 0.95 GB
-for Paris.
+Two runs of one case can differ by a few seconds and, in peak memory, by up to about 1 GB.
 
-What these five rows show, and no more:
+What these five rows show:
 
 - **Run time and memory rise with the size of the case.** The five cases are in the same order by links, by run time
-  and by peak memory. The largest, Paris, used 8.4 and 9.3 GB of memory in its two runs, more than the memory of a machine with 8 GB.
+  and by peak memory. The largest, Paris, used 8.4 GB of memory, more than the memory of a machine with 8 GB.
 - **The first search is the largest single part in the three large cities**: 41 % of Lyon's run time, 43 % of
   Amsterdam's and 76 % of Paris's. It is the one search that covers bikes, walkers and public transport as well as
   cars. Paris has the most walk links of the five (426 740) and the most travellers.
@@ -102,8 +103,7 @@ capped at 5 iterations, [The iteration](../concepts/iteration.md) the rule).
 % ("Determinism"); measured on Delft, the median of three runs per row
 
 A run uses the machine's processor threads; the environment variable `RAYON_NUM_THREADS`, set before Python starts,
-sets how many ([Running a run again](reproducibility.md)). The results are the same at any number. Delft, the
-median of three runs per row:
+sets how many ([Running a run again](reproducibility.md)). The results are the same at any number. For Delft:
 
 | Threads | Run time (s) | Search, all iterations (s) | Load, all iterations (s) | Measure, all iterations (s) |
 |---|---|---|---|---|
@@ -114,7 +114,7 @@ median of three runs per row:
 | 12 | 4.1 | 2.0 | 1.1 | 0.3 |
 
 The search and the measure take less time with more threads; the loading takes the same time at every count. From 8
-to 12 threads little changes on this machine, which has 8 fast and 4 slower cores.
+to 12 threads little changes on this machine, whose 12 cores are 8 fast and 4 slower ones.
 
 ## For bikes
 

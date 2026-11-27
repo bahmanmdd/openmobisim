@@ -57,7 +57,7 @@ ten minutes of driving.
 | `transit_transfer_wait_min` | min | 0.145 | transit | the waits at transfers |
 | `transit_transfer_walk_min` | min | 0.165 | transit | the walks between rides |
 | `transit_transfers` | transfers | 0.5 | transit | the number of transfers |
-| `money_eur` | € | 0.6 | every mode | 0 for every alternative in this release |
+| `money_eur` | € | 0.6 | every mode | 0 for every alternative |
 | `car_ln_path_size` | none | −1 | car | the natural logarithm of the route's path size (below) |
 | `is_car` | none | 0 | car | 1: the car's constant |
 | `is_bike` | none | 0 | bike | 1: the bike's constant |
@@ -69,8 +69,8 @@ its door-to-door time.
 
 **What the defaults mean.** A minute of walking weighs 1.65 times a minute of riding or driving, and a minute of
 waiting 1.45 times. A transfer weighs as much as five minutes in a vehicle. The coefficient of money, 0.6 per euro
-beside 0.1 per minute, is a value of time of 10 € per hour (KiM 2023); since every alternative costs 0 € in this
-release, it changes nothing. The walk and transit constants add the cost of 5 and 2.5 minutes of driving. **The
+beside 0.1 per minute, is a value of time of 10 € per hour (KiM 2023); since every alternative costs 0 €, it changes
+nothing. The walk and transit constants add the cost of 5 and 2.5 minutes of driving. **The
 defaults are starting values to be calibrated for each study, not estimates.**
 
 **Per class.** The parameter `coefficients` gives every class its own sixteen; [Traveller
@@ -207,8 +207,7 @@ taken. Three properties follow:
   at its end, so an alternative keeps its position and its draw. Between two iterations a traveller does not flip
   between alternatives by chance.
 - **Two runs with the same seed, inputs and program on the same platform give identical results**, at any number of
-  threads. As measured, the default run of the Delft test (test 10) gives byte-identical trips on macOS (Apple silicon), Linux
-  (x86_64) and Windows (x86_64). [Reproducibility](reproducibility.md) gives the whole account.
+  threads. [Reproducibility](reproducibility.md) gives the whole account.
 - **The share of travellers who would change is a count, not an estimate.** After an iteration, the simulator asks
   for each traveller whether its fixed taste, at the costs just measured, still picks the alternative it holds. When
   no traveller would change, the run is at the fixed point of its iterations, for the sets it has found (see [The
@@ -225,7 +224,8 @@ parameter `step_exponent` and the stopping rule are on the page [The iteration](
 
 The example gives 20 000 travellers the same trip of 1 500 m with three modes and no congestion (the street's
 capacity is unlimited). Each mode has one alternative, so each nest holds one alternative and the nested logit is the
-plain logit of the three costs. The costs by hand: the car drives 108 s, 1.8 min × 0.1 = 0.18; the bike rides 360 s,
+plain logit of the three costs. The tables are Parquet files; reading them in Python needs a Parquet reader, for instance pandas with pyarrow
+(`pip install pandas pyarrow`); the guide [Reading the results](../guides/results.md) explains it in full. The costs by hand: the car drives 108 s, 1.8 min × 0.1 = 0.18; the bike rides 360 s,
 6 min × 0.1 = 0.6; the walk takes 1 125 s, 18.75 min × 0.165 + 0.5 = 3.59375.
 
 ```python
@@ -287,23 +287,11 @@ travellers the standard deviation of the car share is 0.0035. The run takes unde
 
 % src: crates/choice/README.md ("Tests"); crates/loop/README.md ("Tests"); README.md ("The ten tests", test 7)
 
-Every expected value below comes from outside the simulator: a formula worked by hand or written out in the test.
-These tests are test 7 of the ten tests of the release ([Validation](validation.md)).
-
-| What is tested | Expected value | Judged by |
-|---|---|---|
-| the plain logit: six alternatives with costs $\ln(21/k)$ | probabilities $k/21$ | the probabilities within $10^{-12}$; 200 000 draws by chi-square |
-| the nested logit: three nests of three, one and two alternatives, at $\mu$ of 0.2, 0.5, 0.9 and 1 | the equations above | the probabilities within $10^{-12}$; 20 000 draws each by chi-square |
-| the path-size logit: three car routes of equal time, two of them sharing a fraction $\varphi$ of their length | $P = 1/(3 - \varphi)$ for the route that shares nothing: 0.4545 at $\varphi = 0.8$, 0.4 at $\varphi = 0.5$ | within $10^{-12}$ |
-| the path size inside a nest, at $\mu$ of 0.5 and 0.25: three car routes of path sizes 0.5, 0.6 and 2/3 and a bike | the closed form with the path size at the exponent 1 | within $10^{-12}$ |
-| one route split into two copies of half its path size | every other probability unchanged, each copy half | by hand |
-| two classes over the same alternatives | $1/(1 + e^{3})$ and $1/(1 + e^{-3})$ | by hand |
-| the least cost and its ties | the first of the least costs | by hand |
-| in a run without congestion: car, bike, walk and transit | the closed-form logit shares | sampling error |
-| in a run: two transit journeys in one nest against a bike, at $\mu$ of 0.5 and 1 | the nested logit's closed form | sampling error |
-| in a run: the path sizes of three car routes of 800, 1 000 and 1 200 m sharing 600 m | 0.5, 0.6 and 2/3 | by hand |
-| in a run: the cost reported for a trip | to the bit, the cost the choice reads | 200 alternatives of each mode, two classes |
-| 10 000 travellers, twice, in a shuffled order and on eight threads | the same choices | identity (the one comparison of the simulator with itself) |
+The choice models are tested against formulas worked by hand: the plain logit, the nested logit at nest scales of 0.2,
+0.5, 0.9 and 1, the path-size logit, the path size inside a nest, and the least cost with its ties. Each probability
+agrees with its formula within $10^{-12}$, and the shares of drawn choices agree by a chi-square test. In runs without
+congestion, the shares of the modes agree with the logit's closed form within sampling error. These are test 7 of
+[Validation](validation.md).
 
 ## For bikes
 
@@ -318,14 +306,14 @@ These tests are test 7 of the ten tests of the release ([Validation](validation.
 - A bike's cost does not change during a run, because its time does not. Its share changes all the same, when the
   car times change.
 - A bike route has a path size of 1.
-- The nested logit with a bike nest is tested against its closed form (the table above).
+- The nested logit with a bike nest is tested against its closed form (test 7 of [Validation](validation.md)).
 
 ## Limits
 
 % src: crates/choice/README.md; crates/loop/README.md ("Choose", "What the choice is over", "Money"); PARAMETERS.md (coefficients); README.md ("Known limits")
 
 - **The default coefficients are not calibrated.** They are starting values in plausible proportions.
-- **Money is 0 for every alternative** in this release: no fare, fuel cost, toll or parking charge enters a cost.
+- **Money is 0 for every alternative**: no fare, fuel cost, toll or parking charge enters a cost.
 - **The cost is linear in sixteen fixed attributes.** No other attribute, no product of two attributes and no
   attribute of the traveller beyond its class can be added, and no model can be supplied from Python.
 - **One nest scale for all nests, and the nests are the modes.** Other nesting structures cannot be chosen.

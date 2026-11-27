@@ -6,7 +6,7 @@ Everything the model does not do, or does approximately, gathered in one place a
 as it is. Each section belongs to one part of the model and links to the page that explains it. State the ones that
 matter for your results with them.
 
-Release 0.2 is a small simulator on purpose: travellers choose mode and route, cars queue on a point queue, bikes and
+openmobisim is a small simulator: travellers choose mode and route, cars queue on a point queue, bikes and
 walkers travel at free flow, transit runs on its timetable, and choice and loading are iterated to a stable state. The
 table lists the limits that most often decide whether the model fits a question; the sections below give all of them.
 
@@ -34,7 +34,7 @@ Explained on [Networks](networks.md).
 - **Capacities read from OpenStreetMap are defaults by road class.** Each car link
   takes its road class's capacity per lane times its lanes, and for roads with junctions at grade that capacity is a
   saturation flow of 1 800 vehicles per hour per lane times a share of green time. **The green share of each road class
-  is an assumption of this project**, not a value of a guideline, and none is calibrated.
+  is an assumption**, not a value of a guideline, and none is calibrated.
 - **Speeds and lanes where OpenStreetMap gives none are one table for every country.**
 - **Signal timings, bus lanes, parkings, the duration of ferries and the levels of cycling infrastructure are not
   read** from OpenStreetMap.
@@ -45,8 +45,6 @@ Explained on [Networks](networks.md).
 - **Distances are on a plane.** Positions in longitude and latitude are projected to the UTM zone of the network's
   centre, within 0.1 % of the ground distance inside the zone. A link's length, when not given, is the straight line
   between its two nodes, not the length along its shape.
-- **`car_roads="main"` is an experimental helper**: it gives cars the main roads alone, which lightens the car network
-  and removes the routes through side streets.
 
 ## The demand
 
@@ -64,8 +62,7 @@ Explained on [Demand](demand.md).
   fuel or parking charge.
 - **Trips outside the window are dropped**, as are trips whose walk to the network would end after the window for every
   mode. They are counted in the record and are in no result.
-- **`make_case` is an experimental helper.** It draws trips from the streets of an OpenStreetMap network by fixed
-  numbers, none calibrated: a start for trying ideas, not a model of a city's travel.
+- **`make_case` is an experimental helper** that draws uncalibrated trips from an OpenStreetMap network.
 
 ## Routes and route sets
 
@@ -81,8 +78,7 @@ Explained on [Routes and route sets](search.md).
   different places of a queue, the route kept can arrive later than the one dropped, by a headway or more.
 - **A bike and a walker have one route each**: the shortest by length, found once.
 - **The car routes of an origin-destination pair are limited** by `max_car_routes` (6 by default). A faster route
-  found by an origin-destination pair at its limit is lost and replaces none. On Delft this was measured to make the
-  mean car trip 1.3 % longer than without a limit. Such a pair can also hold more than the limit, when its travellers' first routes differ.
+  found by an origin-destination pair at its limit is lost and replaces none. Such a pair can also hold more than the limit, when its travellers' first routes differ.
 
 ## Choice
 
@@ -146,10 +142,8 @@ Explained on [The loading](loading.md).
   recorded it. Where moving the traveller would move other cars, the reading is off by one headway of the link for each
   car held on the wrong side, and queues further on can add to that; along a route the error is not bounded by one
   headway.
-- **A car trip while a bottleneck's queue builds up is slightly above theory**: about 1.5 s on a trip of about 692 s
-  (0.2 %) in the test of cars against bikes behind a bottleneck with the step exponent at 1, of which about 0.4 s comes
-  from departures on whole seconds and the rest is not explained. At the default step exponent the difference is
-  +0.9 ± 0.8 s over 20 seeds.
+- **A car trip while a bottleneck's queue builds up is slightly above theory**: by about 1 s on a trip of about 692 s
+  (0.1 to 0.2 %).
 
 ## The iteration and the stopping rule
 
@@ -158,16 +152,14 @@ Explained on [The loading](loading.md).
 Explained on [The iteration](iteration.md).
 
 - **A run the rule stops is near, not at, the equilibrium.** The rule reads the slope of the mean trip time, which the
-  shrinking step makes small before the distance is. In the test of two car routes, one behind a bottleneck, a run of
-  the default 50 iterations under the default model is within 2.3 ± 1.0 s of theory on the trip by the bottleneck
-  route, in the group of departures farthest from it, over 20 seeds; with the step exponent at 1 it is 9.5 ± 1.9 s.
+  shrinking step makes small before the distance is. With two car routes, one behind a bottleneck, the trip time of
+  the departure period farthest from theory is about 2 s from it.
 - **The distance to equilibrium is reported, never judged.** The share who would change (logit) and the duality gap
   (least-cost choice) are in every row of the iterations table; no value of either stops or fails a run.
 - **The distance is over the sets found.** A share who would change of 0 means that nobody would change among the
   alternatives the search found, not among all routes of the network.
 - **The settled state depends on the step exponent**, because the sets grow by the search at the costs each iteration
-  meets. On Sioux Falls the sets grown at 0.75 settle about 9 s of mean trip time (1.2 %) above those grown at 1, in
-  every seed.
+  meets, so another step exponent can settle at another state.
 - **The mean trip time the rule reads is over finished trips**; with unfinished trips, two iterations' means are over
   different trips.
 - **Under the least-cost choice the rule that offers a new choice more often to travellers far from their best has
@@ -191,7 +183,6 @@ Explained on [What a run gives](outputs.md).
 - **A links table holds no bike or walk time**, since both are the free-flow time by definition.
 - **The map holds the 2 000 busiest pairs of places.**
 - **A value changed by hand in a results table is not detected.**
-- **The pages' behaviour in a browser is not tested automatically.**
 - **An output file is told from an input file by its path.** An input that is a hard link of one of the five output
   names in the output folder is not recognised and would be replaced.
 - **The interface is the Python module alone**: there is no command line, no scenario object, no figure function, no
@@ -218,9 +209,9 @@ Explained on [Validation](validation.md).
 
 - **The tests check the model's logic against theory, hand derivations and other tools**, not its realism against
   observed traffic. No case in the tests is calibrated to counts or measured travel times.
-- **A single link's queue delay on Sioux Falls is reported, never judged**: the sum over the links agrees with the
-  outside solver, single links differ.
-- **The equilibrium tests pass within a few percent**, and one of them depends on its seed.
+- **A single link's queue delay on Sioux Falls is not compared**: the sum over the links agrees with the outside
+  solver, single links differ.
+- **The equilibrium tests agree within a few percent.**
 
 ## For bikes
 

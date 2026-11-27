@@ -100,8 +100,6 @@ which of the four places above counts the key.
 | `lengths_defaulted` | A length given that is not finite or not above zero | The straight line between its nodes | graph | the network |
 | `links_of_no_length` | A link of 0 m: a node to itself, or two nodes at one position without a length; from an extract, a piece of 0 m, each of its links on each layer | Left out; no length is invented | graph, OpenStreetMap reader | the network |
 | `capacities_defaulted` | A car link's capacity that is `NaN` or not above zero | Lanes × `capacity_per_lane` | graph | the network |
-| `drawings_unplaced` | A drawing given before any row of its link | Ignored | graph | the network |
-| `drawings_repeated` | A second drawing for one link row | Ignored; the first kept | graph | the network |
 | `ways_repeated` | A way id given twice in the extract | The first kept | OpenStreetMap reader | the network |
 | `tags_unread` | A car way's `oneway` or lane value of no known meaning | Read as absent | OpenStreetMap reader | the network |
 | `speeds_defaulted` | A way cars drive with a `maxspeed`, `maxspeed:forward` or `maxspeed:backward` that is not a speed (counted once per way) | Read as absent: the next key, else the class's speed | OpenStreetMap reader | the network |

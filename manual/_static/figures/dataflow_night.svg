@@ -24,19 +24,20 @@
 <rect x="300" y="71" width="170" height="50" rx="7" fill="#131d30" stroke="#364966" stroke-width="1.2"/>
 <text x="385.0" y="92.5" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="12" font-weight="600" text-anchor="middle" fill="#f2f6fa">Network</text>
 <text x="385.0" y="107.5" font-family="'JetBrains Mono', Menlo, Consolas, monospace" font-size="10.5" font-weight="400" text-anchor="middle" fill="#cdd6e1">from_osm, from_tables</text>
-<rect x="300" y="164" width="170" height="50" rx="7" fill="#131d30" stroke="#364966" stroke-width="1.2"/>
-<text x="385.0" y="185.5" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="12" font-weight="600" text-anchor="middle" fill="#f2f6fa">Transit</text>
-<text x="385.0" y="200.5" font-family="'JetBrains Mono', Menlo, Consolas, monospace" font-size="10.5" font-weight="400" text-anchor="middle" fill="#cdd6e1">from_gtfs</text>
-<rect x="300" y="226" width="170" height="50" rx="7" fill="#131d30" stroke="#364966" stroke-width="1.2"/>
-<text x="385.0" y="247.5" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="12" font-weight="600" text-anchor="middle" fill="#f2f6fa">Demand</text>
-<text x="385.0" y="262.5" font-family="'JetBrains Mono', Menlo, Consolas, monospace" font-size="10.5" font-weight="400" text-anchor="middle" fill="#cdd6e1">from_table</text>
+<rect x="300" y="154" width="170" height="50" rx="7" fill="#131d30" stroke="#364966" stroke-width="1.2"/>
+<text x="385.0" y="175.5" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="12" font-weight="600" text-anchor="middle" fill="#f2f6fa">Transit</text>
+<text x="385.0" y="190.5" font-family="'JetBrains Mono', Menlo, Consolas, monospace" font-size="10.5" font-weight="400" text-anchor="middle" fill="#cdd6e1">from_gtfs</text>
+<rect x="300" y="236" width="170" height="50" rx="7" fill="#131d30" stroke="#364966" stroke-width="1.2"/>
+<text x="385.0" y="257.5" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="12" font-weight="600" text-anchor="middle" fill="#f2f6fa">Demand</text>
+<text x="385.0" y="272.5" font-family="'JetBrains Mono', Menlo, Consolas, monospace" font-size="10.5" font-weight="400" text-anchor="middle" fill="#cdd6e1">from_table</text>
 <path d="M 240 65 L 270 65 L 270 90 L 298 90" fill="none" stroke="#5f7897" stroke-width="1.6" marker-end="url(#m5f7897)"/>
 <path d="M 240 127 L 270 127 L 270 102 L 298 102" fill="none" stroke="#5f7897" stroke-width="1.6" marker-end="url(#m5f7897)"/>
-<path d="M 240 189 L 298 189" fill="none" stroke="#5f7897" stroke-width="1.6" marker-end="url(#m5f7897)"/>
-<path d="M 240 251 L 298 251" fill="none" stroke="#5f7897" stroke-width="1.6" marker-end="url(#m5f7897)"/>
-<path d="M 385 121 L 385 162" fill="none" stroke="#5f7897" stroke-width="1.6" stroke-dasharray="5 4" marker-end="url(#m5f7897)"/>
-<path d="M 370 214 L 370 224" fill="none" stroke="#5f7897" stroke-width="1.6" stroke-dasharray="5 4" marker-end="url(#m5f7897)"/>
-<text x="392" y="146" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10" font-weight="400" text-anchor="start" fill="#93a2b6">read on</text>
+<path d="M 240 189 L 270 189 L 270 179 L 298 179" fill="none" stroke="#5f7897" stroke-width="1.6" marker-end="url(#m5f7897)"/>
+<path d="M 240 251 L 270 251 L 270 261 L 298 261" fill="none" stroke="#5f7897" stroke-width="1.6" marker-end="url(#m5f7897)"/>
+<path d="M 385 121 L 385 152" fill="none" stroke="#5f7897" stroke-width="1.6" stroke-dasharray="5 4" marker-end="url(#m5f7897)"/>
+<path d="M 385 204 L 385 234" fill="none" stroke="#5f7897" stroke-width="1.6" stroke-dasharray="5 4" marker-end="url(#m5f7897)"/>
+<text x="392" y="141" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10" font-weight="400" text-anchor="start" fill="#93a2b6">read on</text>
+<text x="392" y="223" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10" font-weight="400" text-anchor="start" fill="#93a2b6">read on</text>
 <rect x="520" y="102" width="150" height="144" rx="7" fill="#0d2a3d" stroke="#057da9" stroke-width="1.2"/>
 <text x="595.0" y="140.5" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="12" font-weight="600" text-anchor="middle" fill="#f2f6fa">run</text>
 <text x="595.0" y="155.5" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="middle" fill="#cdd6e1">the iteration:</text>
@@ -44,9 +45,9 @@
 <text x="595.0" y="185.5" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="middle" fill="#cdd6e1">measure, assess,</text>
 <text x="595.0" y="200.5" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="middle" fill="#cdd6e1">until the stopping rule</text>
 <text x="595.0" y="215.5" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="middle" fill="#cdd6e1">or the cap</text>
-<path d="M 470 96 L 495 96 L 495 120 L 518 120" fill="none" stroke="#67cdfe" stroke-width="1.6" marker-end="url(#m67cdfe)"/>
-<path d="M 470 189 L 495 189 L 495 189 L 518 189" fill="none" stroke="#67cdfe" stroke-width="1.6" marker-end="url(#m67cdfe)"/>
-<path d="M 470 251 L 495 251 L 495 232 L 518 232" fill="none" stroke="#67cdfe" stroke-width="1.6" marker-end="url(#m67cdfe)"/>
+<path d="M 470 96 L 495 96 L 495 130 L 518 130" fill="none" stroke="#67cdfe" stroke-width="1.6" marker-end="url(#m67cdfe)"/>
+<path d="M 470 179 L 495 179 L 495 174 L 518 174" fill="none" stroke="#67cdfe" stroke-width="1.6" marker-end="url(#m67cdfe)"/>
+<path d="M 470 261 L 495 261 L 495 218 L 518 218" fill="none" stroke="#67cdfe" stroke-width="1.6" marker-end="url(#m67cdfe)"/>
 <rect x="520" y="288" width="150" height="50" rx="7" fill="#0d2a3d" stroke="#057da9" stroke-width="1.2"/>
 <text x="595.0" y="302.0" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="12" font-weight="600" text-anchor="middle" fill="#f2f6fa">run_file</text>
 <text x="595.0" y="317.0" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="middle" fill="#cdd6e1">reads run.toml, builds</text>

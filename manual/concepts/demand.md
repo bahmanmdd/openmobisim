@@ -104,7 +104,9 @@ door 30 m from its node is 22.5 s away. A gap is on no link: it is counted in th
 walking, and it appears in no link count. The linking does not check that the two nodes are connected: that is the
 search's to find.
 
-The example gives three trips the same two doors, each 30 m beside the ends of a link of 1 500 m, and one mode each:
+The example gives three trips the same two doors, each 30 m beside the ends of a link of 1 500 m, and one mode each,
+and reads the run's tables. The tables are Parquet files; reading them in Python needs a Parquet reader, for instance pandas with pyarrow
+(`pip install pandas pyarrow`); the guide [Reading the results](../guides/results.md) explains it in full.
 
 ```python
 import openmobisim as oms

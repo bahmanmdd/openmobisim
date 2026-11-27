@@ -149,7 +149,8 @@ reading below is made. These are not written to a file.
 
 **An example.** One link of the Delft case, of 233 m at 30 km/h with a capacity of 810 vehicles per hour, through the
 first half hour of the window (the folder `delft-run` is the run made on [What a run gives](outputs.md); the case's own
-`links.parquet` holds the link's length, speed and capacity):
+`links.parquet` holds the link's length, speed and capacity). The tables are Parquet files; reading them in Python needs a Parquet reader, for instance pandas with pyarrow
+(`pip install pandas pyarrow`); the guide [Reading the results](../guides/results.md) explains it in full.
 
 ```python
 import pyarrow.parquet as pq
@@ -221,8 +222,8 @@ follow.
   loading recorded it. In truth, moving one car lets the cars behind it on its old route move up and pushes back the
   cars behind it on its new route. Where no other car's entry on the route changes, the reading is exact; where one
   does, it is off by one headway of that link for each car held on the wrong side of the traveller, and queues further
-  along can add to that. Only loading again with the traveller moved settles it. The tests compare the reading with
-  such a second loading on hand-built cases, among them cases where the two differ by 4 s (452 s read, 456 s taken).
+  along can add to that. Only loading again with the traveller moved settles it. The reading is tested against
+  such a second loading on cases built by hand, among them cases where the two differ by 4 s.
 
 Who uses the reading: the [route search](search.md), which finds each car's fastest route on it, and the iteration's
 measure stage, which prices again every car route in every traveller's set ([The iteration](iteration.md)).
@@ -247,7 +248,7 @@ The window is given to `run` as `window=(start_s, end_s)` and has no default. Th
 
 A bike is loaded as a vehicle of its own on the links that allow bikes, a street or a cycle path alike, and is counted
 on every link of its route in the bin in which it enters. It rides at one speed, `bike_speed`, on every link, and never
-queues: 1 000 cars queued on a street leave the time of a bike on that street unchanged, a case the tests check. Since a
+queues: 1 000 cars queued on a street leave the time of a bike on that street unchanged (test 9 of [Validation](validation.md)). Since a
 bike's time does not depend on the traffic, a bike route costs the same at every iteration. The links table gives the
 bikes of each link and bin in the column `bikes`.
 
@@ -266,11 +267,8 @@ bikes of each link and bin in the column `bikes`.
 - **The mean trip time is over finished trips only**, and near the window's end costs read too low (above).
 - **The reading is exact only for the route a traveller took**, and for a route where moving the traveller moves no
   other car (above).
-- **A car trip while a bottleneck's queue builds up is slightly above theory.** In the test of cars against bikes
-  behind a bottleneck, the mean car trip in the build-up period was measured about 1.5 s above the theoretical value on
-  a trip of about 692 s (0.2 %) with the step exponent at 1; about 0.4 s of it comes from departures on whole seconds,
-  and the rest is not explained. At the default step exponent, 0.75, the difference is +0.9 ± 0.8 s over 20 seeds,
-  which tells neither explanation apart.
+- **A car trip while a bottleneck's queue builds up is slightly above theory**: by about 1 s on a trip of
+  about 692 s (0.1 to 0.2 %).
 
 All limits of the model are gathered in [Limitations](limitations.md).
 
@@ -279,7 +277,7 @@ All limits of the model are gathered in [Limitations](limitations.md).
 - Vickrey, W. S. (1969). Congestion theory and transport investment. *The American Economic Review* 59(2), 251–260.
 - Daganzo, C. F. (1995). The cell transmission model, part II: network traffic. *Transportation Research Part B*
   29(2), 79–93. (The merge rule test 2 is compared with.)
-- Newell, G. F. (1982). *Applications of Queueing Theory*, 2nd edition. Chapman and Hall, London. (The tandem of two
-  bottlenecks in the loading's tests.)
+- Newell, G. F. (1982). *Applications of Queueing Theory*, 2nd edition. Chapman and Hall, London. (Two bottlenecks in
+  tandem.)
 
 The full list is in the [bibliography](../reference/bibliography.md).

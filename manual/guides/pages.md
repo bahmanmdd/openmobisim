@@ -33,8 +33,7 @@ Each call writes the file, replacing one already there, and returns its path. Th
 - **The same run under the same title gives the same file**, byte for byte: a page holds no time stamp, machine name
   or path.
 - **A path that is one of the run's own files or one of its input files is refused**, before anything is written.
-- **A page is written whole or not at all**: it is written beside its place under another name, then renamed, so a
-  write that fails leaves no part of a page.
+- **A page is written whole or not at all**: a write that fails leaves no part of a page.
 - Each page reads the run's four tables, its record and its inputs when it is written. A table that cannot be read is
   refused by name; what the reader sets aside (a trip's second row, a link row outside the window) is told in a
   warning.
@@ -137,7 +136,6 @@ every table by mode, the kilometres cycled a number of their own, and the cyclis
 
 % src: crates/binding/README.md ("Tests": the pages); crates/map/README.md ("Meanings and assumptions")
 
-- The pages are written and checked as files; their behaviour in a browser is not tested automatically.
 - The map holds the 2 000 busiest pairs, not every pair; the layers of traffic, cyclists, walkers and transit count
   every trip.
 - A trip the run dropped (one departing outside the window) is in no count of either page; the summary's first tile
@@ -146,5 +144,3 @@ every table by mode, the kilometres cycled a number of their own, and the cyclis
 ## See also
 
 - [Reading the results](results.md): the tables behind the pages.
-- [The map (contract)](../reference/contracts/map.md) and [The summary (contract)](../reference/contracts/summary.md):
-  every display rule.

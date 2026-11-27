@@ -269,7 +269,8 @@ All are keywords of `run`, or keys under `[parameters]` of a settings file. Thei
 
 % src: a run of the Delft case (doi:10.5281/zenodo.24585967) with every parameter at its default; the rule above applied by hand; the same case run with `iteration_cap = 1` (the 18 049 trips); crates/loop/src/assess.rs (the share who would change)
 
-The iterations table of the run of the Delft case made on [What a run gives](outputs.md):
+The iterations table of the run of the Delft case made on [What a run gives](outputs.md). The tables are Parquet files; reading them in Python needs a Parquet reader, for instance pandas with pyarrow
+(`pip install pandas pyarrow`); the guide [Reading the results](../guides/results.md) explains it in full.
 
 ```python
 import pyarrow.parquet as pq
@@ -342,17 +343,13 @@ its walk there would end after the window loses the bike for the run.
 
 % src: README.md ("Known limits"); crates/loop/README.md ("Stop", "What the choice is over", "The window and the mean", "Who chooses again": the limits of the least cost's rule, the sets grown at another step exponent); PARAMETERS.md (`step_exponent`, `iteration_floor`)
 
-- **A run the rule stops can be short of equilibrium** (above). In the test of two car routes, one behind a
-  bottleneck, a run of the default 50 iterations under the default model has the trip by the bottleneck route within
-  2.3 ± 1.0 s of theory (over 20 seeds) in the group of departures farthest from it; with the step exponent at 1 it is
-  9.5 ± 1.9 s, and halves when the iterations double.
+- **A run the rule stops can be short of equilibrium** (above). With two car routes, one behind a bottleneck, the
+  trip time of the departure period farthest from theory is about 2 s from it.
 - **The choice is over the sets found, not over every route.** A route that is never the fastest is never offered, and
   of two routes of exactly equal time the search's tie rule finds one. A logit share between two routes exists only
   once both were found.
 - **The settled state depends on the path taken to it.** The sets grow by the search at the costs each iteration meets,
-  so another step exponent gives other sets and can settle at another state: on Sioux Falls the sets grown at 0.75
-  settle about 9 s of mean trip time (1.2 %) above those grown at 1, in every seed, more than the spread between
-  seeds.
+  so another step exponent gives other sets and can settle at another state.
 - **The mean trip time is over finished trips only**, and the stopping rule reads it. When the unfinished count differs
   between two iterations, their means are over different trips.
 - **The distance to equilibrium is reported, never judged.** No value of the duality gap or of the share who would change

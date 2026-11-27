@@ -20,7 +20,6 @@ not a timetable's.
 | choice model | The rule that turns the costs of the alternatives of a set into the alternative taken: the least-cost choice, or the logit. | [Choice](choice.md#the-two-models) |
 | class (of travellers) | A group of travellers who weigh their alternatives in the same way, that is, who share one coefficient per attribute; it is nothing more than that. | [Demand](demand.md#traveller-classes) |
 | coefficient | The weight a traveller class gives to one attribute in the cost of an alternative, in cost per unit of the attribute; positive is worse. | [Choice](choice.md#the-cost-of-an-alternative) |
-| contract | The README of a module of the simulator, which states its inputs, outputs, units, assumptions and what it means for bikes. | [How a run works](architecture.md#inside-the-simulator) |
 | contraction | In the OpenStreetMap reader, merging away a node that is no junction and joins two links of the same road class and the same car fields. | [Networks](networks.md#from-an-openstreetmap-extract) |
 | cost | The choice model's sum, over the attributes of an alternative, of coefficient times attribute; it has no unit of its own, and the least cost is the best. | [Choice](choice.md#the-cost-of-an-alternative) |
 | crossing time | The time a car takes on one link, from entering it to leaving it, the wait in its queue included. | [The loading](loading.md#what-the-loading-records) |
@@ -68,7 +67,7 @@ not a timetable's.
 | mode | One of the four ways of travelling, car, bike, walk and transit, none ranked above another. | [Networks](networks.md#one-network-for-car-bike-and-walk) |
 | mode constant | An attribute that is 1 for the alternatives of one mode and 0 for the others, so that its coefficient is a cost of taking that mode at all. | [Choice](choice.md#the-cost-of-an-alternative) |
 | mode set | The modes among car, bike, walk and transit that are open to a trip, or allowed on a link (car, bike and walk only), written as names joined by `;`. | [Demand](demand.md#the-modes-open-to-a-trip) |
-| module | One part of the simulator with its own contract (a Rust crate), which uses only modules below it or beside it in its row of the architecture figure. | [How a run works](architecture.md#inside-the-simulator) |
+| module | One part of the simulator (a Rust crate), which uses only modules below it or beside it in its row of the architecture figure. | [How a run works](architecture.md#inside-the-simulator) |
 | nest | Under the logit, the alternatives of one mode in a traveller's set, treated as more alike than alternatives of different modes. | [Choice](choice.md#the-logit-family) |
 | nest scale | The number μ, above 0 and at most 1, that says how much alike the alternatives of one nest are (`nest_scale`, 0.5 by default); at 1 the model is the plain logit. | [Choice](choice.md#the-logit-family) |
 | network | What cars, bikes and walkers move on: a set of nodes and links, one network for the three modes. | [Networks](networks.md) |

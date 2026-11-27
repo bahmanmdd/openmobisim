@@ -4,7 +4,8 @@ A run writes five files into its output folder: four tables as Parquet files, de
 `run_record.toml`, which has [its own page](record.md). The run's two pages, the map and the summary, are written
 from these files on request ([`Run.map`](api.md#runmap), [`Run.summary`](api.md#runsummary)). How to work with the
 tables is in [Reading the results](../guides/results.md); what the numbers mean is in
-[Outputs](../concepts/outputs.md).
+[Outputs](../concepts/outputs.md). The tables are Parquet files; reading them in Python needs a Parquet reader, for
+instance pandas with pyarrow (`pip install pandas pyarrow`).
 
 | File | One row per | Order of the rows |
 |---|---|---|
@@ -32,7 +33,7 @@ names it), **Unit**, **Null when** (never, or the condition) and **Meaning**.
 The same run written twice gives the same bytes in `trips.parquet`, `links.parquet` and `routes.parquet`;
 `iterations.parquet` differs in its five wall-clock columns ([Reproducibility](../concepts/reproducibility.md)).
 
-The four files of a run of the case `delft` (a run of about 4 s on a laptop):
+The four files of a run of the case `delft` (a run of about 4 s on a laptop; [Run time](../guides/speed.md)):
 
 ```python
 import openmobisim as oms

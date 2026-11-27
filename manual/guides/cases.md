@@ -2,7 +2,7 @@
 
 % src: the published record doi:10.5281/zenodo.24585967 (its README.md and CODEBOOK.md); README.md ("The cases")
 
-Five cases are published with openmobisim 0.2, each a folder of plain files that one call runs: the morning of four
+Five cases are published with openmobisim, each a folder of plain files that one call runs: the morning of four
 European cities and a small synthetic city. They are meant for learning the tool and for comparing methods and
 settings. This page shows how to get one, what its folder holds and how to run it.
 
@@ -47,8 +47,10 @@ who wants to check a download.
 | `LICENCE.md` | the sources of the case's files and their licences |
 
 A link is travelled from its upstream end to its downstream end, so a two-way street is two links; and each link of a
-case serves one mode, so a street open to cars, bikes and walkers is a car link, a bike link and a walk link. Counting
-the links of Delft by mode:
+case serves one mode, so a street open to cars, bikes and walkers is a car link, a bike link and a walk link. A case's
+tables and a run's tables are Parquet files; reading them in Python needs a Parquet reader, for instance pandas with
+pyarrow (`pip install pandas pyarrow`): see [Reading the results](results.md). The example counts the links of Delft by
+mode:
 
 ```python
 import pyarrow.parquet as pq
@@ -101,13 +103,13 @@ the cap on the iterations, ended the run ([The iteration](../concepts/iteration.
 in [Running a run again](reproducibility.md). The case folder is not written to: a run never writes `run.toml`, and it
 refuses an `out` where one of its result files would replace an input.
 
-Measured on a laptop with an Apple M2 Pro processor, Delft's run takes 4.1 s and Paris's 77.2 s ([Run time](speed.md)).
+On a laptop, Delft's run takes 4.1 s and Paris's 77.2 s ([Run time](speed.md)).
 
 ## What the runs give
 
 % src: the published record (README.md, "What a run gives"); Delft's and DOTNET's rows reproduced by the writer
 
-The record reports these results of `run_file` on each folder. A later version of the simulator may change them; the
+`run_file` on each folder gives these results. Another version of the simulator may give other numbers; the
 files of a version of the record never change.
 
 | Case | Car (% of travellers) | Bike (% of travellers) | Walk (% of travellers) | Transit (% of travellers) | Mean car trip (min) | Car delay (% of the cars' time on links) |

@@ -2,8 +2,8 @@
 
 % src: crates/binding/README.md (the opening list and code block); checked by listing the module's names in Python
 
-The module `openmobisim` has the names on this page and no other. There is no command line, no scenario object, no
-configuration object, no plotting function, no log and no progress output.
+The module `openmobisim` has the names on this page and no other. There is no command line, no plotting
+function, no log and no progress output.
 
 | Name | Kind | What it does |
 |---|---|---|
@@ -80,7 +80,7 @@ is in [Input tables and files](inputs.md#an-openstreetmap-extract); how the netw
 |---|---|---|
 | `path` | path | One extract in the format `.osm.pbf`. |
 | `region` | `None`, or four numbers, or a sequence of pairs of numbers | The part of the extract to read, in WGS84 degrees. `None`: the whole extract. Four numbers `(west, south, east, north)`: a box. A sequence of `(lon, lat)` points: a polygon. Lists and tuples are read alike. |
-| `car_roads` | `"all"` or `"main"` | `"all"`: cars drive every road of a car class. `"main"` (**experimental**): cars drive motorways down to unclassified roads only; residential streets, living streets and service roads carry no car link. Bikes and walkers are read the same either way. |
+| `car_roads` | `"all"` or `"main"` | `"all"`: cars drive every road of a car class. `"main"` (**experimental**): cars drive motorways down to unclassified roads only. |
 | `capacity_per_lane` | number, vehicles per hour per lane | A parameter. It changes nothing in a network read from an extract, because every car link takes its road class's capacity; it is accepted and recorded. |
 | `bike_speed` | number, km/h | A parameter: the one speed of every bike. |
 | `walk_speed` | number, km/h | A parameter: the one speed of every walker. |
@@ -305,11 +305,9 @@ make_case(folder, osm, population, region=None, gtfs=None, car_roads="all",
           trips_per_person=0.1, seed=0)
 ```
 
-**Experimental**: a helper to get a first case from an OpenStreetMap extract, to be refined. It writes two files into
-`folder`, `trips.parquet` and `run.toml`, which `run_file(folder, out=...)` runs. The trips are drawn from the
-streets of the network by fixed rules that are not calibrated: they are a start for trying things, not a model of the
-city. Nothing is tuned or removed: how congested the case is, and whether every trip finishes, follows from the
-numbers given.
+**Experimental.** It writes two files into `folder`, a `trips.parquet` of trips drawn from the streets of the network
+by fixed rules that are not calibrated, and a `run.toml`, which `run_file(folder, out=...)` runs. The trips are a
+start for trying things, not a model of the city.
 
 | Argument | Type | Meaning |
 |---|---|---|
@@ -318,14 +316,9 @@ numbers given.
 | `population` | number | The people of the area. |
 | `region` | as for `Network.from_osm` | The part of the extract to read. |
 | `gtfs` | path or `None` | A GTFS feed, named in `run.toml`, not copied. `None`: a case without transit. |
-| `car_roads` | `"all"` or `"main"` | As for `Network.from_osm`; `"main"` is experimental. |
-| `trips_per_person` | number | The share of the people who travel in the hour. The number of trips is `population × trips_per_person`, rounded to the nearest whole number (a product of 0.5 gives one trip). |
+| `car_roads` | `"all"` or `"main"` | As for `Network.from_osm`. |
+| `trips_per_person` | number | The share of the people who travel in the hour of the draw. The number of trips is `population × trips_per_person`, rounded to the nearest whole number. |
 | `seed` | `int` | The seed of the draw. The same arguments give the same files. |
-
-The trips leave evenly over one hour from 07:30, and the window written is 07:30 to 09:30. There are four classes,
-`car_and_bike`, `car_only`, `bike_only` and `no_vehicle`, at 40, 20, 20 and 20 % of the travellers, so 60 % of the
-travellers own a bike. Through traffic is drawn only where the region cuts a motorway or trunk road: 5 % of the trips
-are then cars between two such cut ends, and `through` is then a fifth class.
 
 **Returns** `folder`, as a `pathlib.Path`.
 

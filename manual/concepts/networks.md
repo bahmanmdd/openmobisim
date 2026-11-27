@@ -257,8 +257,8 @@ C = Q_s \cdot g
 $$
 
 with $Q_s$ the saturation flow, 1 800 veh/h per lane, and $g$ the green share, the green time over the cycle time
-(Cerema 2016). The formula is the guideline's; **the green share given to each road class is an assumption of
-this project**, not a value of the guideline. The speeds and lanes are common conventions for OpenStreetMap data, not a
+(Cerema 2016). The formula is the guideline's; **the green share given to each road class is an
+assumption**, not a value of the guideline. The speeds and lanes are common conventions for OpenStreetMap data, not a
 sourced national table. The table is one parameter, `osm_class_defaults`, with one value; it cannot be changed
 through `from_osm`. To use other values, read the network back with `Network.tables()`, change the columns and build
 it again with `from_tables`.
@@ -266,14 +266,9 @@ it again with `from_tables`.
 The parameter `capacity_per_lane` applies to a car row of a link table that gives no capacity. A network read from an
 extract gives every car link its road class's capacity, so `capacity_per_lane` changes nothing there.
 
-### A lighter car network (experimental)
-
 % src: crates/io-osm/README.md ("Inputs": network_for); crates/binding/README.md ("Experimental")
-
-`Network.from_osm(path, region=None, car_roads="main")` is an **experimental** helper that may change. It gives cars
-the main roads alone, from motorways down to `unclassified`, and no `residential`, `living_street` or `service`
-road; a roundabout tagged as one of those three road classes is driven as the largest main road class that meets it. Bikes and
-walkers are read as before. The default, `car_roads="all"`, is the reader described above.
+`Network.from_osm(..., car_roads="main")` is an experimental helper that gives cars the main roads alone and reads
+bikes and walkers as before ([The Python interface](../reference/api.md)).
 
 ## Signals: read and stored, applied nowhere
 
@@ -309,7 +304,8 @@ The counts are in `Network.repairs` and in the run's record. [Warnings](../refer
 % src: the published case `delft` (doi:10.5281/zenodo.24585967), its `links.parquet` and `nodes.parquet`, counted with pyarrow
 
 The published case `delft` gives its network as two tables, with one mode per link. It has 21 566 nodes and 88 512
-links:
+links. The tables are Parquet files; reading them in Python needs a Parquet reader, for instance pandas with pyarrow
+(`pip install pandas pyarrow`); the guide [Reading the results](../guides/results.md) explains it in full.
 
 | Mode of the link | Links (count) | Total length (km) |
 |---|---|---|
@@ -344,7 +340,6 @@ walk 55400 2253.2
   one-way street where the tags open it. The bike layer has its own junctions and its own strongly connected part: a
   one-way street that a car cannot use may stay for bikes, joined by a cycleway.
 - A car link without lanes or speed in a table stays a bike link when its modes hold `bike`.
-- With `car_roads="main"` (experimental) the bike links are unchanged.
 
 ## Limits
 

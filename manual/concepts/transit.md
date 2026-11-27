@@ -225,10 +225,12 @@ in the vehicle. The defaults, which are starting values to be calibrated per stu
 | Each transfer | `transit_transfers` | 0.5 |
 | Taking transit at all | `is_transit` | 0.25 |
 
-A cost is a sum of coefficient times attribute, positive is worse. Money is 0 for every alternative in release 0.2:
-fares are not read.
+A cost is a sum of coefficient times attribute, positive is worse. Money is 0 for every alternative: fares are not
+read.
 
-**An example.** The routes table of a run lists the legs of every journey taken. For one trip of the Delft case:
+**An example.** The routes table of a run lists the legs of every journey taken. The tables are Parquet files; reading them in Python needs a Parquet reader, for instance pandas with pyarrow
+(`pip install pandas pyarrow`); the guide [Reading the results](../guides/results.md) explains it in full. For one trip of the Delft
+case:
 
 ```python
 import pyarrow.parquet as pq
@@ -310,7 +312,7 @@ Their sources are on the [parameters page](../reference/parameters.md).
 
 Nothing in transit is a bike. A run carries passengers on its timetable, a footpath is a walk on the walk network, and
 the access and egress walks are on foot: a bike is never in an access or egress list, so there is no bike-and-ride
-journey in release 0.2. The feed's `bikes_allowed` is not read. For a traveller who may cycle, the bike is a separate
+journey. The feed's `bikes_allowed` is not read. For a traveller who may cycle, the bike is a separate
 alternative, door to door, that the choice weighs against the journeys.
 
 ## Limits

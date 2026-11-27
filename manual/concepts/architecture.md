@@ -25,8 +25,8 @@ link or iteration happens in Rust; the Python module reads tables and keywords a
 | The module `binding` | The bridge to Rust, compiled into the Python module | It reads tables and keywords into the rows and values the modules below take, calls them and writes the run. It computes no number itself |
 | The Rust modules | The simulator | The network, the demand, the timetable, the route search, the choice models, the loading, the iteration, the readers and the writers |
 
-The package has no Python dependency. A run writes Parquet files; any reader of Parquet reads them (the tutorials use
-`pyarrow`).
+The package installs nothing else. The tables are Parquet files; reading them in Python needs a Parquet reader, for instance pandas with pyarrow
+(`pip install pandas pyarrow`); the guide [Reading the results](../guides/results.md) explains it in full.
 
 ## Inside the simulator
 
@@ -56,8 +56,7 @@ nothing of those above. The modules of one row use one another in one direction 
 | `io-parquet` | The four tables and the run record, written and read back | `loop` and the readers | [What a run gives](outputs.md) |
 | `map`, `summary` | The two pages of a finished run | `map`: `io-parquet`; `summary`: `io-parquet` and `map` | [What a run gives](outputs.md) |
 
-Each module has a contract, its README: inputs, outputs, units, assumptions and what it means for bikes. The contracts
-and the graph of which module uses which are in [The modules](../reference/crates.md).
+The graph of which module uses which, with one line per module, is in [The modules](../reference/crates.md).
 
 ## Data flow: from files to results
 

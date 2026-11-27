@@ -64,7 +64,7 @@ links.parquet identical
 routes.parquet identical
 run_record.toml identical
 iterations.parquet different
-0.2.0-dev 17 True
+...
 network 396cdc682fcf83a4
 demand d6b6f37006351472
 transit df08a0ecc5f55fb2
@@ -72,7 +72,7 @@ transit df08a0ecc5f55fb2
 
 The trips, the links, the routes and the record are the same bytes. The iterations table differs only in its five
 columns of stage seconds (`search_s`, `choose_s`, `load_s`, `measure_s`, `assess_s`), which are wall-clock times of
-this machine at this moment ([Run time](speed.md)).
+the machine at that moment ([Run time](speed.md)).
 
 Rules to know:
 
@@ -83,7 +83,6 @@ Rules to know:
 - **A run whose network or trips were given in memory cannot be run again from its record**, which has no file to
   name. Give tables as Parquet files for a run that should be repeatable from its folder
   ([A case from your own data](own_data.md)).
-- A version ending `-dev` is a development build and does not identify the code it was built from.
 
 ## Opening a finished run
 
@@ -124,8 +123,8 @@ RAYON_NUM_THREADS=1 python my_script.py
 
 **The number of threads changes the run time and nothing else.** Every parallel stage files its results by trip,
 every sum is made in a fixed order and every random draw is keyed by what it is for, so the tables are the same at
-any thread count. Checked here: `dotnet` at 1 thread gives the same `trips.parquet`, `links.parquet` and
-`run_record.toml`, byte for byte, as the run above at 12.
+any thread count: `dotnet` at 1 thread gives the same `trips.parquet`, `links.parquet` and
+`run_record.toml`, byte for byte, as at 12.
 
 ## For bikes
 
@@ -143,8 +142,8 @@ changes the demand's.
 
 - The same results are promised for the same version of the simulator. Another version may give other results from
   the same inputs; the record says which version ran.
-- Across operating systems the results were measured, not proven, equal: Delft's default run gives byte-identical
-  trips on macOS (Apple silicon), Linux (x86_64) and Windows (x86_64).
+- Across operating systems the equality of results is observed, not guaranteed: Delft's default run gives
+  byte-identical trips on macOS (Apple silicon), Linux (x86_64) and Windows (x86_64).
 - The record holds the fingerprints of the inputs, not the inputs. Keeping the input files with the run is the user's
   part.
 

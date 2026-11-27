@@ -1,12 +1,7 @@
 # Tutorials
 
-Two notebooks, shown with the outputs of their last run (the run times they show were measured on a MacBook Pro with
-an Apple M2 Pro, 12 cores and 32 GB of memory). Each runs from start to end as shown with
-`pip install openmobisim pyarrow`, and downloads its case itself.
-
-Until release 0.2 is on PyPI, `pip install openmobisim` gives release 0.1, which has another interface; 0.2 is then
-built from the repository with a Rust toolchain: in a virtual environment, `pip install maturin pyarrow`, then
-`maturin develop --release` in the repository.
+Two notebooks, shown with their outputs. Each needs `pip install openmobisim pandas pyarrow` and downloads its case
+itself.
 
 - **[Delft: a first run](delft.ipynb).** Download a case, run it with one command and read what the run wrote: who
   took which mode and how long it took, how the iterations settled, the traffic on the links for cars, bikes and

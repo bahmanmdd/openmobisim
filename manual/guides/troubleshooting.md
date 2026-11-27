@@ -106,7 +106,7 @@ alternative at all is in `without_alternative`.
 
 | Message | Cause | What to do |
 |---|---|---|
-| `TypeError: Network.from_tables: bikespeed is not a parameter; the parameters are the rows of PARAMETERS.md` | a misspelt keyword | every keyword is a row of [Parameters](../reference/parameters.md) |
+| `TypeError: Network.from_tables: bikespeed is not a parameter; …` | a misspelt keyword | every keyword is a row of [Parameters](../reference/parameters.md) |
 | `TypeError: Network.from_tables: seed is read by run, not here` | a parameter given to the wrong function | give it where the message says |
 | `TypeError: run() missing 1 required keyword argument: 'window'` | no window; it is never defaulted | `window=(start_s, end_s)` |
 | `ValueError: seed: True is a boolean; this parameter is a number, give 1 instead` | `True` or `False` for a number | give the number |
@@ -151,5 +151,5 @@ would end after the window loses the bike for the run (`modes_after_window`).
 
 Look first at `run.repairs`, at the three counts above in the last row of the iterations table, and at the summary
 page, whose first tiles give the trips given, dropped, completed and not completed. Then compare with
-[Limitations](../concepts/limitations.md): what release 0.2 does not model. If a result is still implausible, please
+[Limitations](../concepts/limitations.md): what openmobisim does not model. If a result is still implausible, please
 report it at <https://github.com/bahmanmdd/openmobisim/issues>, with the run's record.

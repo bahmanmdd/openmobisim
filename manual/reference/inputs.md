@@ -22,9 +22,6 @@ The columns are fixed. They may come in any order. There are no aliases: a colum
 required column that is missing is refused by name. Any other column is ignored, counted and warned once
 (`columns_ignored`, [Repairs](warnings.md#repairs)).
 
-The tests of the package give `dict`s of lists, pyarrow tables and Parquet files written by pyarrow; pandas and polars
-frames are read by the rules above and are not part of the automated tests.
-
 **Parquet column types that are read.**
 
 | Arrow type | Read as |
@@ -157,7 +154,9 @@ with a link a bike may use, which may differ from the car's and the walker's.
 % src: run for this page; the two times are length over speed (crates/graph/README.md, "Bikes"; PARAMETERS.md, bike_speed and walk_speed)
 
 Two nodes 1 500 m apart on a plane, a cycle path each way, a bike trip and a walk trip. At the default speeds,
-15 km/h by bike and 4.8 km/h on foot, the two trips take 360 s and 1 125 s.
+15 km/h by bike and 4.8 km/h on foot, the two trips take 360 s and 1 125 s. The tables a run writes are Parquet
+files; reading them in Python needs a Parquet reader, for instance pandas with pyarrow (`pip install pandas pyarrow`),
+as [Reading the results](../guides/results.md) explains.
 
 ```python
 import openmobisim as oms
@@ -272,7 +271,8 @@ of fewer than two nodes are no street.
 
 **The class table**: the free-flow speed and the lanes per direction where no tag gives them, and the capacity of one
 lane, with the class's junctions counted in, as the reader models no junction. It is the one value of the parameter
-`osm_class_defaults`; its sources are in [Parameters](parameters.md) and its reasoning in
+`osm_class_defaults`; its sources are in
+[Parameters](parameters.md#the-road-classes-of-an-openstreetmap-network) and its reasoning in
 [Networks](../concepts/networks.md).
 
 | `highway` | Car speed (km/h) | Car lanes per direction | Capacity per lane (vehicles per hour) |
@@ -297,8 +297,7 @@ lane, with the class's junctions counted in, as the reader models no junction. I
 first node outside either end of each run inside is kept too, so the segment crossing the edge stays. On motorways,
 trunk roads and their slip roads, every node within 2 000 m of the region is kept.
 
-**`car_roads="main"`** (experimental) gives cars the main roads alone, motorways down to `unclassified`, and no
-`residential`, `living_street` or `service` road. Bikes and walkers are read the same either way.
+**`car_roads="main"`** (experimental) gives cars the main roads alone, motorways down to `unclassified`.
 
 **What the reader reports.** `Run.osm_report` and the record's `[result.network.osm_report]` hold five counts
 ([the record](record.md#resultnetwork)). Tags that cannot be read are set right and counted

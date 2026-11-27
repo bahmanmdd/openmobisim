@@ -66,8 +66,7 @@ the path of the file itself, or nothing (the current folder). `out` is the folde
 | `[demand] classes` | yes | the list of traveller class ids |
 | `[transit] gtfs_file` | when `[transit]` is there | the timetable, a GTFS `.zip`; without the table `[transit]` the run has no public transport |
 
-A file's path is read relative to the folder of the settings file. One more key under `[network]`,
-`car_roads = "main"`, belongs to an experimental helper ([A case from your own data](own_data.md)).
+A file's path is read relative to the folder of the settings file.
 
 ## Changing a parameter
 

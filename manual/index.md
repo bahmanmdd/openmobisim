@@ -39,7 +39,7 @@ the cases ready to download (the network is from OpenStreetMap, © OpenStreetMap
   the bike links, the bike in the mode choice, cyclists per link and time bin, a layer of their own on the map.
 - **Choices and congestion together.** Travellers choose a mode and a route; cars queue where a road is full; the
   two are repeated until the pattern settles, and the run says how well it settled.
-- **Checked against outside answers.** Each part was admitted with a test against theory, a hand derivation, a
+- **Checked against outside answers.** Each part is tested against theory, a hand derivation, a
   published result or another tool: ten tests, from Vickrey's bottleneck to Sioux Falls
   ([Validation](concepts/validation.md)).
 - **Ready to try.** Five cases to download and run with one command: Delft, Amsterdam, Lyon, Paris and a small
@@ -49,21 +49,15 @@ the cases ready to download (the network is from OpenStreetMap, © OpenStreetMap
 - **Python on top, Rust underneath.** You work in Python; the simulation runs in a compiled core, and the package
   has no Python dependency.
 
-**Status:** version 0.2, an early release for testing by students and colleagues. The interface may still change,
-and what the model does not do is listed in [Limitations](concepts/limitations.md).
-
 ## Get started
 
 ```bash
-pip install openmobisim pyarrow
+pip install openmobisim
 ```
 
-Until release 0.2 is on PyPI, `pip install openmobisim` gives release 0.1, which has another interface; 0.2 is then
-built from the repository with a Rust toolchain: in a virtual environment, `pip install maturin pyarrow`, then
-`maturin develop --release` in the repository.
-
-Python 3.11 or newer, on macOS, Linux or Windows. `pyarrow` reads the Parquet tables a run writes; the package itself
-needs nothing else. Then download a case and run it:
+Python 3.11 or newer, on macOS, Linux or Windows. The tables a run writes are Parquet files; reading them in Python
+needs a Parquet reader, for instance pandas with pyarrow (`pip install pandas pyarrow`), as
+[Reading the results](guides/results.md) explains. Then download a case and run it:
 
 ```python
 import urllib.request, zipfile
@@ -88,8 +82,8 @@ This site is openmobisim's complete documentation, in four parts:
   settings file or reading the results.
 - **[Concepts and methods](concepts/index.md)**: how the model works, with its equations and the literature behind
   it. [How a run works](concepts/architecture.md) shows how the parts fit together.
-- **[Reference](reference/index.md)**: every function, parameter, input column and output column, and the contract
-  of every module.
+- **[Reference](reference/index.md)**: every function, parameter, input column and output column, the published
+  cases and the modules.
 
 ## Cite, licence and contact
 
