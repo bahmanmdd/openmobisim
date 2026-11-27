@@ -94,13 +94,13 @@ page    = result.summary(path, title=None)
   |---|---|
   | `Network.from_osm`, `Network.from_tables` | `capacity_per_lane` (veh/h per lane), `bike_speed`, `walk_speed` (km/h) |
   | `Network.from_osm` alone | `osm_class_defaults`: only `None`, the reader's one table (`crates/io-osm/README.md`) |
+  | `Transit.from_gtfs` | `transfer_walk_max` (m) |
+  | `Demand.from_table` | `stop_walk_max` (m) |
+  | `run` | `boarding_slack` (s), `max_rides`, `nearby_stops`, `max_car_routes` (routes per origin-destination pair), `max_transit_journeys` (journeys per trip), `choice` (`"logit"` or `"deterministic"`), `coefficients` (a dict from every class id to its sixteen, in the order of the loop's choice row: cost per minute of car driving, bike riding, walking, transit in vehicle, access walk, egress walk, first wait, transfer wait, transfer walk; per transfer; per €; per unit of ln PS, kept as given in the run's record, read times `nest_scale` under `"logit"` and as 0 under `"deterministic"`; the car, bike, walk and transit constants), `nest_scale`, `step_exponent`, `iteration_cap`, `iteration_floor`, `link_bin` (s), `seed` (an integer from 0 to 2⁶³ − 1, the largest the run's record holds) |
 
   From an extract every car link has its class's capacity per lane × its lanes
   (`osm_class_defaults`), so `capacity_per_lane`, the graph's value for a car row without a
   capacity, changes nothing there; it is accepted and recorded at both entry points.
-  | `Transit.from_gtfs` | `transfer_walk_max` (m) |
-  | `Demand.from_table` | `stop_walk_max` (m) |
-  | `run` | `boarding_slack` (s), `max_rides`, `nearby_stops`, `max_car_routes` (routes per origin-destination pair), `max_transit_journeys` (journeys per trip), `choice` (`"logit"` or `"deterministic"`), `coefficients` (a dict from every class id to its sixteen, in the order of the loop's choice row: cost per minute of car driving, bike riding, walking, transit in vehicle, access walk, egress walk, first wait, transfer wait, transfer walk; per transfer; per €; per unit of ln PS, kept as given in the run's record, read times `nest_scale` under `"logit"` and as 0 under `"deterministic"`; the car, bike, walk and transit constants), `nest_scale`, `step_exponent`, `iteration_cap`, `iteration_floor`, `link_bin` (s), `seed` (an integer from 0 to 2⁶³ − 1, the largest the run's record holds) |
 - **`run`**: `window=(start_s, end_s)`, two seconds of the clock, required, never defaulted;
   `out`, the folder the files go to (created if missing). The demand must have been built on
   the network and the transit given to `run`.
@@ -152,7 +152,7 @@ page    = result.summary(path, title=None)
   here. An opened run lacks nothing a fresh one has: `osm_report` and `gtfs_report` are its
   network's and transit's (rebuilt from the same files, or passed).
 
-**The rule for a finished run (the owner's): refuse only what cannot be done; warn on the
+**The rule for a finished run: refuse only what cannot be done; warn on the
 rest.** `Run.open`, `Run.map` and `Run.summary` meet each condition so:
 
 | Condition | Met by |
@@ -393,7 +393,7 @@ written and checked as files; their behaviour in a browser is not tested automat
 - `test_drawing.py`: the links table's `shape` and `road_class` on the hand run (st1 bent
   through (750, 300) m, a primary road; ab a cycleway; st2 residential): the fingerprints and the
   trips the plain run's; the map's data hold the bend (7 500 and 3 000 dm) and the classes
-  (version 1's order: 16, 4, 11), the same from a file as in memory; a point in
+  (release 0.1's order: 16, 4, 11), the same from a file as in memory; a point in
   longitude/latitude at a node's position held at that node's decimetres; the summary's car map
   along the bend, mitred, by hand; a shape not points (with a point not
   finite, or the number 3.5) drawn straight, a road class `True` none (`road_classes_unread`), its map data that of st1 without a shape, counted and warned once; a
@@ -451,7 +451,7 @@ written and checked as files; their behaviour in a browser is not tested automat
   `links.parquet` and `run_record.toml` byte-identical, `iterations.parquet` equal but for its five wall-clock columns; the
   same after the whole tree is moved; at another depth the tables identical and only the four
   file lines of the record different. The same rerun on Delft from its OSM extract cut to
-  version 1's box and its feed, the record holding the region (about a second; not gated).
+  release 0.1's box and its feed, the record holding the region (about a second; not gated).
   Hand-written settings of the window, the files and the classes alone run `test_defaults.py`'s stop case (2 475 s; no journey at 1 501 m) and records every
   parameter at the default parsed from `PARAMETERS.md`. A record renamed `run.toml`: one
   `UserWarning` saying so; one link, one trip or one call changed in its file: one more, for
@@ -485,7 +485,7 @@ written and checked as files; their behaviour in a browser is not tested automat
   "no trip is left"), every class unknown, every link without modes, no car link, a feed whose
   run calls at no stop held.
 - `test_networkx.py`: 30 bike and 30 walk trips on a jittered 12 × 12 grid, 15 % of its streets
-  one-way for bikes: each `travel_time_s` is `ceil(g_o / w) + L / v + g_d / w` with `L`
+  one-way for bikes: each `travel_time_s` is `g_o / w + L / v + g_d / w` with `L`
   networkx's shortest length, within 1e-6 s (the derivation in the test).
 - `test_parameters.py`: every row of `PARAMETERS.md`, parsed, accepted at exactly its entry
   point and refused at the others; the refusals by name, a boolean's with what to give instead
@@ -499,7 +499,7 @@ written and checked as files; their behaviour in a browser is not tested automat
   1 501 m not (1 500 m); two lines joined by a 399 m walk and not by a 401 m one (400 m).
 - `test_delft.py`: Delft's extract and feed read through Python, the feed's counts against
   gtfs-kit's (`crates/io-gtfs/tests/fixtures/delft/expected.csv`), the read times printed;
-  the extract cut to version 1's box and to the same box as a polygon of its corners: one
+  the extract cut to release 0.1's box and to the same box as a polygon of its corners: one
   network (the same counts and fingerprint), smaller than the whole; the same polygon given as
   lists accepted, a run cut to it run again by `run_file` and opened by `Run.open` on the same
   link count; eight regions that are no area each refused by name (three of them polygons of

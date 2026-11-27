@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 300" width="960" height="300" role="img" aria-label="One network, modes per link: a street as a car link, a bike link and a walk link between the same two nodes, and a cycle path that only bikes and walkers have">
+<title>One network, modes per link: a street as a car link, a bike link and a walk link between the same two nodes, and a cycle path that only bikes and walkers have</title>
+<rect width="960" height="300" fill="#fbfcfd"/>
+<marker id="m04938e" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#04938e"/></marker><marker id="m057da9" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#057da9"/></marker><marker id="mb26a00" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#b26a00"/></marker>
+<text x="20" y="24" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="11" font-weight="600" text-anchor="start" fill="#55657a" letter-spacing="1.2">ONE NETWORK, MODES PER LINK: EACH LINK RUNS FROM ITS UPSTREAM END TO ITS DOWNSTREAM END</text>
+<text x="120" y="212" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="11" font-weight="600" text-anchor="middle" fill="#55657a">node A</text>
+<text x="520" y="212" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="11" font-weight="600" text-anchor="middle" fill="#55657a">node B</text>
+<text x="860" y="212" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="11" font-weight="600" text-anchor="middle" fill="#55657a">node C</text>
+<path d="M 130 122 L 508 122" fill="none" stroke="#057da9" stroke-width="3" marker-end="url(#m057da9)"/>
+<text x="320.0" y="88" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="11.5" font-weight="600" text-anchor="middle" fill="#0a1626">car link: length, lanes, free-flow speed, capacity</text>
+<text x="320.0" y="104" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="middle" fill="#3d4c5f">free-flow time = length / speed; cars queue at the downstream end</text>
+<path d="M 130 150 L 508 150" fill="none" stroke="#04938e" stroke-width="3" marker-end="url(#m04938e)"/>
+<text x="320.0" y="166" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="middle" fill="#3d4c5f">bike link: length; time = length / bike speed</text>
+<path d="M 130 178 L 508 178" fill="none" stroke="#b26a00" stroke-width="3" marker-end="url(#mb26a00)"/>
+<text x="320.0" y="194" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="middle" fill="#3d4c5f">walk link: length; time = length / walk speed</text>
+<path d="M 530 142 L 848 142" fill="none" stroke="#04938e" stroke-width="3" marker-end="url(#m04938e)"/>
+<path d="M 530 170 L 848 170" fill="none" stroke="#b26a00" stroke-width="3" marker-end="url(#mb26a00)"/>
+<text x="690.0" y="126" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="middle" fill="#3d4c5f">a cycle path: a bike link and a walk link,</text>
+<text x="690.0" y="190" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="middle" fill="#3d4c5f">no car link, so no car route passes here</text>
+<rect x="111" y="110" width="18" height="80" rx="9" fill="#f1f4f8" stroke="#c5cfda" stroke-width="1.2"/>
+<rect x="511" y="110" width="18" height="80" rx="9" fill="#f1f4f8" stroke="#c5cfda" stroke-width="1.2"/>
+<rect x="851" y="110" width="18" height="80" rx="9" fill="#f1f4f8" stroke="#c5cfda" stroke-width="1.2"/>
+<text x="480" y="262" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="middle" fill="#55657a">Blue: car. Teal: bike. Amber: walk. The opposite direction of a street is another link, from B to A.</text>
+<text x="480" y="280" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="middle" fill="#55657a">A link table may also give several modes to one link (car;bike); a network read from OpenStreetMap has one mode per link.</text>
+</svg>

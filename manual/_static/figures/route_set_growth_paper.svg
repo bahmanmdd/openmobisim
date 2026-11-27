@@ -1,0 +1,50 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 330" width="960" height="330" role="img" aria-label="A traveller's set of alternatives over the iterations: each search adds what is new at the last loading's link times, and nothing is removed">
+<title>A traveller's set of alternatives over the iterations: each search adds what is new at the last loading's link times, and nothing is removed</title>
+<rect width="960" height="330" fill="#fbfcfd"/>
+<marker id="m057da9" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#057da9"/></marker>
+<text x="20" y="24" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="11" font-weight="600" text-anchor="start" fill="#55657a" letter-spacing="1.2">A TRAVELLER'S SET OVER THE ITERATIONS: ALTERNATIVES ARE ADDED, NEVER REMOVED</text>
+<text x="160" y="54" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="13" font-weight="600" text-anchor="middle" fill="#0a1626">Iteration 0</text>
+<text x="160" y="70" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="middle" fill="#3d4c5f">searched at free-flow times</text>
+<rect x="40" y="84" width="240" height="28" rx="7" fill="#f1f4f8" stroke="#c5cfda" stroke-width="1.2"/>
+<text x="160.0" y="102.0" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="12" font-weight="600" text-anchor="middle" fill="#0a1626">car route A</text>
+<rect x="40" y="118" width="240" height="28" rx="7" fill="#f1f4f8" stroke="#c5cfda" stroke-width="1.2"/>
+<text x="160.0" y="136.0" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="12" font-weight="600" text-anchor="middle" fill="#0a1626">bike route</text>
+<rect x="40" y="152" width="240" height="28" rx="7" fill="#f1f4f8" stroke="#c5cfda" stroke-width="1.2"/>
+<text x="160.0" y="170.0" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="12" font-weight="600" text-anchor="middle" fill="#0a1626">walk route</text>
+<rect x="40" y="186" width="240" height="28" rx="7" fill="#f1f4f8" stroke="#c5cfda" stroke-width="1.2"/>
+<text x="160.0" y="204.0" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="12" font-weight="600" text-anchor="middle" fill="#0a1626">transit journeys</text>
+<path d="M 290 150 L 340 150" fill="none" stroke="#057da9" stroke-width="2" marker-end="url(#m057da9)"/>
+<text x="315" y="136" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10" font-weight="400" text-anchor="middle" fill="#55657a">load,</text>
+<text x="315" y="172" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10" font-weight="400" text-anchor="middle" fill="#55657a">measure</text>
+<text x="470" y="54" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="13" font-weight="600" text-anchor="middle" fill="#0a1626">Iteration 1</text>
+<text x="470" y="70" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="middle" fill="#3d4c5f">searched at the times of loading 0</text>
+<rect x="350" y="84" width="240" height="28" rx="7" fill="#f1f4f8" stroke="#c5cfda" stroke-width="1.2"/>
+<text x="470.0" y="102.0" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="12" font-weight="600" text-anchor="middle" fill="#0a1626">car route A</text>
+<rect x="350" y="118" width="240" height="28" rx="7" fill="#f1f4f8" stroke="#c5cfda" stroke-width="1.2"/>
+<text x="470.0" y="136.0" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="12" font-weight="600" text-anchor="middle" fill="#0a1626">bike route</text>
+<rect x="350" y="152" width="240" height="28" rx="7" fill="#f1f4f8" stroke="#c5cfda" stroke-width="1.2"/>
+<text x="470.0" y="170.0" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="12" font-weight="600" text-anchor="middle" fill="#0a1626">walk route</text>
+<rect x="350" y="186" width="240" height="28" rx="7" fill="#f1f4f8" stroke="#c5cfda" stroke-width="1.2"/>
+<text x="470.0" y="204.0" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="12" font-weight="600" text-anchor="middle" fill="#0a1626">transit journeys</text>
+<rect x="350" y="220" width="240" height="28" rx="7" fill="#e3f4f3" stroke="#7cc8c4" stroke-width="1.2"/>
+<text x="470.0" y="238.0" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="12" font-weight="600" text-anchor="middle" fill="#0a1626">car route B</text>
+<path d="M 600 150 L 650 150" fill="none" stroke="#057da9" stroke-width="2" marker-end="url(#m057da9)"/>
+<text x="625" y="136" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10" font-weight="400" text-anchor="middle" fill="#55657a">load,</text>
+<text x="625" y="172" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10" font-weight="400" text-anchor="middle" fill="#55657a">measure</text>
+<text x="780" y="54" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="13" font-weight="600" text-anchor="middle" fill="#0a1626">Iteration 2</text>
+<text x="780" y="70" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="middle" fill="#3d4c5f">searched at the times of loading 1</text>
+<rect x="660" y="84" width="240" height="28" rx="7" fill="#f1f4f8" stroke="#c5cfda" stroke-width="1.2"/>
+<text x="780.0" y="102.0" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="12" font-weight="600" text-anchor="middle" fill="#0a1626">car route A</text>
+<rect x="660" y="118" width="240" height="28" rx="7" fill="#f1f4f8" stroke="#c5cfda" stroke-width="1.2"/>
+<text x="780.0" y="136.0" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="12" font-weight="600" text-anchor="middle" fill="#0a1626">bike route</text>
+<rect x="660" y="152" width="240" height="28" rx="7" fill="#f1f4f8" stroke="#c5cfda" stroke-width="1.2"/>
+<text x="780.0" y="170.0" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="12" font-weight="600" text-anchor="middle" fill="#0a1626">walk route</text>
+<rect x="660" y="186" width="240" height="28" rx="7" fill="#f1f4f8" stroke="#c5cfda" stroke-width="1.2"/>
+<text x="780.0" y="204.0" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="12" font-weight="600" text-anchor="middle" fill="#0a1626">transit journeys</text>
+<rect x="660" y="220" width="240" height="28" rx="7" fill="#f1f4f8" stroke="#c5cfda" stroke-width="1.2"/>
+<text x="780.0" y="238.0" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="12" font-weight="600" text-anchor="middle" fill="#0a1626">car route B</text>
+<rect x="660" y="254" width="240" height="28" rx="7" fill="#e3f4f3" stroke="#7cc8c4" stroke-width="1.2"/>
+<text x="780.0" y="272.0" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="12" font-weight="600" text-anchor="middle" fill="#0a1626">car route C</text>
+<text x="480" y="300" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="middle" fill="#55657a">Teal: new at this iteration, added at the end of the set. A bike or walk route and the transit journeys do not depend on road traffic,</text>
+<text x="480" y="316" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="middle" fill="#55657a">so later searches find only car routes. A traveller's first car route is always added; a later one only while its origin-destination pair holds fewer than max_car_routes.</text>
+</svg>

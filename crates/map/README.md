@@ -98,12 +98,12 @@ km/h.
   straight between its two nodes without one): a ribbon and a cyclists' or walkers' line moved to
   the right of travel, mitred at a bend, a chevron at its middle segment, picked by its distance
   to the line; a journey's legs along their links' shapes. **One rule decides how roads are
-  drawn: by road class when every link has one, else by capacity.** By road class: version 1's
+  drawn: by road class when every link has one, else by capacity.** By road class: release 0.1's
   19 classes in order (motorway 0 … service 13, pedestrian 14, footway 15, cycleway 16, ferry,
   busway; `road` drawn as unclassified, steps, path, track and corridor as footway, any other name
   as unclassified); the page draws the classes up to a limit that grows as it zooms in (5 at an
   overview, then 9, 13, 16), the paths and cycleways (14 and above) only zoomed in, three classes
-  fewer while moving; a base line's width by its road's tier, version 1's: 0 without cars, else 1
+  fewer while moving; a base line's width by its road's tier, release 0.1's: 0 without cars, else 1
   to 4 by its capacity over the 99th percentile of the car links' capacities, from 0, 0.25, 0.45,
   0.75 on (widths 0.5, 0.8, 1.2, 2.0, 3.0); the hover reads "Class: primary · 2,000 m" then
   "Lanes, speed: 1 lane · 50 km/h", the panel "Link <id> · primary · 2,000 m". By capacity: the
@@ -254,7 +254,7 @@ are written by `openmobisim_io_parquet::write` and read back, as the binding dra
   faster than free flow in the first band, 20 % at exactly 2 s in 15–50 %, 60 % and 150 % in the next
   two, exactly 50 % and 100 % in the band above the edge; on a 144 s link 0.7 % at 1 s in the first,
   25 % at 36 s in 15–50 %; a free-flow time of 0 in the first); road classes on every link drawn
-  in version 1's order (steps 15, primary 4, an unknown name 10) with their names, and `st1`'s bend
+  in release 0.1's order (steps 15, primary 4, an unknown name 10) with their names, and `st1`'s bend
   at (750, 300) m held as 7 500 and 3 000 dm; one link unclassed, drawn by capacity; the cyclists'
   and walkers' width share at 0, 750, 3 000 and 6 000 travellers 0, 0.5, 1, 1 (1, 4.5, 8, 8 px).
 - `tests/record.rs`: the provenance line from a whole hand record; each key missing leaves its part

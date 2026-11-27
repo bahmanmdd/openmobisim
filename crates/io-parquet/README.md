@@ -74,7 +74,7 @@ pages need:
 - `warnings`: what was found and set aside, each naming its file and the first five trips or
   links with their count, for the caller to show.
 
-**The rule (the owner's): refuse only what cannot be read; warn on the rest.** A reader
+**The rule: refuse only what cannot be read; warn on the rest.** A reader
 refuses (`OutputError`, naming the file) only when the file is missing or not a readable Parquet
 file, a column it needs is missing or of a type it cannot read (a list of text whatever its
 inner field's name, `item` as written here or `element` as pyarrow writes it), or a row's own id
@@ -133,7 +133,9 @@ clock, null where there is no value:
   nullable), `links` (List<Utf8>, nullable: the link ids in the order travelled), `run_id`,
   `board_stop`, `alight_stop` (Utf8, nullable), `board_s`, `alight_s` (UInt32, nullable,
   seconds of the clock), `from_stop`, `to_stop` (Utf8, nullable). The kinds, one plain list:
-  - `walk_gap`: a walk between a door and the network or a stop, on no link, priced by its
+  - `walk_gap`: a walk between a door and the network or a stop, on no link (none is listed:
+    the walk to a stop is the straight line from the door to its walk node, the shortest walk on
+    the walk links and the straight line to the stop), priced by its
     seconds: `seconds` holds them (constant over the run; 0 where the door is at the node or
     stop).
   - `car`, `bike`, `walk`: a route on the network: `links` holds its link ids (empty when the

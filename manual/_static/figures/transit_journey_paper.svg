@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 250" width="960" height="250" role="img" aria-label="A transit journey from door to door: access walk, wait, ride, transfer walk, wait, ride, egress walk, each with its coefficient">
+<title>A transit journey from door to door: access walk, wait, ride, transfer walk, wait, ride, egress walk, each with its coefficient</title>
+<rect width="960" height="250" fill="#fbfcfd"/>
+
+<text x="20" y="24" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="11" font-weight="600" text-anchor="start" fill="#55657a" letter-spacing="1.2">A TRANSIT JOURNEY, DOOR TO DOOR, AND THE DEFAULT COST OF EACH PART</text>
+<rect x="30" y="90" width="120" height="46" rx="7" fill="#f1f4f8" stroke="#c5cfda" stroke-width="1.2"/>
+<text x="90.0" y="117.0" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="12" font-weight="600" text-anchor="middle" fill="#0a1626">access walk</text>
+<text x="90.0" y="156" font-family="'JetBrains Mono', Menlo, Consolas, monospace" font-size="10.5" font-weight="400" text-anchor="middle" fill="#3d4c5f">0.165 / min</text>
+<rect x="155" y="90" width="90" height="46" rx="7" fill="#fbf1de" stroke="#e2b866" stroke-width="1.2"/>
+<text x="200.0" y="117.0" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="12" font-weight="600" text-anchor="middle" fill="#0a1626">first wait</text>
+<text x="200.0" y="156" font-family="'JetBrains Mono', Menlo, Consolas, monospace" font-size="10.5" font-weight="400" text-anchor="middle" fill="#3d4c5f">0.145 / min</text>
+<rect x="250" y="90" width="170" height="46" rx="7" fill="#e0f0f8" stroke="#67cdfe" stroke-width="1.2"/>
+<text x="335.0" y="117.0" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="12" font-weight="600" text-anchor="middle" fill="#0a1626">ride 1</text>
+<text x="335.0" y="156" font-family="'JetBrains Mono', Menlo, Consolas, monospace" font-size="10.5" font-weight="400" text-anchor="middle" fill="#3d4c5f">0.1 / min in vehicle</text>
+<rect x="425" y="90" width="110" height="46" rx="7" fill="#f1f4f8" stroke="#c5cfda" stroke-width="1.2"/>
+<text x="480.0" y="117.0" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="12" font-weight="600" text-anchor="middle" fill="#0a1626">transfer walk</text>
+<text x="480.0" y="156" font-family="'JetBrains Mono', Menlo, Consolas, monospace" font-size="10.5" font-weight="400" text-anchor="middle" fill="#3d4c5f">0.165 / min</text>
+<rect x="540" y="90" width="100" height="46" rx="7" fill="#fbf1de" stroke="#e2b866" stroke-width="1.2"/>
+<text x="590.0" y="117.0" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="12" font-weight="600" text-anchor="middle" fill="#0a1626">transfer wait</text>
+<text x="590.0" y="156" font-family="'JetBrains Mono', Menlo, Consolas, monospace" font-size="10.5" font-weight="400" text-anchor="middle" fill="#3d4c5f">0.145 / min</text>
+<rect x="645" y="90" width="170" height="46" rx="7" fill="#e0f0f8" stroke="#67cdfe" stroke-width="1.2"/>
+<text x="730.0" y="117.0" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="12" font-weight="600" text-anchor="middle" fill="#0a1626">ride 2</text>
+<text x="730.0" y="156" font-family="'JetBrains Mono', Menlo, Consolas, monospace" font-size="10.5" font-weight="400" text-anchor="middle" fill="#3d4c5f">0.1 / min in vehicle</text>
+<rect x="820" y="90" width="120" height="46" rx="7" fill="#f1f4f8" stroke="#c5cfda" stroke-width="1.2"/>
+<text x="880.0" y="117.0" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="12" font-weight="600" text-anchor="middle" fill="#0a1626">egress walk</text>
+<text x="880.0" y="156" font-family="'JetBrains Mono', Menlo, Consolas, monospace" font-size="10.5" font-weight="400" text-anchor="middle" fill="#3d4c5f">0.165 / min</text>
+<text x="30" y="76" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="start" fill="#55657a">departure: the traveller leaves the door (an input)</text>
+<text x="945" y="76" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="end" fill="#55657a">arrival at the door</text>
+<text x="480" y="178" font-family="'JetBrains Mono', Menlo, Consolas, monospace" font-size="10.5" font-weight="400" text-anchor="middle" fill="#3d4c5f">each transfer: + 0.5        the transit constant: + 0.25</text>
+<text x="480" y="212" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="middle" fill="#55657a">Travel time is the sum of all parts. The wait at the first stop is charged in full: the traveller walks to the stop at once</text>
+<text x="480" y="228" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="middle" fill="#55657a">and waits for the run of the journey. The coefficients shown are the defaults; a class may have its own.</text>
+</svg>

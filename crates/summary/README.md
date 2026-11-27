@@ -5,7 +5,7 @@ Depends on `openmobisim-types`, `-graph`, `-transit`, `-loop` (the iterations ta
 `-io-gtfs` (the names beside the timetable), `-io-parquet` (a leg as read back, `RouteLeg`) and
 `-map` (what the pages keep of a run, the transit
 hops and boardings, the themes, the display rules and the delay rule, the mark, the clock, the
-escape, the partial-then-rename write); no external crate. The page of release 0.1's summary, harvested onto
+escape, the partial-then-rename write); no external crate. The page of release 0.1's summary, on
 release 0.2's data.
 
 ## Inputs

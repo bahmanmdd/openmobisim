@@ -1,0 +1,59 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 420" width="960" height="420" role="img" aria-label="Where each output comes from: the iterations table from every iteration's assessment, the trips, links and routes tables from the last iteration, the record from the inputs and settings, the pages from the files">
+<title>Where each output comes from: the iterations table from every iteration's assessment, the trips, links and routes tables from the last iteration, the record from the inputs and settings, the pages from the files</title>
+<rect width="960" height="420" fill="#fbfcfd"/>
+<marker id="m04938e" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#04938e"/></marker><marker id="m057da9" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#057da9"/></marker><marker id="m9aa8b8" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#9aa8b8"/></marker>
+<text x="20" y="24" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="11" font-weight="600" text-anchor="start" fill="#55657a" letter-spacing="1.2">WRITTEN FROM THE LAST ITERATION</text>
+<text x="790" y="24" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="11" font-weight="600" text-anchor="start" fill="#55657a" letter-spacing="1.2">FROM EVERY ITERATION</text>
+<rect x="20" y="40" width="150" height="56" rx="7" fill="#f1f4f8" stroke="#c5cfda" stroke-width="1.2"/>
+<text x="95.0" y="57.0" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="12" font-weight="600" text-anchor="middle" fill="#0a1626">run_record.toml</text>
+<text x="95.0" y="72.0" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="middle" fill="#3d4c5f">settings, fingerprints,</text>
+<text x="95.0" y="87.0" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="middle" fill="#3d4c5f">how the run ended</text>
+<rect x="350" y="40" width="130" height="56" rx="7" fill="#f1f4f8" stroke="#c5cfda" stroke-width="1.2"/>
+<text x="415.0" y="57.0" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="12" font-weight="600" text-anchor="middle" fill="#0a1626">routes.parquet</text>
+<text x="415.0" y="72.0" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="middle" fill="#3d4c5f">the legs each</text>
+<text x="415.0" y="87.0" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="middle" fill="#3d4c5f">traveller took</text>
+<rect x="500" y="40" width="130" height="56" rx="7" fill="#f1f4f8" stroke="#c5cfda" stroke-width="1.2"/>
+<text x="565.0" y="57.0" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="12" font-weight="600" text-anchor="middle" fill="#0a1626">links.parquet</text>
+<text x="565.0" y="72.0" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="middle" fill="#3d4c5f">cars, bikes, walkers</text>
+<text x="565.0" y="87.0" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="middle" fill="#3d4c5f">per link and time bin</text>
+<rect x="800" y="40" width="130" height="56" rx="7" fill="#f1f4f8" stroke="#c5cfda" stroke-width="1.2"/>
+<text x="865.0" y="57.0" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="12" font-weight="600" text-anchor="middle" fill="#0a1626">iterations.parquet</text>
+<text x="865.0" y="72.0" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="middle" fill="#3d4c5f">one row</text>
+<text x="865.0" y="87.0" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="middle" fill="#3d4c5f">per iteration</text>
+<text x="20" y="152" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="11" font-weight="600" text-anchor="start" fill="#55657a" letter-spacing="1.2">THE STAGES OF AN ITERATION</text>
+<rect x="20" y="164" width="150" height="44" rx="7" fill="#f1f4f8" stroke="#c5cfda" stroke-width="1.2"/>
+<text x="95.0" y="190.0" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="12" font-weight="600" text-anchor="middle" fill="#0a1626">inputs and settings</text>
+<rect x="200" y="164" width="130" height="44" rx="7" fill="#e0f0f8" stroke="#67cdfe" stroke-width="1.2"/>
+<text x="265.0" y="190.0" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="12" font-weight="600" text-anchor="middle" fill="#0a1626">search</text>
+<rect x="350" y="164" width="130" height="44" rx="7" fill="#e0f0f8" stroke="#67cdfe" stroke-width="1.2"/>
+<text x="415.0" y="190.0" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="12" font-weight="600" text-anchor="middle" fill="#0a1626">choose</text>
+<rect x="500" y="164" width="130" height="44" rx="7" fill="#e0f0f8" stroke="#67cdfe" stroke-width="1.2"/>
+<text x="565.0" y="190.0" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="12" font-weight="600" text-anchor="middle" fill="#0a1626">load</text>
+<rect x="650" y="164" width="130" height="44" rx="7" fill="#e0f0f8" stroke="#67cdfe" stroke-width="1.2"/>
+<text x="715.0" y="190.0" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="12" font-weight="600" text-anchor="middle" fill="#0a1626">measure</text>
+<rect x="800" y="164" width="130" height="44" rx="7" fill="#e0f0f8" stroke="#67cdfe" stroke-width="1.2"/>
+<text x="865.0" y="190.0" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="12" font-weight="600" text-anchor="middle" fill="#0a1626">assess</text>
+<path d="M 330 186 L 348 186" fill="none" stroke="#9aa8b8" stroke-width="1.6" marker-end="url(#m9aa8b8)"/>
+<path d="M 480 186 L 498 186" fill="none" stroke="#9aa8b8" stroke-width="1.6" marker-end="url(#m9aa8b8)"/>
+<path d="M 630 186 L 648 186" fill="none" stroke="#9aa8b8" stroke-width="1.6" marker-end="url(#m9aa8b8)"/>
+<path d="M 780 186 L 798 186" fill="none" stroke="#9aa8b8" stroke-width="1.6" marker-end="url(#m9aa8b8)"/>
+<path d="M 95 164 L 95 98" fill="none" stroke="#9aa8b8" stroke-width="2" marker-end="url(#m9aa8b8)"/>
+<path d="M 415 164 L 415 98" fill="none" stroke="#057da9" stroke-width="2" marker-end="url(#m057da9)"/>
+<path d="M 565 164 L 565 98" fill="none" stroke="#057da9" stroke-width="2" marker-end="url(#m057da9)"/>
+<path d="M 865 164 L 865 98" fill="none" stroke="#04938e" stroke-width="2" marker-end="url(#m04938e)"/>
+<rect x="350" y="270" width="430" height="56" rx="7" fill="#f1f4f8" stroke="#c5cfda" stroke-width="1.2"/>
+<text x="565.0" y="294.5" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="12" font-weight="600" text-anchor="middle" fill="#0a1626">trips.parquet</text>
+<text x="565.0" y="309.5" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="middle" fill="#3d4c5f">one row per traveller</text>
+<path d="M 415 208 L 415 268" fill="none" stroke="#057da9" stroke-width="2" marker-end="url(#m057da9)"/>
+<text x="422" y="244" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="start" fill="#55657a">the mode taken</text>
+<path d="M 565 208 L 565 268" fill="none" stroke="#057da9" stroke-width="2" marker-end="url(#m057da9)"/>
+<text x="572" y="244" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="start" fill="#55657a">arrival, travel time</text>
+<path d="M 715 208 L 715 268" fill="none" stroke="#057da9" stroke-width="2" marker-end="url(#m057da9)"/>
+<text x="722" y="244" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="start" fill="#55657a">the cost</text>
+<text x="20" y="372" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="11" font-weight="600" text-anchor="start" fill="#55657a" letter-spacing="1.2">THE PAGES, WRITTEN ON REQUEST FROM A FINISHED RUN</text>
+<rect x="20" y="384" width="150" height="28" rx="7" fill="#e3f4f3" stroke="#7cc8c4" stroke-width="1.2"/>
+<text x="95.0" y="402.0" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="12" font-weight="600" text-anchor="middle" fill="#0a1626">Run.map</text>
+<rect x="180" y="384" width="150" height="28" rx="7" fill="#e3f4f3" stroke="#7cc8c4" stroke-width="1.2"/>
+<text x="255.0" y="402.0" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="12" font-weight="600" text-anchor="middle" fill="#0a1626">Run.summary</text>
+<text x="344" y="402" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="start" fill="#55657a">each reads the tables, the record and the run's inputs (the map does not read the iterations table)</text>
+</svg>

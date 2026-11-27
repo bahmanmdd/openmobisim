@@ -1,0 +1,99 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 566" width="960" height="566" role="img" aria-label="The architecture: the Python module you use, and the Rust modules beneath it, each using only those below it">
+<title>The architecture: the Python module you use, and the Rust modules beneath it, each using only those below it</title>
+<rect width="960" height="566" fill="#fbfcfd"/>
+<marker id="m04938e" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#04938e"/></marker><marker id="m057da9" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#057da9"/></marker><marker id="m9aa8b8" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#9aa8b8"/></marker>
+<rect x="20" y="20" width="920" height="118" rx="10" fill="#e3f4f3" stroke="#7cc8c4" stroke-width="1.2"/>
+<text x="36" y="44" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="11" font-weight="600" text-anchor="start" fill="#55657a" letter-spacing="1.2">WHAT YOU USE: THE PYTHON MODULE OPENMOBISIM</text>
+<rect x="36" y="56" width="141" height="70" rx="7" fill="#f1f4f8" stroke="#c5cfda" stroke-width="1.2"/>
+<text x="106.5" y="72.5" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="12" font-weight="600" text-anchor="middle" fill="#0a1626">Network</text>
+<text x="106.5" y="87.5" font-family="'JetBrains Mono', Menlo, Consolas, monospace" font-size="10.5" font-weight="400" text-anchor="middle" fill="#3d4c5f">from_tables</text>
+<text x="106.5" y="102.5" font-family="'JetBrains Mono', Menlo, Consolas, monospace" font-size="10.5" font-weight="400" text-anchor="middle" fill="#3d4c5f">from_osm</text>
+<text x="106.5" y="117.5" font-family="'JetBrains Mono', Menlo, Consolas, monospace" font-size="10.5" font-weight="400" text-anchor="middle" fill="#3d4c5f">tables</text>
+<rect x="187" y="56" width="141" height="70" rx="7" fill="#f1f4f8" stroke="#c5cfda" stroke-width="1.2"/>
+<text x="257.5" y="87.5" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="12" font-weight="600" text-anchor="middle" fill="#0a1626">Transit</text>
+<text x="257.5" y="102.5" font-family="'JetBrains Mono', Menlo, Consolas, monospace" font-size="10.5" font-weight="400" text-anchor="middle" fill="#3d4c5f">from_gtfs</text>
+<rect x="338" y="56" width="141" height="70" rx="7" fill="#f1f4f8" stroke="#c5cfda" stroke-width="1.2"/>
+<text x="408.5" y="87.5" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="12" font-weight="600" text-anchor="middle" fill="#0a1626">Demand</text>
+<text x="408.5" y="102.5" font-family="'JetBrains Mono', Menlo, Consolas, monospace" font-size="10.5" font-weight="400" text-anchor="middle" fill="#3d4c5f">from_table</text>
+<rect x="489" y="56" width="141" height="70" rx="7" fill="#f1f4f8" stroke="#c5cfda" stroke-width="1.2"/>
+<text x="559.5" y="80.0" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="12" font-weight="600" text-anchor="middle" fill="#0a1626">run, run_file</text>
+<text x="559.5" y="95.0" font-family="'JetBrains Mono', Menlo, Consolas, monospace" font-size="10.5" font-weight="400" text-anchor="middle" fill="#3d4c5f">window, out,</text>
+<text x="559.5" y="110.0" font-family="'JetBrains Mono', Menlo, Consolas, monospace" font-size="10.5" font-weight="400" text-anchor="middle" fill="#3d4c5f">parameters</text>
+<rect x="640" y="56" width="141" height="70" rx="7" fill="#f1f4f8" stroke="#c5cfda" stroke-width="1.2"/>
+<text x="710.5" y="80.0" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="12" font-weight="600" text-anchor="middle" fill="#0a1626">Run</text>
+<text x="710.5" y="95.0" font-family="'JetBrains Mono', Menlo, Consolas, monospace" font-size="10.5" font-weight="400" text-anchor="middle" fill="#3d4c5f">trips, links,</text>
+<text x="710.5" y="110.0" font-family="'JetBrains Mono', Menlo, Consolas, monospace" font-size="10.5" font-weight="400" text-anchor="middle" fill="#3d4c5f">iterations, routes</text>
+<rect x="791" y="56" width="141" height="70" rx="7" fill="#f1f4f8" stroke="#c5cfda" stroke-width="1.2"/>
+<text x="861.5" y="80.0" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="12" font-weight="600" text-anchor="middle" fill="#0a1626">Run pages</text>
+<text x="861.5" y="95.0" font-family="'JetBrains Mono', Menlo, Consolas, monospace" font-size="10.5" font-weight="400" text-anchor="middle" fill="#3d4c5f">map, summary,</text>
+<text x="861.5" y="110.0" font-family="'JetBrains Mono', Menlo, Consolas, monospace" font-size="10.5" font-weight="400" text-anchor="middle" fill="#3d4c5f">Run.open</text>
+<path d="M 480 138 L 480 160" fill="none" stroke="#04938e" stroke-width="2" marker-end="url(#m04938e)"/>
+<rect x="20" y="162" width="920" height="46" rx="10" fill="#e0f0f8" stroke="#67cdfe" stroke-width="1.2"/>
+<text x="480" y="182" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="12" font-weight="600" text-anchor="middle" fill="#0a1626">binding: the compiled bridge</text>
+<text x="480" y="198" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="middle" fill="#3d4c5f">reads tables and keywords, calls the modules below, computes nothing itself</text>
+<path d="M 480 208 L 480 230" fill="none" stroke="#057da9" stroke-width="2" marker-end="url(#m057da9)"/>
+<text x="20" y="250" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="11" font-weight="600" text-anchor="start" fill="#55657a" letter-spacing="1.2">WHAT COMPUTES: THE RUST MODULES</text>
+<text x="20" y="296" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10" font-weight="400" text-anchor="middle" fill="#3d4c5f"></text>
+<text x="232" y="292" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="11" font-weight="600" text-anchor="end" fill="#55657a">Writes and shows a finished run</text>
+<rect x="240.0" y="262" width="226.66666666666666" height="60" rx="7" fill="#f1f4f8" stroke="#c5cfda" stroke-width="1.2"/>
+<text x="353.3333333333333" y="281.0" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="12" font-weight="600" text-anchor="middle" fill="#0a1626">io-parquet</text>
+<text x="353.3333333333333" y="296.0" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="middle" fill="#3d4c5f">the four tables,</text>
+<text x="353.3333333333333" y="311.0" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="middle" fill="#3d4c5f">the run record</text>
+<rect x="476.66666666666663" y="262" width="226.66666666666666" height="60" rx="7" fill="#f1f4f8" stroke="#c5cfda" stroke-width="1.2"/>
+<text x="590.0" y="281.0" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="12" font-weight="600" text-anchor="middle" fill="#0a1626">map</text>
+<text x="590.0" y="296.0" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="middle" fill="#3d4c5f">the interactive</text>
+<text x="590.0" y="311.0" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="middle" fill="#3d4c5f">map page</text>
+<rect x="713.3333333333333" y="262" width="226.66666666666666" height="60" rx="7" fill="#f1f4f8" stroke="#c5cfda" stroke-width="1.2"/>
+<text x="826.6666666666666" y="281.0" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="12" font-weight="600" text-anchor="middle" fill="#0a1626">summary</text>
+<text x="826.6666666666666" y="296.0" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="middle" fill="#3d4c5f">the summary</text>
+<text x="826.6666666666666" y="311.0" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="middle" fill="#3d4c5f">page</text>
+<text x="20" y="368" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10" font-weight="400" text-anchor="middle" fill="#3d4c5f"></text>
+<text x="232" y="364" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="11" font-weight="600" text-anchor="end" fill="#55657a">The iteration, and the readers</text>
+<rect x="240.0" y="334" width="226.66666666666666" height="60" rx="7" fill="#f1f4f8" stroke="#c5cfda" stroke-width="1.2"/>
+<text x="353.3333333333333" y="353.0" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="12" font-weight="600" text-anchor="middle" fill="#0a1626">loop</text>
+<text x="353.3333333333333" y="368.0" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="middle" fill="#3d4c5f">search, choose, load, measure,</text>
+<text x="353.3333333333333" y="383.0" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="middle" fill="#3d4c5f">assess; the stopping rule</text>
+<rect x="476.66666666666663" y="334" width="226.66666666666666" height="60" rx="7" fill="#f1f4f8" stroke="#c5cfda" stroke-width="1.2"/>
+<text x="590.0" y="353.0" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="12" font-weight="600" text-anchor="middle" fill="#0a1626">io-osm</text>
+<text x="590.0" y="368.0" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="middle" fill="#3d4c5f">reads an OpenStreetMap</text>
+<text x="590.0" y="383.0" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="middle" fill="#3d4c5f">extract into a network</text>
+<rect x="713.3333333333333" y="334" width="226.66666666666666" height="60" rx="7" fill="#f1f4f8" stroke="#c5cfda" stroke-width="1.2"/>
+<text x="826.6666666666666" y="353.0" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="12" font-weight="600" text-anchor="middle" fill="#0a1626">io-gtfs</text>
+<text x="826.6666666666666" y="368.0" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="middle" fill="#3d4c5f">reads a GTFS feed</text>
+<text x="826.6666666666666" y="383.0" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="middle" fill="#3d4c5f">into a timetable</text>
+<text x="20" y="440" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10" font-weight="400" text-anchor="middle" fill="#3d4c5f"></text>
+<text x="232" y="436" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="11" font-weight="600" text-anchor="end" fill="#55657a">The parts the iteration calls</text>
+<rect x="240.0" y="406" width="132.0" height="60" rx="7" fill="#f1f4f8" stroke="#c5cfda" stroke-width="1.2"/>
+<text x="306.0" y="425.0" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="12" font-weight="600" text-anchor="middle" fill="#0a1626">demand</text>
+<text x="306.0" y="440.0" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="middle" fill="#3d4c5f">trips, classes,</text>
+<text x="306.0" y="455.0" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="middle" fill="#3d4c5f">trip ends on the network</text>
+<rect x="382.0" y="406" width="132.0" height="60" rx="7" fill="#f1f4f8" stroke="#c5cfda" stroke-width="1.2"/>
+<text x="448.0" y="425.0" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="12" font-weight="600" text-anchor="middle" fill="#0a1626">search</text>
+<text x="448.0" y="440.0" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="middle" fill="#3d4c5f">the fastest route</text>
+<text x="448.0" y="455.0" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="middle" fill="#3d4c5f">per mode</text>
+<rect x="524.0" y="406" width="132.0" height="60" rx="7" fill="#f1f4f8" stroke="#c5cfda" stroke-width="1.2"/>
+<text x="590.0" y="425.0" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="12" font-weight="600" text-anchor="middle" fill="#0a1626">loading</text>
+<text x="590.0" y="440.0" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="middle" fill="#3d4c5f">cars on the point queue;</text>
+<text x="590.0" y="455.0" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="middle" fill="#3d4c5f">link times</text>
+<rect x="666.0" y="406" width="132.0" height="60" rx="7" fill="#f1f4f8" stroke="#c5cfda" stroke-width="1.2"/>
+<text x="732.0" y="425.0" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="12" font-weight="600" text-anchor="middle" fill="#0a1626">choice</text>
+<text x="732.0" y="440.0" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="middle" fill="#3d4c5f">least cost,</text>
+<text x="732.0" y="455.0" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="middle" fill="#3d4c5f">the logit family</text>
+<rect x="808.0" y="406" width="132.0" height="60" rx="7" fill="#f1f4f8" stroke="#c5cfda" stroke-width="1.2"/>
+<text x="874.0" y="425.0" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="12" font-weight="600" text-anchor="middle" fill="#0a1626">transit</text>
+<text x="874.0" y="440.0" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="middle" fill="#3d4c5f">the timetable,</text>
+<text x="874.0" y="455.0" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="middle" fill="#3d4c5f">journey search</text>
+<text x="20" y="512" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10" font-weight="400" text-anchor="middle" fill="#3d4c5f"></text>
+<text x="232" y="508" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="11" font-weight="600" text-anchor="end" fill="#55657a">What they stand on</text>
+<rect x="240.0" y="478" width="345.0" height="60" rx="7" fill="#f1f4f8" stroke="#c5cfda" stroke-width="1.2"/>
+<text x="412.5" y="497.0" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="12" font-weight="600" text-anchor="middle" fill="#0a1626">graph</text>
+<text x="412.5" y="512.0" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="middle" fill="#3d4c5f">the network: nodes, links per mode,</text>
+<text x="412.5" y="527.0" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="middle" fill="#3d4c5f">free-flow times, capacities</text>
+<rect x="595.0" y="478" width="345.0" height="60" rx="7" fill="#f1f4f8" stroke="#c5cfda" stroke-width="1.2"/>
+<text x="767.5" y="497.0" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="12" font-weight="600" text-anchor="middle" fill="#0a1626">types</text>
+<text x="767.5" y="512.0" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="middle" fill="#3d4c5f">identifiers, the clock, units,</text>
+<text x="767.5" y="527.0" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="middle" fill="#3d4c5f">modes, random streams</text>
+<path d="M 30 276 L 30 524" fill="none" stroke="#9aa8b8" stroke-width="2" marker-end="url(#m9aa8b8)"/>
+<text x="44" y="404" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="600" text-anchor="start" fill="#55657a">uses</text>
+<text x="480" y="552" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="middle" fill="#55657a">A module uses only modules in the rows below it or beside it in its own row; none uses a module above it.</text>
+</svg>

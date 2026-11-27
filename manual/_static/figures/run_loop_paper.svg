@@ -1,0 +1,65 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 400" width="960" height="400" role="img" aria-label="A run: the inputs built once, the loop of search, choose, load, measure and assess until the stopping rule or the cap, and the writing of the results">
+<title>A run: the inputs built once, the loop of search, choose, load, measure and assess until the stopping rule or the cap, and the writing of the results</title>
+<rect width="960" height="400" fill="#fbfcfd"/>
+<marker id="m04938e" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#04938e"/></marker><marker id="m057da9" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#057da9"/></marker><marker id="m9aa8b8" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#9aa8b8"/></marker>
+<text x="20" y="24" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="11" font-weight="600" text-anchor="start" fill="#55657a" letter-spacing="1.2">ONCE</text>
+<text x="215" y="24" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="11" font-weight="600" text-anchor="start" fill="#55657a" letter-spacing="1.2">EACH ITERATION K = 0, 1, 2, ...</text>
+<text x="820" y="24" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="11" font-weight="600" text-anchor="start" fill="#55657a" letter-spacing="1.2">AT THE END</text>
+<rect x="20" y="40" width="160" height="76" rx="7" fill="#f1f4f8" stroke="#c5cfda" stroke-width="1.2"/>
+<text x="100.0" y="67.0" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="12" font-weight="600" text-anchor="middle" fill="#0a1626">Build</text>
+<text x="100.0" y="82.0" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="middle" fill="#3d4c5f">the network, the timetable,</text>
+<text x="100.0" y="97.0" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="middle" fill="#3d4c5f">the trips linked to both</text>
+<rect x="20" y="150" width="160" height="76" rx="7" fill="#f1f4f8" stroke="#c5cfda" stroke-width="1.2"/>
+<text x="100.0" y="169.5" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="12" font-weight="600" text-anchor="middle" fill="#0a1626">Start</text>
+<text x="100.0" y="184.5" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="middle" fill="#3d4c5f">link times at free flow,</text>
+<text x="100.0" y="199.5" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="middle" fill="#3d4c5f">transit on its timetable:</text>
+<text x="100.0" y="214.5" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="middle" fill="#3d4c5f">the costs of iteration 0</text>
+<path d="M 100 116 L 100 148" fill="none" stroke="#9aa8b8" stroke-width="1.6" marker-end="url(#m9aa8b8)"/>
+<rect x="205" y="40" width="590" height="310" rx="10" fill="#e0f0f8" stroke="#67cdfe" stroke-width="1.2"/>
+<rect x="225" y="60" width="165" height="90" rx="7" fill="#f1f4f8" stroke="#c5cfda" stroke-width="1.2"/>
+<text x="307.5" y="86.5" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="12" font-weight="600" text-anchor="middle" fill="#0a1626">1  Search</text>
+<text x="307.5" y="101.5" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="middle" fill="#3d4c5f">the best alternative per mode</text>
+<text x="307.5" y="116.5" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="middle" fill="#3d4c5f">at the current times,</text>
+<text x="307.5" y="131.5" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="middle" fill="#3d4c5f">added to the traveller's set if new</text>
+<rect x="420" y="60" width="165" height="90" rx="7" fill="#f1f4f8" stroke="#c5cfda" stroke-width="1.2"/>
+<text x="502.5" y="86.5" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="12" font-weight="600" text-anchor="middle" fill="#0a1626">2  Choose</text>
+<text x="502.5" y="101.5" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="middle" fill="#3d4c5f">travellers offered a new choice</text>
+<text x="502.5" y="116.5" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="middle" fill="#3d4c5f">take the choice model's choice</text>
+<text x="502.5" y="131.5" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="middle" fill="#3d4c5f">over their whole set</text>
+<rect x="615" y="60" width="165" height="90" rx="7" fill="#f1f4f8" stroke="#c5cfda" stroke-width="1.2"/>
+<text x="697.5" y="86.5" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="12" font-weight="600" text-anchor="middle" fill="#0a1626">3  Load</text>
+<text x="697.5" y="101.5" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="middle" fill="#3d4c5f">cars on the point queue,</text>
+<text x="697.5" y="116.5" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="middle" fill="#3d4c5f">bikes and walkers at free flow,</text>
+<text x="697.5" y="131.5" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="middle" fill="#3d4c5f">transit as scheduled</text>
+<rect x="615" y="200" width="165" height="90" rx="7" fill="#f1f4f8" stroke="#c5cfda" stroke-width="1.2"/>
+<text x="697.5" y="226.5" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="12" font-weight="600" text-anchor="middle" fill="#0a1626">4  Measure</text>
+<text x="697.5" y="241.5" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="middle" fill="#3d4c5f">every alternative with a car route</text>
+<text x="697.5" y="256.5" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="middle" fill="#3d4c5f">re-costed at the loaded times;</text>
+<text x="697.5" y="271.5" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="middle" fill="#3d4c5f">link times rewritten</text>
+<rect x="420" y="200" width="165" height="90" rx="7" fill="#f1f4f8" stroke="#c5cfda" stroke-width="1.2"/>
+<text x="502.5" y="226.5" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="12" font-weight="600" text-anchor="middle" fill="#0a1626">5  Assess</text>
+<text x="502.5" y="241.5" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="middle" fill="#3d4c5f">the switch and found shares,</text>
+<text x="502.5" y="256.5" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="middle" fill="#3d4c5f">the unfinished trips, the gap or</text>
+<text x="502.5" y="271.5" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="middle" fill="#3d4c5f">the share who would change</text>
+<path d="M 390 105 L 418 105" fill="none" stroke="#057da9" stroke-width="2" marker-end="url(#m057da9)"/>
+<path d="M 585 105 L 613 105" fill="none" stroke="#057da9" stroke-width="2" marker-end="url(#m057da9)"/>
+<path d="M 697 150 L 697 198" fill="none" stroke="#057da9" stroke-width="2" marker-end="url(#m057da9)"/>
+<path d="M 615 245 L 587 245" fill="none" stroke="#057da9" stroke-width="2" marker-end="url(#m057da9)"/>
+<rect x="225" y="200" width="165" height="90" rx="7" fill="#fbf1de" stroke="#e2b866" stroke-width="1.2"/>
+<text x="307.5" y="226.5" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="12" font-weight="600" text-anchor="middle" fill="#0a1626">Stop?</text>
+<text x="307.5" y="241.5" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="middle" fill="#3d4c5f">the mean trip time steady over</text>
+<text x="307.5" y="256.5" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="middle" fill="#3d4c5f">five iterations and few trips</text>
+<text x="307.5" y="271.5" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="middle" fill="#3d4c5f">found something better; or the cap</text>
+<path d="M 420 245 L 392 245" fill="none" stroke="#057da9" stroke-width="2" marker-end="url(#m057da9)"/>
+<path d="M 307 200 L 307 152" fill="none" stroke="#057da9" stroke-width="2" marker-end="url(#m057da9)"/>
+<text x="315" y="180" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="start" fill="#55657a">no: k + 1</text>
+<text x="500" y="322" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="middle" fill="#55657a">link times and costs of iteration k feed the search and the choice of iteration k + 1</text>
+<path d="M 180 188 L 205 188 L 205 105 L 223 105" fill="none" stroke="#9aa8b8" stroke-width="1.6" marker-end="url(#m9aa8b8)"/>
+<rect x="820" y="200" width="120" height="90" rx="7" fill="#e3f4f3" stroke="#7cc8c4" stroke-width="1.2"/>
+<text x="880.0" y="226.5" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="12" font-weight="600" text-anchor="middle" fill="#0a1626">Write</text>
+<text x="880.0" y="241.5" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="middle" fill="#3d4c5f">the four tables</text>
+<text x="880.0" y="256.5" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="middle" fill="#3d4c5f">and the record</text>
+<text x="880.0" y="271.5" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="middle" fill="#3d4c5f">from the last iteration</text>
+<path d="M 307 290 L 307 372 L 880 372 L 880 292" fill="none" stroke="#04938e" stroke-width="2" marker-end="url(#m04938e)"/>
+<text x="600" y="388" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="middle" fill="#55657a">yes</text>
+</svg>

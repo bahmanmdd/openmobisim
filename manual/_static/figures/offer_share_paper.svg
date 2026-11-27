@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 320" width="960" height="320" role="img" aria-label="The share of travellers offered a new choice at iteration k: 1/(k+1)^0.75 by default, 1/(k+1) for the method of successive averages">
+<title>The share of travellers offered a new choice at iteration k: 1/(k+1)^0.75 by default, 1/(k+1) for the method of successive averages</title>
+<rect width="960" height="320" fill="#fbfcfd"/>
+<marker id="m9aa8b8" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#9aa8b8"/></marker>
+<text x="20" y="24" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="11" font-weight="600" text-anchor="start" fill="#55657a" letter-spacing="1.2">THE SHARE OF TRAVELLERS OFFERED A NEW CHOICE, BY ITERATION (UNDER THE LOGIT)</text>
+<path d="M 90 270 L 930 270" fill="none" stroke="#9aa8b8" stroke-width="1.6" marker-end="url(#m9aa8b8)"/>
+<path d="M 90 270 L 90 40" fill="none" stroke="#9aa8b8" stroke-width="1.6" marker-end="url(#m9aa8b8)"/>
+<path d="M 86 270 L 90 270" fill="none" stroke="#9aa8b8" stroke-width="1.2"/>
+<text x="82" y="274" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="end" fill="#3d4c5f">0 %</text>
+<path d="M 86 217.5 L 90 217.5" fill="none" stroke="#9aa8b8" stroke-width="1.2"/>
+<text x="82" y="221.5" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="end" fill="#3d4c5f">25 %</text>
+<path d="M 86 165.0 L 90 165.0" fill="none" stroke="#9aa8b8" stroke-width="1.2"/>
+<text x="82" y="169.0" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="end" fill="#3d4c5f">50 %</text>
+<path d="M 86 112.5 L 90 112.5" fill="none" stroke="#9aa8b8" stroke-width="1.2"/>
+<text x="82" y="116.5" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="end" fill="#3d4c5f">75 %</text>
+<path d="M 86 60.0 L 90 60.0" fill="none" stroke="#9aa8b8" stroke-width="1.2"/>
+<text x="82" y="64.0" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="end" fill="#3d4c5f">100 %</text>
+<path d="M 90.0 270 L 90.0 274" fill="none" stroke="#9aa8b8" stroke-width="1.2"/>
+<text x="90.0" y="288" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="middle" fill="#3d4c5f">0</text>
+<path d="M 254.0 270 L 254.0 274" fill="none" stroke="#9aa8b8" stroke-width="1.2"/>
+<text x="254.0" y="288" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="middle" fill="#3d4c5f">10</text>
+<path d="M 418.0 270 L 418.0 274" fill="none" stroke="#9aa8b8" stroke-width="1.2"/>
+<text x="418.0" y="288" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="middle" fill="#3d4c5f">20</text>
+<path d="M 582.0 270 L 582.0 274" fill="none" stroke="#9aa8b8" stroke-width="1.2"/>
+<text x="582.0" y="288" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="middle" fill="#3d4c5f">30</text>
+<path d="M 746.0 270 L 746.0 274" fill="none" stroke="#9aa8b8" stroke-width="1.2"/>
+<text x="746.0" y="288" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="middle" fill="#3d4c5f">40</text>
+<path d="M 910.0 270 L 910.0 274" fill="none" stroke="#9aa8b8" stroke-width="1.2"/>
+<text x="910.0" y="288" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="middle" fill="#3d4c5f">50</text>
+<text x="500.0" y="308" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="middle" fill="#55657a">iteration k</text>
+<path d="M 90.0 60.0 L 106.4 145.1 L 122.8 177.9 L 139.2 195.8 L 155.6 207.2 L 172.0 215.2 L 188.4 221.2 L 204.8 225.9 L 221.2 229.6 L 237.6 232.7 L 254.0 235.2 L 270.4 237.4 L 286.8 239.3 L 303.2 241.0 L 319.6 242.4 L 336.0 243.8 L 352.4 244.9 L 368.8 246.0 L 385.2 246.9 L 401.6 247.8 L 418.0 248.6 L 434.4 249.3 L 450.8 250.0 L 467.2 250.6 L 483.6 251.2 L 500.0 251.8 L 516.4 252.3 L 532.8 252.7 L 549.2 253.2 L 565.6 253.6 L 582.0 254.0 L 598.4 254.4 L 614.8 254.7 L 631.2 255.1 L 647.6 255.4 L 664.0 255.7 L 680.4 256.0 L 696.8 256.3 L 713.2 256.5 L 729.6 256.8 L 746.0 257.0 L 762.4 257.3 L 778.8 257.5 L 795.2 257.7 L 811.6 257.9 L 828.0 258.1 L 844.4 258.3 L 860.8 258.5 L 877.2 258.7 L 893.6 258.8 L 910.0 259.0" fill="none" stroke="#057da9" stroke-width="2.2"/>
+<path d="M 90.0 60.0 L 106.4 165.0 L 122.8 200.0 L 139.2 217.5 L 155.6 228.0 L 172.0 235.0 L 188.4 240.0 L 204.8 243.8 L 221.2 246.7 L 237.6 249.0 L 254.0 250.9 L 270.4 252.5 L 286.8 253.8 L 303.2 255.0 L 319.6 256.0 L 336.0 256.9 L 352.4 257.6 L 368.8 258.3 L 385.2 258.9 L 401.6 259.5 L 418.0 260.0 L 434.4 260.5 L 450.8 260.9 L 467.2 261.2 L 483.6 261.6 L 500.0 261.9 L 516.4 262.2 L 532.8 262.5 L 549.2 262.8 L 565.6 263.0 L 582.0 263.2 L 598.4 263.4 L 614.8 263.6 L 631.2 263.8 L 647.6 264.0 L 664.0 264.2 L 680.4 264.3 L 696.8 264.5 L 713.2 264.6 L 729.6 264.8 L 746.0 264.9 L 762.4 265.0 L 778.8 265.1 L 795.2 265.2 L 811.6 265.3 L 828.0 265.4 L 844.4 265.5 L 860.8 265.6 L 877.2 265.7 L 893.6 265.8 L 910.0 265.9" fill="none" stroke="#04938e" stroke-width="2.2"/>
+<text x="390" y="140" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="11" font-weight="600" text-anchor="start" fill="#057da9">upper curve: 1 / (k + 1)^0.75, the default step exponent</text>
+<text x="390" y="162" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="11" font-weight="600" text-anchor="start" fill="#04938e">lower curve: 1 / (k + 1), the method of successive averages</text>
+<text x="120" y="64" font-family="Inter, 'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="10.5" font-weight="400" text-anchor="start" fill="#55657a">iteration 0: everyone chooses</text>
+</svg>
