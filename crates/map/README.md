@@ -51,8 +51,10 @@ What the page lets a reader do:
   tick its modes on or off;
 - click a link or a transit hop for its facts and the pairs that use it, then a pair to show it;
 - zoom with the wheel, the buttons or the five levels (overview to detail), and fit the network;
+- read in the legend the network's links per mode (car, bike, walk);
 - save the view as a PNG (twice the screen's resolution) or an SVG, with its title, subtitle and
-  legend; the subtitle, on the page and in the exports, is road traffic's caption (the bins shown,
+  legend, the legend in its card on the left as on the screen (one description of the legend
+  serves the screen and both exports); the subtitle, on the page and in the exports, is road traffic's caption (the bins shown,
   the ribbons' width and colour), written only while road traffic is drawn, as each other layer's
   words are; a run without car traffic says "No car traffic in this run" there, its network drawn
   plain;

@@ -38,33 +38,60 @@ function svgRecorder() {
   };
   return r;
 }
-// The title above the map and the legend and provenance below it: the words and colours the page shows.
-function exportFrame() {
-  const legend = HAS_TRAFFIC && S.ly.road ? roadLegend() : null;
-  // The other layers shown, each a title and its swatches [name, colour, style].
-  const others = [];
-  if (S.ly.transit && HAS_TRANSIT) others.push({ title: "Transit lines · width = passengers on board", items: transitKinds().map(([name, k]) => [name, TH.kinds[k], "drive"]) });
-  if (S.ly.bike && FLOWS.bike) others.push({ title: "Cyclists · width = cyclists", items: [["cyclists", TH.modes[1], "bike"]] });
-  if (S.ly.walk && FLOWS.walk) others.push({ title: "Walkers · width = walkers", items: [["walkers", TH.modes[2], "walk"]] });
-  if (S.pair >= 0) others.unshift({ title: "Trips " + placeName(S.pair, 0) + " → " + placeName(S.pair, 1) + " · line = mode; colour = journey, the most travelled first", items: tripJourneyItems() }, { title: "Legs", items: tripLegendItems() }, { title: "Places", items: tripMarkItems().map(([name, m]) => [name, "", "mark:" + m]) });
-  return { title: $("title").textContent, subtitle: $("subtitle").textContent, legend, others, provenance: $("provenance").textContent, source: $("source").textContent };
+// The title above the map and the provenance below it: the words the page shows.
+function exportFrame() { return { title: $("title").textContent, subtitle: $("subtitle").textContent, provenance: $("provenance").textContent, source: $("source").textContent }; }
+const HEAD = 64, FOOT = 46;
+// A text's lines within `w` px in a font, broken at its spaces.
+function wrapText(m, text, font, w) {
+  m.font = font; const lines = []; let line = "";
+  for (const word of String(text).split(" ")) { const t = line ? line + " " + word : word; if (line && m.measureText(t).width > w) { lines.push(line); line = word; } else line = t; }
+  if (line) lines.push(line); return lines;
 }
-const HEAD = 64, FOOT = 46, ROW = 32;
-// Where an export's legends below the map go: each group of items placed left to right, a new row when the next would
-// pass the right edge; then the provenance and the wordmark on a line of their own. Returns each group's place, each
-// item's x, and the foot's height. Measured in the viewer's font, the same for the PNG and the SVG.
-function exportLayout(f) {
-  const m = document.createElement("canvas").getContext("2d"), top = HEAD + H + 18, groups = [];
-  let ox = 16, row = 0;
-  for (const g of f.others) {
-    m.font = "10px " + FONT; const tw = m.measureText(g.title).width; m.font = "9.5px " + FONT;
-    const xs = []; let w = 0; for (const [name] of g.items) { xs.push(w); w += 32 + m.measureText(name).width; }
-    const gw = Math.max(w, tw);
-    if (ox > 16 && ox + gw > W - 16) { row++; ox = 16; }
-    groups.push({ g, x: ox, y: top + row * ROW, xs }); ox += gw + 24;
+// A "#rrggbb" colour `t` of the way from `a` to `b` (the card's tint, as the page's style sheet mixes it).
+function mixHex(a, b, t) { const v = (h, i) => parseInt(h.slice(1 + 2 * i, 3 + 2 * i), 16); return "#" + [0, 1, 2].map((i) => Math.round(v(a, i) + (v(b, i) - v(a, i)) * t).toString(16).padStart(2, "0")).join(""); }
+// An export's legend: the screen's card where the screen has it (on the left, under the title), with the same
+// sections, compass and scale, drawn into a canvas or a recorder alike.
+function legendCard(c, x0, y0) {
+  const m = document.createElement("canvas").getContext("2d"), pad = 18, inner = 340 - 2 * pad, left = x0 + pad, ops = [];
+  let y = y0 + 16;
+  const say = (t, font, colour, x, yy, align) => ops.push(() => { c.font = font; c.fillStyle = colour; c.textAlign = align || "left"; c.fillText(t, x, yy); });
+  const text = (t, size, colour, height) => { const font = size + "px " + FONT; for (const line of wrapText(m, t, font, inner)) { say(line, font, colour, left, y + height / 2); y += height; } };
+  text("LEGEND", "600 11", TH.muted, 14); y += 10;
+  for (const s of legendSections(true)) {
+    text(s.title, "600 13", TH.ink, 19);
+    if (s.sub) text(s.sub, "12", TH.ink2, 16);
+    if (s.ramp) {
+      const r = s.ramp, n = r.stops.length, step = inner / n, top = y + 6, font = "11px " + FONT;
+      ops.push(() => r.stops.forEach((colour, i) => { c.fillStyle = colour; c.fillRect(left + i * step, top, r.bands ? step - 1.5 : step + 0.3, 10); }));
+      if (r.bands) r.bands.forEach((t, i) => say(t, font, TH.ink2, left + (i + 0.5) * step, top + 20, "center"));
+      else [[r.low, 0, "left"], [r.mid, inner / 2, "center"], [r.high, inner, "right"]].forEach(([t, dx, align]) => say(t, font, TH.ink2, left + dx, top + 20, align));
+      y = top + 28;
+    }
+    for (const row of s.rows || []) {
+      const height = row.some(([, , st]) => st.startsWith("mark:")) ? 22 : 17, font = "12px " + FONT; let x = 0; y += 4; m.font = font;
+      for (const [name, colour, style] of row) {
+        const w = 22 + m.measureText(name).width;
+        if (x > 0 && x + w > inner) { x = 0; y += height; }
+        const ix = left + x, iy = y + height / 2;
+        ops.push(() => exportItem(c, ix, iy, colour, style)); say(name, font, TH.ink2, ix + 22, iy); x += w + 14;
+      }
+      y += height;
+    }
+    if (s.note) { y += 4; text(s.note, "11", TH.muted, 15); }
+    y += 12;
   }
-  const rows = groups.length ? row + 1 : 0, line = groups.length ? top + rows * ROW - 2 : top;
-  return { groups, line, foot: groups.length ? 18 + rows * ROW + 30 : FOOT };
+  // The compass and the scale under a line, as in the card.
+  const rule = y, px = parseFloat($("scalebar").style.width) || 0, base = rule + 12 + 28; y = base + 16;
+  ops.push(() => {
+    const line = (pts, close) => { c.beginPath(); pts.forEach(([px2, py], i) => (i ? c.lineTo(px2, py) : c.moveTo(px2, py))); if (close) c.closePath(); };
+    c.strokeStyle = mixHex(TH.surface, TH.base, 0.75); c.lineWidth = 1; line([[left, rule], [left + inner, rule]]); c.stroke();
+    c.fillStyle = TH.ink; line([[9, -26], [14, -11], [9, -14.5], [4, -11]].map(([ax, ay]) => [left + ax, base + ay]), true); c.fill();
+    c.strokeStyle = TH.ink; c.lineWidth = 2; line([[0, -6], [0, 0], [px, 0], [px, -6]].map(([ax, ay]) => [left + 30 + ax, base - 1 + ay])); c.stroke();
+  });
+  say("N", "700 8px " + FONT, TH.ink, left + 9, base - 4, "center"); say($("scalelabel").textContent, "11px " + FONT, TH.ink, left + 30, base - 15);
+  c.beginPath(); c.moveTo(x0, y0); c.lineTo(x0 + 340, y0); c.lineTo(x0 + 340, y); c.lineTo(x0, y); c.closePath();
+  c.fillStyle = mixHex(TH.surface, TH.base, 0.36); c.fill(); c.strokeStyle = mixHex(TH.surface, TH.base, 0.75); c.lineWidth = 1; c.stroke();
+  c.textBaseline = "middle"; ops.forEach((op) => op()); c.textAlign = "left"; c.textBaseline = "alphabetic";
 }
 // One item of an export's legend at (x, y), 16 px wide: a place's mark ("mark:<kind>", drawn small) or a leg's style.
 function exportItem(c2d, x, y, colour, style) {
@@ -75,7 +102,8 @@ function exportItem(c2d, x, y, colour, style) {
   }
   drawSwatch(c2d, x, y, 16, style || "drive", colour);
 }
-// An export has no cards: what the screen shows between them is centred in the export's whole width, at the same scale.
+// An export keeps the legend's card and has no controls: what the screen shows between its two cards is centred
+// between the legend and the export's right edge, at the same scale.
 function viewWithMoving(drawInto) {
   const moving = MOVING, hover = S.hover, item = S.hoverItem, cx = S.cx; MOVING = false; S.hover = -1; S.hoverItem = null;
   S.cx -= panelWidth() / 2 * S.mpp; EXPORTING = true;
@@ -94,32 +122,17 @@ function exportSVG() {
   ctx = rec; window.Path2D = RecPath;
   try { viewWithMoving(draw); } finally { ctx = keep; window.Path2D = keepPath; draw(); }
   const esc = (t) => String(t).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/"/g, "&quot;");
-  const lay = exportLayout(f), total = H + HEAD + lay.foot, parts = [];
+  const total = H + HEAD + FOOT, parts = [];
   // The SVG namespace from the page's own compass (the page names no address anywhere).
   const ns = $("compass").querySelector("svg").namespaceURI;
   parts.push(`<svg xmlns="${ns}" width="${W}" height="${total}" viewBox="0 0 ${W} ${total}" font-family="${esc(FONT)}">`);
   parts.push(`<rect width="${W}" height="${total}" fill="${TH.surface}"/>`);
   parts.push(`<g transform="translate(0 ${HEAD})">${rec.out.join("")}</g>`);
   // The bands above and below the map, painted over whatever of it runs past the view.
-  parts.push(`<rect width="${W}" height="${HEAD}" fill="${TH.surface}"/><rect y="${HEAD + H}" width="${W}" height="${lay.foot}" fill="${TH.surface}"/>`);
+  parts.push(`<rect width="${W}" height="${HEAD}" fill="${TH.surface}"/><rect y="${HEAD + H}" width="${W}" height="${FOOT}" fill="${TH.surface}"/>`);
   parts.push(`<text x="16" y="26" font-size="17" font-weight="700" fill="${TH.ink}">${esc(f.title)}</text>`);
   parts.push(`<text x="16" y="48" font-size="11.5" fill="${TH.ink2}">${esc(f.subtitle)}</text>`);
-  const y = lay.line;
-  if (f.legend) {  // at the top right
-    const n = f.legend.stops.length, w = 200, step = w / n, x0 = W - 16 - w, ly = 30;
-    parts.push(`<text x="${x0 + w}" y="${ly - 8}" font-size="10.5" text-anchor="end" fill="${TH.ink2}">${esc(f.legend.label)}</text>`);  // right-aligned: a long title runs left, not off the page
-    parts.push(f.legend.stops.map((c, i) => `<rect x="${(x0 + i * step).toFixed(2)}" y="${ly}" width="${(f.legend.bands ? step - 1.5 : step + 0.3).toFixed(2)}" height="7" fill="${c}"/>`).join(""));
-    if (f.legend.bands) parts.push(f.legend.bands.map((t, i) => `<text x="${(x0 + (i + 0.5) * step).toFixed(2)}" y="${ly + 19}" font-size="9.5" text-anchor="middle" fill="${TH.ink2}">${esc(t)}</text>`).join(""));
-    else parts.push(`<text x="${x0}" y="${ly + 19}" font-size="9.5" fill="${TH.ink2}">${esc(f.legend.low)}</text><text x="${x0 + w / 2}" y="${ly + 19}" font-size="9.5" text-anchor="middle" fill="${TH.ink2}">${esc(f.legend.mid)}</text><text x="${x0 + w}" y="${ly + 19}" font-size="9.5" text-anchor="end" fill="${TH.ink2}">${esc(f.legend.high)}</text>`);
-  }
-  for (const { g, x: gx, y: gy, xs } of lay.groups) {  // the other layers' legends below the map, in rows
-    parts.push(`<text x="${gx}" y="${gy - 2}" font-size="10" fill="${TH.ink2}">${esc(g.title)}</text>`);
-    g.items.forEach(([name, c, style], i) => {
-      // Each item drawn by the map's own functions: a leg's style, or a place's mark.
-      const x = gx + xs[i], rec = svgRecorder(); exportItem(rec, x, gy + 11, c, style);
-      parts.push(rec.out.join("") + `<text x="${x + 21}" y="${gy + 14}" font-size="9.5" fill="${TH.ink2}">${esc(name)}</text>`);
-    });
-  }
+  const y = HEAD + H + 18, card = svgRecorder(); legendCard(card, 16, HEAD + 16); parts.push(card.out.join(""));
   parts.push(`<text x="${W - 16}" y="${y + 4}" font-size="9.5" text-anchor="end" fill="${TH.ink2}">${esc([f.provenance, f.source].filter(Boolean).join(" · "))}</text>`);
   parts.push(`<text x="${W - 16}" y="${y + 20}" font-size="11" font-weight="700" text-anchor="end" fill="${TH.ink}">openmobisim</text>`);
   const m = markPlace(y);
@@ -129,39 +142,17 @@ function exportSVG() {
 }
 function exportPNG() {
   const f = exportFrame(), scale = 2, off = document.createElement("canvas");
-  const lay = exportLayout(f);
-  off.width = Math.round(W * scale); off.height = Math.round((H + HEAD + lay.foot) * scale);
+  off.width = Math.round(W * scale); off.height = Math.round((H + HEAD + FOOT) * scale);
   const o = off.getContext("2d"), map = document.createElement("canvas");
   map.width = Math.round(W * scale); map.height = Math.round(H * scale);
   const keep = ctx, keepDpr = DPR; ctx = map.getContext("2d"); DPR = scale;
   try { viewWithMoving(draw); } finally { ctx = keep; DPR = keepDpr; draw(); }
   o.setTransform(scale, 0, 0, scale, 0, 0);
-  o.fillStyle = TH.surface; o.fillRect(0, 0, W, H + HEAD + lay.foot);
+  o.fillStyle = TH.surface; o.fillRect(0, 0, W, H + HEAD + FOOT);
   o.drawImage(map, 0, HEAD, W, H);
   o.fillStyle = TH.ink; o.font = "700 17px " + FONT; o.fillText(f.title, 16, 26);
   o.fillStyle = TH.ink2; o.font = "11.5px " + FONT; o.fillText(f.subtitle, 16, 48);
-  const y = lay.line;
-  if (f.legend) {  // at the top right
-    const n = f.legend.stops.length, w = 200, step = w / n, x0 = W - 16 - w, ly = 30;
-    o.textAlign = "right"; o.fillStyle = TH.ink2; o.font = "10.5px " + FONT; o.fillText(f.legend.label, x0 + w, ly - 8); o.textAlign = "left";
-    if (f.legend.bands) {
-      f.legend.stops.forEach((c, i) => { o.fillStyle = c; o.fillRect(x0 + i * step, ly, step - 1.5, 7); });
-      o.fillStyle = TH.ink2; o.font = "9.5px " + FONT; o.textAlign = "center";
-      f.legend.bands.forEach((t, i) => o.fillText(t, x0 + (i + 0.5) * step, ly + 19));
-    } else {
-      const g = o.createLinearGradient(x0, 0, x0 + w, 0);
-      f.legend.stops.forEach((c, i) => g.addColorStop(i / Math.max(n - 1, 1), c));
-      o.fillStyle = g; o.fillRect(x0, ly, w, 7);
-      o.fillStyle = TH.ink2; o.font = "9.5px " + FONT; o.fillText(f.legend.low, x0, ly + 19); o.textAlign = "center"; o.fillText(f.legend.mid, x0 + w / 2, ly + 19); o.textAlign = "right"; o.fillText(f.legend.high, x0 + w, ly + 19);
-    }
-  }
-  for (const { g, x: gx, y: gy, xs } of lay.groups) {  // the other layers' legends below the map, in rows
-    o.textAlign = "left"; o.fillStyle = TH.ink2; o.font = "10px " + FONT; o.fillText(g.title, gx, gy - 2);
-    g.items.forEach(([name, c, style], i) => {
-      const x = gx + xs[i]; exportItem(o, x, gy + 11, c, style); o.textAlign = "left"; o.font = "9.5px " + FONT;
-      o.fillStyle = TH.ink2; o.fillText(name, x + 21, gy + 14);
-    });
-  }
+  const y = HEAD + H + 18; legendCard(o, 16, HEAD + 16);
   o.textAlign = "right"; o.fillStyle = TH.ink2; o.font = "9.5px " + FONT;
   o.fillText([f.provenance, f.source].filter(Boolean).join(" · "), W - 16, y + 4);
   o.fillStyle = TH.ink; o.font = "700 11px " + FONT; o.fillText("openmobisim", W - 16, y + 20);

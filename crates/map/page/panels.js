@@ -352,31 +352,35 @@ function tripMarkItems() {
 }
 // The journeys drawn, each with its colour and its style (an export's legend: it has no list beside it).
 function tripJourneyItems() { return pairOptions(S.pair).filter(shownOption).map((o) => { const t = optionTitle(o); return [t.length > 26 ? t.slice(0, 25) + "…" : t, journeyColour(o), journeyStyle(o)]; }); }
-// The legend: a section for each layer that is on, and the trips' marks while a pair is shown.
 // The kinds of transit service the hops have, by name and index.
 function transitKinds() { const seen = new Set(A.tk); return KINDS.map((name, k) => [name, k]).filter(([, k]) => seen.has(k)); }
-function renderLegend() {
-  const line = (c, style) => '<i style="border-top:' + (style === "dash" ? "3px dashed " : style === "dot" ? "3px dotted " : "4px solid ") + c + '"></i>';
-  const parts = [];
+// The network's links per mode, as the legend's last section says them.
+const LINK_COUNTS = [["car", CAR], ["bike", BIKE], ["walk", WALK]].map(([name, bit]) => { let n = 0; for (let l = 0; l < NL; l++) if (LM[l] & bit) n++; return [name, n]; });
+// The legend, for the card on the screen and the one an export draws: a section for each layer that is on, the trips'
+// marks while a pair is shown, and the network's links per mode. A section is a title, a line under it (`sub`), a
+// colour bar (`ramp`), rows of items [name, colour, style] (a style "mark:<kind>" is a place's mark) and a note.
+function legendSections(forExport) {
+  const out = [];
   if (S.pair >= 0) {
-    // The legs' styles and the places' marks, drawn by the map's own functions.
-    const swatch = (st) => svgOf(26, 10, (rec) => drawSwatch(rec, 2, 5, 22, st, TH.ink2)), mark = (m) => svgOf(24, 22, (rec) => drawMark(rec, m, 12, 11));
-    parts.push('<div class="lg"><h3>Trips between two places</h3><div class="kinds">' + tripLegendItems().map(([name, , st]) => "<span>" + swatch(st) + name + "</span>").join("") +
-      '</div><div class="kinds">' + tripMarkItems().map(([name, m]) => "<span>" + mark(m) + name + "</span>").join("") + '</div><div class="note">line = mode; colour = journey, the most travelled first, as in the list</div></div>');
+    // An export has no list beside it: its legend names the journeys drawn too.
+    const rows = [tripLegendItems(), tripMarkItems().map(([name, m]) => [name, "", "mark:" + m])];
+    out.push({ title: "Trips between two places", rows: forExport ? [tripJourneyItems(), ...rows] : rows, note: "line = mode; colour = journey, the most travelled first" + (forExport ? "" : ", as in the list") });
   }
-  if (HAS_TRAFFIC && S.ly.road) {
-    const r = roadLegend();
-    const ramp = r.bands
-      ? '<div class="bar" style="background:' + bandGradient(r.stops) + '"></div><div class="bands">' + r.bands.map((t) => "<span>" + t + "</span>").join("") + "</div>"
-      : '<div class="bar" style="background:linear-gradient(90deg,' + r.stops.join(",") + ')"></div><div class="ends"><span>' + r.low + "</span><span>" + r.mid + "</span><span>" + r.high + "</span></div>";
-    parts.push('<div class="lg"><h3>Road traffic</h3><div class="sub">' + r.label + "</div>" + ramp + '<div class="note">' + (RR ? "width = road capacity per direction; volume in the hover" : "width: one for every road") + "</div></div>");
-  }
-  if (S.ly.transit && HAS_TRANSIT) parts.push('<div class="lg"><h3>Transit lines</h3><div class="kinds">' + transitKinds().map(([name, k]) => "<span>" + line(TH.kinds[k]) + name + "</span>").join("") + '</div><div class="note">width = passengers on board; ○ stops, size = boardings</div></div>');
-  if (S.ly.bike && FLOWS.bike) parts.push('<div class="lg"><h3>Cyclists</h3><div class="kinds"><span>' + line(TH.modes[1], "dash") + 'cyclists</span></div><div class="note">width = cyclists, full at ' + fmt(FLOW_FULL) + ' and more over the run; faint = the bike network</div></div>');
-  if (S.ly.walk && FLOWS.walk) parts.push('<div class="lg"><h3>Walkers</h3><div class="kinds"><span>' + line(TH.modes[2], "dot") + 'walkers</span></div><div class="note">width = walkers, full at ' + fmt(FLOW_FULL) + ' and more over the run (as cyclists); faint = the walk network</div></div>');
-  $("legendbody").innerHTML = parts.join("");
-  // The card always holds the compass and the scale, the legend above them when a layer is on.
-  $("legendbody").hidden = parts.length === 0;
+  if (HAS_TRAFFIC && S.ly.road) out.push({ title: "Road traffic", sub: roadLegend().label, ramp: roadLegend(), note: RR ? "width = road capacity per direction; volume in the hover" : "width: one for every road" });
+  if (S.ly.transit && HAS_TRANSIT) out.push({ title: "Transit lines", rows: [transitKinds().map(([name, k]) => [name, TH.kinds[k], "drive"])], note: "width = passengers on board; ○ stops, size = boardings" });
+  if (S.ly.bike && FLOWS.bike) out.push({ title: "Cyclists", rows: [[["cyclists", TH.modes[1], "bike"]]], note: "width = cyclists, full at " + fmt(FLOW_FULL) + " and more over the run; faint = the bike network" });
+  if (S.ly.walk && FLOWS.walk) out.push({ title: "Walkers", rows: [[["walkers", TH.modes[2], "walk"]]], note: "width = walkers, full at " + fmt(FLOW_FULL) + " and more over the run (as cyclists); faint = the walk network" });
+  out.push({ title: "Network", sub: "links: " + LINK_COUNTS.map(([name, n]) => fmt(n) + " " + name).join(" · ") });
+  return out;
+}
+function renderLegend() {
+  // The legs' styles and the places' marks, drawn by the map's own functions.
+  const item = ([name, c, st]) => "<span>" + (st.startsWith("mark:") ? svgOf(24, 22, (rec) => drawMark(rec, st.slice(5), 12, 11)) : svgOf(26, 10, (rec) => drawSwatch(rec, 2, 5, 22, st, c))) + name + "</span>";
+  const ramp = (r) => r.bands
+    ? '<div class="bar" style="background:' + bandGradient(r.stops) + '"></div><div class="bands">' + r.bands.map((t) => "<span>" + t + "</span>").join("") + "</div>"
+    : '<div class="bar" style="background:linear-gradient(90deg,' + r.stops.join(",") + ')"></div><div class="ends"><span>' + r.low + "</span><span>" + r.mid + "</span><span>" + r.high + "</span></div>";
+  $("legendbody").innerHTML = legendSections(false).map((s) => '<div class="lg"><h3>' + s.title + "</h3>" + (s.sub ? '<div class="sub">' + s.sub + "</div>" : "") + (s.ramp ? ramp(s.ramp) : "") +
+    (s.rows || []).map((row) => '<div class="kinds">' + row.map(item).join("") + "</div>").join("") + (s.note ? '<div class="note">' + s.note + "</div>" : "") + "</div>").join("");
 }
 function writeHash() {
   const p = new URLSearchParams(); p.set("t", S.theme); p.set("c", S.colour);
