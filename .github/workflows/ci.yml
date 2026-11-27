@@ -79,6 +79,11 @@ jobs:
           "$RUNNER_TEMP/binding/bin/python" -m pytest crates/binding/tests -s -p no:cacheprovider
       - name: "Test 10, Delft: free-flow routes against networkx, every trip finishes, the run timed, identical files twice and at 1 and 8 threads, within 1 % of 60 iterations"
         run: TEST_10=1 "$RUNNER_TEMP/binding/bin/python" -m pytest crates/binding/tests/test_10_delft.py -s -p no:cacheprovider
+      - name: The manual built as its site builds it, a warning failing (the contracts and the parameters table are its pages)
+        run: |
+          python3 -m venv "$RUNNER_TEMP/manual"
+          "$RUNNER_TEMP/manual/bin/pip" install --quiet -r manual/requirements.txt
+          "$RUNNER_TEMP/manual/bin/sphinx-build" -W -b html manual "$RUNNER_TEMP/manual-site"
       - name: Budgets
         run: bash tools/check_limits.sh
       - name: Leak guard, built-in rules

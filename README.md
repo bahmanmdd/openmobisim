@@ -1,7 +1,42 @@
 # openmobisim
 A simulator of multimodal dynamic traffic assignment: individual travellers choose mode and route; cars are loaded on a point-queue network, bikes and walkers at free flow, transit on its timetable; choice and loading are iterated to a stable state. A Rust core with a Python interface.
-This tree rebuilds the core for release 0.2, module by module; each module enters with a README contract and a test against an answer from outside the simulator (theory, a hand derivation, a published result or another tool). Release 0.1 stays installable from PyPI.
+Every module enters with a contract (its README: inputs, outputs, units, assumptions) and a test against an answer from outside the simulator (theory, a hand derivation, a published result or another tool).
 Bikes are first-class in every module, test and output. Metric units throughout.
+
+**The manual** is at [openmobisim.github.io](https://openmobisim.github.io): two worked examples (Delft and Amsterdam), the parameters table and the contract of every module. Its source is the folder `manual/`.
+
+## Install
+```bash
+pip install openmobisim
+```
+Python 3.11 or newer, on Linux, macOS or Windows; no Python dependency. This page describes release 0.2. Until 0.2 is on PyPI, that command gives release 0.1, which has another interface; 0.2 is then built from this tree with a Rust toolchain: `pip install maturin`, then `maturin develop --release` in the repository.
+
+## A first run
+Five cases are ready to download, the morning of Delft, Amsterdam, Lyon and Paris and a small synthetic city ([doi:10.5281/zenodo.24585967](https://doi.org/10.5281/zenodo.24585967)): real networks and timetables, synthetic travellers. Each is a folder holding the network as two tables, the timetable as GTFS, one row per traveller and a settings file, `run.toml`.
+```python
+import urllib.request, zipfile
+import openmobisim as oms
+
+urllib.request.urlretrieve("https://zenodo.org/records/24585967/files/delft.zip", "delft.zip")
+zipfile.ZipFile("delft.zip").extractall()          # the folder delft
+run = oms.run_file("delft", out="delft-run")       # 37 649 travellers, 07:30 to 09:30
+run.map("delft-map.html")                          # the interactive map, one HTML page
+run.summary("delft-summary.html")                  # the run's numbers, one HTML page
+```
+The results are Parquet tables (`run.trips`, `run.links`, `run.iterations` and `run.routes` are their paths), read with `pyarrow`, pandas, polars or any other reader of Parquet.
+
+## The interface
+```python
+network = oms.Network.from_tables(nodes, links)          # or oms.Network.from_osm("extract.osm.pbf", region=None)
+transit = oms.Transit.from_gtfs("gtfs.zip", network)
+demand  = oms.Demand.from_table(trips, classes, network, transit=transit)
+run     = oms.run(network, demand, transit, window=(27000, 34200), out="folder")   # seconds after midnight
+run     = oms.run_file("folder-with-run.toml", out="folder")                       # the same from a settings file
+run     = oms.Run.open("folder")                                                   # a finished run, nothing run again
+```
+A table is in memory (a dict of lists, a pandas or polars frame, a pyarrow table) or the path of a Parquet file. `crates/binding/README.md` gives every argument and every input column, and `PARAMETERS.md` every parameter of a run with its unit, default and source. Two helpers are experimental: `Network.from_osm(..., car_roads="main")` (cars on the main roads alone) and `make_case(folder, osm, population)` (a case folder drawn from an extract). For bikes: `bike` in a link's `modes` lets bikes ride it, `bike` in a trip's `modes` opens the bike to that traveller, and `bike_speed` is the one speed of every bike.
+
+## What a run writes
 A run writes five files into one folder: `trips.parquet`, `links.parquet`, `iterations.parquet` and `routes.parquet`, its results, and `run_record.toml`, the record of what was run: part one the settings it ran with (the window, the input files, the classes, every parameter at the value used), part two what it found and did (the end of the window it used, how it ended, the counts and fingerprints of its inputs, every repair), so that the folder alone tells what was run (`crates/io-parquet/README.md`). A run can also be described in a settings file, `run.toml`, written by hand in a folder: the window, the input files (an OSM extract or nodes and links tables, a trips table, a GTFS feed; tables as Parquet files, paths relative to the folder), the classes and any parameter to change; `run_file(folder, out=folder)` runs it. The two files have fixed names and are never one file: a run never writes `run.toml`, and the record's part one, copied into a `run.toml`, runs the same run again (`crates/binding/README.md`). For bikes: `bike_speed` is in the record, and each link's and trip's bike in the files it names.
 `Run.map(path)` writes the run's interactive map, one self-contained HTML file that opens from disk with no server or network: road traffic by time bin, cyclists, walkers and transit, the journeys between the busiest pairs of places, and the pairs that use a link (`crates/map/README.md`); cyclists are a layer of their own and a bike journey is listed beside the car's. `Run.summary(path)` writes its summary, one self-contained HTML page of its numbers: the headline tiles, the modes, when people left, the roads, transit, bikes and walking, the convergence, the computation time, the record and a map per mode (`crates/summary/README.md`); bikes are a mode of every table and a map of their own.
 
@@ -29,4 +64,5 @@ Release 0.2 is done when these ten tests pass, each against an answer from outsi
 - **A single link's queue delay on Sioux Falls is reported, never judged** (test 6): the sum over links agrees with the outside solver, single links differ.
 - **Bikes and walkers travel at free flow**: one bike speed and one walk speed, no bike congestion.
 
-Licensed under Apache-2.0; see LICENSE and NOTICE.
+## Cite and licence
+To cite openmobisim, use `CITATION.cff`, and name the version you used and the fingerprints of the inputs of every run you report (each run's record holds them). Licensed under Apache-2.0; see LICENSE and NOTICE.
